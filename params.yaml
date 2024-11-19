@@ -3,7 +3,7 @@ preprocess:
   output: data/processed/data.csv
 
 train:
-  input: data/processed/data.csv
+  input: data/raw/data.csv
   output: models/model.pkl
   random_state: 42
   n_estimators: 100
