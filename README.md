@@ -42,7 +42,7 @@ Following tools have been used to complete the project.
 
 
 ## Goals
-- Reproducibility: By using DVC, the pipeline ensures that the same data, parameters, and code can reproduce the same results, making the workflow reliable and consistent.
-- Experimentation: MLflow allows users to easily track different experiments (with varying hyperparameters) and compare the performance of models.
-- Collaboration: DVC and MLflow enable smooth collaboration in a team environment, where different users can work on the same project and track changes seamlessly.
+- **Reproducibility:** By using DVC, the pipeline ensures that the same data, parameters, and code can reproduce the same results, making the workflow reliable and consistent.
+- **Experimentation:** MLflow allows users to easily track different experiments (with varying hyperparameters) and compare the performance of models.
+- **Collaboration:** DVC and MLflow enable smooth collaboration in a team environment, where different users can work on the same project and track changes seamlessly.
 

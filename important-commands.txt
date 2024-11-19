@@ -1,0 +1,8 @@
+-> Command to create venv using conda
+conda create -p myenv python==3.12 -y
+
+-> Command to activate conda env.
+conda activate myenv
+
+-> Command to deactivate conda env.
+conda deactivate
