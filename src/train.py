@@ -98,16 +98,20 @@ def train(data_path,
                 best_model,
                 "model",
                 registered_model_name="Best Random Forest Classifier",
-                # signature=signature,
+                signature=signature,
             )
         else:
             mlflow.sklearn.log_model(best_model, "model", signature=signature)
 
         # Create the model folder to save the model
-        # if not os.path.exists(model_path,):
-        os.makedirs(model_path, exist_ok=True)
-        filename = model_path
-        pickle.dump(best_model, open(filename, 'wb'))
+        
+        folder_name = os.path.dirname(model_path)
+        os.makedirs(folder_name, exist_ok=True)
+
+        file_name = model_path
+        # filename = os.path.abspath(model_path)
+        pickle.dump(best_model,open(file_name,'wb'))
+
         print(f"INFO: Model saved to {model_path}")
 
 # ----------------------------------------------------------------
