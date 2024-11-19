@@ -8,3 +8,7 @@ train:
   random_state: 42
   n_estimators: 100
   max_depth: 5
+
+test:
+  data: data/raw/data.csv
+  model: models/model.pkl
