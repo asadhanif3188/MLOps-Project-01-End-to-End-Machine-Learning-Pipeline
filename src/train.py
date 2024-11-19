@@ -23,8 +23,12 @@ def hyperparameter_tuning(X_train, y_train, param_grid):
                                cv=3,
                                n_jobs=-1,
                                verbose=2)
+    print("INFO: Hyperparameter Tuning Started")
     grid_search.fit(X_train, y_train)
+    print("INFO: Hyperparameter Tuning Ended")
+
     return grid_search
+
 
 # ----------------------------------------------------------------
 def train(data_path, 
@@ -71,8 +75,40 @@ def train(data_path,
         # Predict and evaluate the best model
         y_pred = best_model.predict(X_test)
         model_accuracy_score = accuracy_score(y_test, y_pred)
-        print("Best Model Accuracy:", model_accuracy_score)
+        print("INFO: Best Model Accuracy:", model_accuracy_score)
 
+        # Log additional metrics 
+        mlflow.log_metric("accuracy", model_accuracy_score)
+        mlflow.log_param("best_n_estimators", grid_search.best_params_['n_estimators'])
+        mlflow.log_param("best_max_depth", grid_search.best_params_['max_depth'])
+        mlflow.log_param("best_samples_split", grid_search.best_params_['min_samples_split'])
+        mlflow.log_param("best_samples_leaf", grid_search.best_params_['min_samples_leaf'])
+
+        # Log the confusion matrix and classification report
+        cm = confusion_matrix(y_test, y_pred)
+        cr = classification_report(y_test, y_pred)
+
+        mlflow.log_text(str(cm), "confusion_matrix.txt")
+        mlflow.log_text(str(cr), "classification_report.txt")
+
+        tracking_url_type_store = urlparse(mlflow.get_artifact_uri()).scheme
+
+        if tracking_url_type_store != "file":
+            mlflow.sklearn.log_model(
+                best_model,
+                "model",
+                registered_model_name="Best Random Forest Classifier",
+                # signature=signature,
+            )
+        else:
+            mlflow.sklearn.log_model(best_model, "model", signature=signature)
+
+        # Create the model folder to save the model
+        # if not os.path.exists(model_path,):
+        os.makedirs(model_path, exist_ok=True)
+        filename = model_path
+        pickle.dump(best_model, open(filename, 'wb'))
+        print(f"INFO: Model saved to {model_path}")
 
 # ----------------------------------------------------------------
 if __name__ == "__main__":
