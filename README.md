@@ -46,3 +46,40 @@ Following tools have been used to complete the project.
 - **Experimentation:** MLflow allows users to easily track different experiments (with varying hyperparameters) and compare the performance of models.
 - **Collaboration:** DVC and MLflow enable smooth collaboration in a team environment, where different users can work on the same project and track changes seamlessly.
 
+### For Adding DVC Stages
+
+### Bash Commands
+```
+dvc stage add -n preprocess \
+    -p preprocess.input,preprocess.output \
+    -d src/preprocess.py -d data/raw/data.csv \
+    -o data/processed/data.csv \
+    python src/preprocess.py
+```	
+	
+```
+dvc stage add -n train \
+    -p train.data,train.model,train.random_state,train.n_estimators,train.max_depth \
+    -d src/train.py -d data/raw/data.csv \
+    -o models/model.pkl \
+    python src/train.py
+```	
+
+```
+dvc stage add -n evaluate \
+    -d src/evaluate.py -d models/model.pkl -d data/raw/data.csv \
+    python src/evaluate.py
+```
+
+### Windows Commands
+```
+dvc stage add -n preprocess -p preprocess.input,preprocess.output -d src/preprocess.py -d data/raw/data.csv -o data/processed/data.csv python src/preprocess.py
+```	
+	
+```
+dvc stage add -n train -p train.data,train.model,train.random_state,train.n_estimators,train.max_depth -d src/train.py -d data/raw/data.csv -o models/model.pkl python src/train.py
+```	
+
+```
+dvc stage add -n evaluate -d src/evaluate.py -d models/model.pkl -d data/raw/data.csv python src/evaluate.py
+```
