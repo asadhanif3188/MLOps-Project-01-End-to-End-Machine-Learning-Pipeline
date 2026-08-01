@@ -1,31 +1,26 @@
-import pandas
-import sys
-import yaml
+"""Data preprocessing stage: reads raw CSV and writes processed output."""
 import os
+import yaml
+import pandas as pd
 
 
 def preprocess(input_path, output_path):
+    """Read raw dataset and write processed CSV.
+
+    Args:
+        input_path: Path to raw CSV file.
+        output_path: Path to write processed CSV.
     """
-    Preprocess the data by reading the input file, 
-    dropping the 'Unnamed: 0' column,
-    and saving the preprocessed data to a CSV file.
-    """
-    # Read the input file
-    df = pandas.read_csv(input_path)
+    df = pd.read_csv(input_path)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    # Save the preprocessed data to a CSV file
     df.to_csv(output_path, header=None, index=False)
 
     print(f'Preprocessed data saved to {output_path}')
 
-if __name__ == "__main__":
-    # Load parameters from param.yaml
-    params = yaml.safe_load(open("params.yaml"))['preprocess']
 
-    # Call the preprocess function with the input and output paths
-    preprocess(
-        params['input'], 
-        params['output']
-        )
+if __name__ == "__main__":
+    with open("params.yaml") as f:
+        params = yaml.safe_load(f)['preprocess']
+
+    preprocess(params['input'], params['output'])
