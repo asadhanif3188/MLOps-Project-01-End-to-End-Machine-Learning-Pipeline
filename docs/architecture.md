@@ -242,3 +242,4 @@ for the hierarchy, propagation rules, and user-facing error contract.
 - [Architecture Decision Records](decisions/)
 - [Logging Strategy](logging.md)
 - [Exception Strategy](exception-strategy.md)
+- [Type Safety](type-safety.md)
