@@ -1,18 +1,16 @@
 """Model training stage: hyperparameter tuning, training, and MLflow tracking."""
 import os
+import pickle
 from urllib.parse import urlparse
 
+import mlflow
 import pandas as pd
 import yaml
-import pickle
-import mlflow
 from dotenv import load_dotenv
-
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from sklearn.model_selection import train_test_split, GridSearchCV
-
 from mlflow.models import infer_signature
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import GridSearchCV, train_test_split
 
 
 def hyperparameter_tuning(X_train, y_train, param_grid):
@@ -100,8 +98,7 @@ def train(data_path, model_path, random_state, n_estimators, max_depth):
         else:
             mlflow.sklearn.log_model(best_model, "model", signature=signature)
 
-        folder_name = os.path.dirname(model_path)
-        os.makedirs(folder_name, exist_ok=True)
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
         with open(model_path, 'wb') as f:
             pickle.dump(best_model, f)

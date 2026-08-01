@@ -1,12 +1,12 @@
 """Model evaluation stage: loads trained model and logs accuracy metrics."""
 import os
+import pickle
 
+import mlflow
 import pandas as pd
 import yaml
-import pickle
-import mlflow
-from sklearn.metrics import accuracy_score
 from dotenv import load_dotenv
+from sklearn.metrics import accuracy_score
 
 
 def evaluate(data_path, model_path):

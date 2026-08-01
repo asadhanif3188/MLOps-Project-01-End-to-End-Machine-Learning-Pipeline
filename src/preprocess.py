@@ -1,7 +1,8 @@
 """Data preprocessing stage: reads raw CSV and writes processed output."""
 import os
-import yaml
+
 import pandas as pd
+import yaml
 
 
 def preprocess(input_path, output_path):
