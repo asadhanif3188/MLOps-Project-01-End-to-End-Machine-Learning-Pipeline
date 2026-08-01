@@ -2,4 +2,4 @@ myenv/
 .env
 models/
 *.pdf
-Sprint-01-Professional-Repository-Transformation.md
+Sprint-*.md
