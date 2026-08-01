@@ -157,9 +157,11 @@ run, not enough to bury the signal.
   local diagnostics and stays off in normal runs.
 - **Never use `print()` for diagnostics.** `print()` cannot be filtered,
   redirected, or timestamped; use a logger.
-- **Log before raising**, with an actionable message, when exception handling is
-  introduced (see the [engineering review](reviews/sprint-02-engineering-review.md)
-  finding H-2).
+- **Fail with a typed exception; log the failure once at the stage boundary.**
+  Boundary helpers raise a typed [`PipelineError`](../src/exceptions.py) subclass
+  with an actionable message (never swallow); the stage entry point logs the
+  failure exactly once with the full traceback (`exc_info=True`). See the
+  [Exception Strategy](exception-strategy.md).
 
 > **Note on GridSearchCV.** `GridSearchCV(..., verbose=2)` in `train.py` produces
 > its own progress output independent of this logging configuration. It is a
@@ -171,4 +173,5 @@ run, not enough to bury the signal.
 ## Related Documentation
 
 - [Architecture](architecture.md) — see §7, Observability & Logging.
+- [Exception Strategy](exception-strategy.md) — how errors are typed, raised, and logged.
 - [Engineering Review](reviews/sprint-02-engineering-review.md) — finding H-1.
