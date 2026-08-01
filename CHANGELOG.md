@@ -18,5 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/roadmap.md`, and `docs/project-structure.md`; first drafts of ADR-001,
   ADR-002, and ADR-003; and a new `docs/philosophy.md` describing engineering
   principles.
+- Repository governance and GitHub metadata: issue templates (bug, feature,
+  documentation) and PR template under `.github/`; `SECURITY.md` and
+  `SUPPORT.md`; and documentation for the GitHub workflow, semantic versioning,
+  release checklist, repository metadata recommendations, and a documentation
+  index (`docs/README.md`).
 
 <!-- TODO: Add releases as the project matures. -->
