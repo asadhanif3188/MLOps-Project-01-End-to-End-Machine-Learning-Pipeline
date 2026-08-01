@@ -221,6 +221,17 @@ replaces the ad-hoc `print()` statements previously used for diagnostics
 For the full policy — format, level guidance, and per-stage log inventory — see
 [Logging Strategy](logging.md).
 
+### Error handling
+
+Failures are handled through a small typed exception hierarchy
+([`src/exceptions.py`](../src/exceptions.py)) rooted at `PipelineError`, with
+IO/config/model boundaries centralized in
+[`src/pipeline_io.py`](../src/pipeline_io.py) and a uniform stage entry point
+([`src/stage_runner.py`](../src/stage_runner.py)) that logs each failure once —
+with the full traceback — and exits non-zero so `dvc repro` and CI stop on error
+(engineering review finding **H-2**). See [Exception Strategy](exception-strategy.md)
+for the hierarchy, propagation rules, and user-facing error contract.
+
 ---
 
 ## Related Documentation
@@ -230,3 +241,4 @@ For the full policy — format, level guidance, and per-stage log inventory — 
 - [Engineering Philosophy](philosophy.md)
 - [Architecture Decision Records](decisions/)
 - [Logging Strategy](logging.md)
+- [Exception Strategy](exception-strategy.md)

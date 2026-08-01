@@ -23,6 +23,8 @@ or the [project structure](project-structure.md) to navigate the repository.
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System overview, components, pipeline, and data flow |
+| [Logging Strategy](logging.md) | How the pipeline emits, formats, and persists logs |
+| [Exception Strategy](exception-strategy.md) | Exception hierarchy, error propagation, and error logging |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
 | [Project Structure](project-structure.md) | Every top-level directory and its responsibility |
