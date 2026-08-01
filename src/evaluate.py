@@ -33,7 +33,6 @@ def evaluate(data_path: str, model_path: str) -> None:
     y = data['Outcome']
 
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
-    mlflow.set_tracking_uri(tracking_uri)
 
     model = load_pickle(model_path)
 
@@ -48,6 +47,7 @@ def evaluate(data_path: str, model_path: str) -> None:
     model_accuracy_score = accuracy_score(y, predictions)
 
     try:
+        mlflow.set_tracking_uri(tracking_uri)
         with mlflow.start_run():
             mlflow.log_metric("accuracy", model_accuracy_score)
     except MlflowException as exc:

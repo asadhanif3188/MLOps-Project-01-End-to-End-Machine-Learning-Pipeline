@@ -60,14 +60,14 @@ def load_params(
             f"got {type(section).__name__}."
         )
 
-    # Treat absent keys and null/empty values alike: a required key present but
-    # set to null in YAML would otherwise flow downstream (e.g. into read_csv)
-    # and fail far from this config boundary.
-    missing = [key for key in required if section.get(key) in (None, "")]
+    # Presence-only: a required key may legitimately be null (e.g. a scikit-learn
+    # ``max_depth`` of ``None`` means unbounded depth), so this validates that the
+    # key exists, not that its value is truthy.
+    missing = [key for key in required if key not in section]
     if missing:
         raise ConfigError(
-            f"Config section {stage!r} in {path!r} is missing or has empty "
-            f"value(s) for key(s): {', '.join(missing)}."
+            f"Config section {stage!r} in {path!r} is missing key(s): "
+            f"{', '.join(missing)}."
         )
     return section
 
@@ -118,6 +118,29 @@ def read_csv(path: str) -> pd.DataFrame:
         raise DataError(f"Dataset {path!r} is not valid CSV: {exc}") from exc
     except OSError as exc:
         raise DataError(f"Could not read dataset {path!r}: {exc}") from exc
+
+
+def write_csv(
+    df: pd.DataFrame, path: str, *, header: bool = True, index: bool = False
+) -> None:
+    """Write a DataFrame to CSV, creating parent directories.
+
+    Args:
+        df: The DataFrame to write.
+        path: Destination path for the CSV file.
+        header: Whether to write the column header row.
+        index: Whether to write the DataFrame index.
+
+    Raises:
+        DataError: If the destination cannot be created or written.
+    """
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        df.to_csv(path, header=header, index=index)
+    except OSError as exc:
+        raise DataError(f"Could not write dataset to {path!r}: {exc}") from exc
 
 
 def ensure_columns(df: pd.DataFrame, required: Sequence[str], source: str) -> None:

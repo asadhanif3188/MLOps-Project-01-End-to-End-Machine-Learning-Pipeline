@@ -75,6 +75,7 @@ produces the *same* `DataError` with the *same* actionable message everywhere.
 | `load_params(path, stage, required)` | Open + parse YAML; validate section and keys. | `ConfigError` |
 | `require_env(name)` | Read a required environment variable. | `ConfigError` |
 | `read_csv(path)` | `pandas.read_csv`. | `DataError` |
+| `write_csv(df, path)` | `makedirs` + `DataFrame.to_csv`. | `DataError` |
 | `ensure_columns(df, required, source)` | Validate a DataFrame's columns. | `DataError` |
 | `load_pickle(path)` | `open` + `pickle.load`. | `ModelError` |
 | `save_pickle(obj, path)` | `makedirs` + `pickle.dump`. | `ModelError` |

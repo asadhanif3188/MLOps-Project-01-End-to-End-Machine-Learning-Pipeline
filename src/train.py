@@ -105,8 +105,8 @@ def train(
 
     # --- Experiment tracking (network boundary): scoped narrowly so only MLflow
     #     failures become TrackingError. ---
-    mlflow.set_tracking_uri(tracking_uri)
     try:
+        mlflow.set_tracking_uri(tracking_uri)
         with mlflow.start_run():
             mlflow.log_metric("accuracy", model_accuracy_score)
             mlflow.log_param("best_n_estimators", grid_search.best_params_['n_estimators'])

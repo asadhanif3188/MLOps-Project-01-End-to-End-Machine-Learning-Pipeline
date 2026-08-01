@@ -1,11 +1,8 @@
 """Data preprocessing stage: reads raw CSV and writes processed output."""
-import os
-
 from dotenv import load_dotenv
 
-from exceptions import DataError
 from logging_config import configure_logging, get_logger
-from pipeline_io import load_params, read_csv
+from pipeline_io import load_params, read_csv, write_csv
 from stage_runner import run_stage
 
 logger = get_logger("preprocess")
@@ -24,14 +21,7 @@ def preprocess(input_path: str, output_path: str) -> None:
     logger.info("Preprocess stage started (input=%s, output=%s)", input_path, output_path)
 
     df = read_csv(input_path)
-
-    try:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        df.to_csv(output_path, header=None, index=False)
-    except OSError as exc:
-        raise DataError(
-            f"Could not write processed data to {output_path!r}: {exc}"
-        ) from exc
+    write_csv(df, output_path, header=False, index=False)
 
     logger.info("Preprocess stage completed: %d rows written to %s", len(df), output_path)
 
