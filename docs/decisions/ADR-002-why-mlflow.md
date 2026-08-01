@@ -1,20 +1,68 @@
-# ADR-002: Why MLflow
+# ADR-002: Why MLflow (via DagsHub) for Experiment Tracking
 
-- **Status:** 🚧 Proposed (placeholder — to be completed)
-- **Date:** TODO
+- **Status:** Accepted (first draft — describes the current implementation)
+- **Date:** <!-- TODO: set the date this decision was formally recorded -->
+- **Deciders:** Asad Hanif
+- **Related:** [ADR-003 (DVC)](ADR-003-why-dvc.md), [architecture.md](../architecture.md)
 
 ## Context
 
-<!-- TODO: Describe the experiment-tracking / model-management needs that motivated this decision. -->
+The pipeline tunes a Random Forest with `GridSearchCV`, producing many
+candidate models across hyperparameter combinations. To make the workflow
+credible and reproducible, we need to:
+
+- record parameters, metrics (e.g., `accuracy`), and artifacts (confusion
+  matrix, classification report, the model itself) per run,
+- compare runs to select the best model,
+- optionally maintain a model registry, and
+- do the above via a **remote** tracker so results are shareable and not tied to
+  one machine.
 
 ## Decision
 
-<!-- TODO: State the decision regarding the use of MLflow. -->
+Use **MLflow** for experiment tracking, with the tracking server **hosted on
+DagsHub**.
+
+- `train.py` and `evaluate.py` set the tracking URI from the
+  `MLFLOW_TRACKING_URI` environment variable and log parameters, metrics, and
+  artifacts within an MLflow run.
+- Credentials (`MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME`,
+  `MLFLOW_TRACKING_PASSWORD`) are supplied via `.env` (see
+  [`.env.example`](../../.env.example)) and loaded with `python-dotenv`.
+- When the artifact store is remote, the best model is also registered
+  (`registered_model_name="Best Random Forest Classifier"`).
+
+DagsHub was chosen as the host because it provides a **managed MLflow endpoint
+plus a DVC-compatible remote in one place**, keeping the tracking and data
+versioning stack cohesive (see [ADR-003](ADR-003-why-dvc.md)).
 
 ## Alternatives Considered
 
-<!-- TODO: List alternatives considered (e.g., other tracking tools) and why they were not chosen. -->
+1. **Local MLflow tracking (`file:` store / local server).**
+   - *Pros:* zero external setup.
+   - *Cons:* not shareable, no managed UI, harder to demonstrate in a portfolio.
+2. **Weights & Biases.**
+   - *Pros:* polished UX, strong collaboration features.
+   - *Cons:* another SaaS account; MLflow is open-source and pairs naturally with
+     DagsHub/DVC here.
+3. **Manual logging (CSV/JSON + custom scripts).**
+   - *Rejected:* reinvents a solved problem; poor comparison/UX.
+4. **Neptune / Comet.**
+   - *Deferred:* viable, but no advantage over MLflow for this project's needs.
 
 ## Consequences
 
-<!-- TODO: Describe the positive and negative consequences of this decision. -->
+**Positive**
+
+- Standardized, queryable record of every run (params, metrics, artifacts).
+- Shareable, hosted UI suitable for a portfolio demonstration.
+- Optional model registry for promoting the best model.
+- Cohesive stack: MLflow + DVC both hosted on DagsHub.
+
+**Negative / trade-offs**
+
+- Runtime dependency on network access and valid DagsHub credentials; runs fail
+  fast if `MLFLOW_TRACKING_URI` is unset (accessed via `os.environ[...]`).
+- Vendor coupling to DagsHub for the hosted endpoint.
+  <!-- TODO: document a fallback to local MLflow for offline development. -->
+- Secrets management relies on `.env` hygiene; never commit real credentials.
