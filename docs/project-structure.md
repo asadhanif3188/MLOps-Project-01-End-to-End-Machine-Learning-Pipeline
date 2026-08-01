@@ -21,14 +21,23 @@ For the reasoning behind this layout, see
 │   ├── raw/              #   raw input data (data.csv, tracked via data.csv.dvc)
 │   └── processed/        #   preprocessed output
 ├── models/               # Serialized model artifacts (DVC-tracked, git-ignored)
-├── docs/                 # Project documentation
+├── docs/                 # Project documentation (see docs/README.md portal)
+│   ├── README.md         #   documentation index
 │   ├── architecture.md
 │   ├── roadmap.md
 │   ├── project-structure.md
+│   ├── design-principles.md
 │   ├── philosophy.md
+│   ├── github-workflow.md
+│   ├── versioning.md
+│   ├── release-checklist.md
+│   ├── repository-metadata.md
 │   ├── decisions/        #   Architecture Decision Records (ADRs)
 │   ├── diagrams/         #   diagram placeholders (by category)
 │   └── screenshots/      #   screenshot placeholders (by category)
+├── .github/              # Issue/PR templates and GitHub config
+│   ├── ISSUE_TEMPLATE/
+│   └── pull_request_template.md
 ├── .dvc/                 # DVC internal config (remote definition)
 ├── dvc.yaml              # DVC pipeline definition (stages, deps, params, outs)
 ├── params.yaml           # Declarative pipeline parameters
@@ -38,6 +47,8 @@ For the reasoning behind this layout, see
 ├── CHANGELOG.md          # Notable changes (Keep a Changelog format)
 ├── CONTRIBUTING.md       # Contribution guidelines
 ├── CODE_OF_CONDUCT.md    # Contributor Covenant
+├── SECURITY.md           # Security policy
+├── SUPPORT.md            # How to get help
 ├── LICENSE               # MIT License
 └── README.md             # Project overview and quick start
 ```
@@ -74,15 +85,24 @@ Serialized model(s), e.g. `model.pkl`. Git-ignored (`models/` in `.gitignore`)
 and versioned by DVC.
 
 ### `docs/` — Documentation
+- **`README.md`** — the documentation index / portal.
 - **`architecture.md`** — system architecture and data flow.
 - **`roadmap.md`** — versioned milestones.
 - **`project-structure.md`** — this document.
+- **`design-principles.md`** — rationale behind core design and technology choices.
 - **`philosophy.md`** — engineering principles.
+- **`github-workflow.md`**, **`versioning.md`**, **`release-checklist.md`** —
+  process and governance (branching, SemVer, releases).
+- **`repository-metadata.md`** — recommended repository description and topics.
 - **`decisions/`** — Architecture Decision Records (ADR-001..003 + index).
 - **`diagrams/`** — placeholder subfolders for diagrams (system architecture,
   pipeline flow, deployment, Kubernetes, CI/CD).
 - **`screenshots/`** — placeholder subfolders for screenshots (MLflow UI, DVC
   pipeline, project execution, folder structure, training logs).
+
+### `.github/` — GitHub configuration
+Issue templates (`bug_report.md`, `feature_request.md`, `documentation.md`) and
+the pull request template used to standardize contributions.
 
 ### Configuration & pipeline definition
 - **`dvc.yaml`** — the pipeline graph: stages with their dependencies,

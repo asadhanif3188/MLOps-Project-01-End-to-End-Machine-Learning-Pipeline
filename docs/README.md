@@ -26,6 +26,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
 | [Project Structure](project-structure.md) | Every top-level directory and its responsibility |
+| [Design Principles](design-principles.md) | Rationale behind core design and technology choices |
 | [Engineering Philosophy](philosophy.md) | Principles guiding the project |
 
 ### Architecture Decision Records

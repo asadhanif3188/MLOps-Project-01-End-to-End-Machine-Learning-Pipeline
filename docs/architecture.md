@@ -1,9 +1,10 @@
 # Architecture
 
-This document describes the architecture of the **End-to-End Machine Learning
-Pipeline**: a reproducible training workflow for a Random Forest classifier,
-orchestrated with [DVC](https://dvc.org/) and instrumented with
-[MLflow](https://mlflow.org/) (hosted on [DagsHub](https://dagshub.com/)).
+The **End-to-End Machine Learning Pipeline** is architected around
+reproducibility: a Random Forest training workflow orchestrated with
+[DVC](https://dvc.org/) and instrumented with [MLflow](https://mlflow.org/)
+(hosted on [DagsHub](https://dagshub.com/)). This document explains how the
+pieces fit together.
 
 > **Scope note.** This document reflects the repository as it exists today. Where
 > a component is planned but not yet implemented, it is marked with an explicit
@@ -44,8 +45,8 @@ classification of the `Outcome` column.
 
 ## 2. Component Diagram
 
-<!-- TODO: Add the rendered component diagram to diagrams/system-architecture/
-     and embed it here, e.g. ![System Architecture](diagrams/system-architecture/system-architecture.png) -->
+<!-- TODO: Add the rendered component diagram under
+     diagrams/system-architecture/ and embed it here once produced. -->
 
 > 📌 **Diagram placeholder:** [`diagrams/system-architecture/`](diagrams/system-architecture/)
 
@@ -142,6 +143,7 @@ dependency order.
 | Config | `params.yaml` (declarative parameters) | Separates config from code |
 | Secrets | `python-dotenv` + `.env` | Keeps credentials out of source |
 
+For the reasoning behind these choices, see [Design Principles](design-principles.md).
 Full dependency list: [`requirements.txt`](../requirements.txt).
 
 ---

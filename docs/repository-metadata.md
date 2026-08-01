@@ -12,11 +12,14 @@ settings when ready.
 A concise description appears at the top of the repository and in search
 results. Recommended:
 
-> End-to-end MLOps pipeline for tabular classification (Pima Indians Diabetes)
-> using DVC for data/pipeline versioning and MLflow (via DagsHub) for experiment
-> tracking.
+> Production-Oriented MLOps Pipeline using DVC, MLflow and Python
 
-Keep it under ~120 characters where possible so it isn't truncated.
+If a slightly longer form is preferred where space allows:
+
+> Production-oriented MLOps pipeline for tabular classification using DVC for
+> data/pipeline versioning and MLflow (via DagsHub) for experiment tracking.
+
+Keep the primary description under ~120 characters so it isn't truncated.
 
 ## GitHub Topics
 

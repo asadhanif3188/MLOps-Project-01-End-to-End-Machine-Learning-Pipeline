@@ -1,8 +1,8 @@
 # GitHub Workflow
 
-This document describes how work is organized and delivered in this repository:
-the branching model, commit conventions, pull request process, labels,
-milestones, and release strategy.
+Work in this repository is organized and delivered through a consistent process:
+the branching model, commit conventions, pull request flow, labels, milestones,
+and release strategy described below.
 
 The project follows **[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow)**
 — a lightweight, branch-based workflow suited to continuous, incremental

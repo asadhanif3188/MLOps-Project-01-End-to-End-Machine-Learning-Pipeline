@@ -1,9 +1,10 @@
 # Engineering Philosophy
 
-This document describes the principles that guide how this repository is built
-and maintained. It explains the *why* behind the structure and decisions
-recorded elsewhere ([architecture](architecture.md), [ADRs](decisions/)), and
-sets expectations for future contributions.
+This repository is built and maintained around a small set of engineering
+principles. They explain the *why* behind the structure and decisions recorded
+elsewhere ([architecture](architecture.md),
+[design principles](design-principles.md), [ADRs](decisions/)) and set
+expectations for future contributions.
 
 These principles describe the direction of the project. Some are already
 realized; others are aspirations being worked toward through the
@@ -106,6 +107,7 @@ Stated explicitly so the philosophy isn't mistaken for current state:
 
 ## Related Documentation
 
+- [Design Principles](design-principles.md)
 - [Architecture](architecture.md)
 - [Project Structure](project-structure.md)
 - [Roadmap](roadmap.md)
