@@ -12,6 +12,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import GridSearchCV, train_test_split
 
+from logging_config import configure_logging, get_logger
+
+logger = get_logger("train")
+
 
 def hyperparameter_tuning(X_train, y_train, param_grid):
     """Perform grid search over hyperparameter space using 3-fold cross-validation.
@@ -33,9 +37,9 @@ def hyperparameter_tuning(X_train, y_train, param_grid):
         n_jobs=-1,
         verbose=2
     )
-    print("INFO: Hyperparameter Tuning Started")
+    logger.info("Hyperparameter tuning started")
     grid_search.fit(X_train, y_train)
-    print("INFO: Hyperparameter Tuning Ended")
+    logger.info("Hyperparameter tuning completed; best params: %s", grid_search.best_params_)
 
     return grid_search
 
@@ -50,6 +54,8 @@ def train(data_path, model_path, random_state, n_estimators, max_depth):
         n_estimators: Baseline number of estimators (used in grid search).
         max_depth: Baseline max depth (used in grid search).
     """
+    logger.info("Train stage started (data=%s, model=%s)", data_path, model_path)
+
     data = pd.read_csv(data_path)
     X = data.drop(columns=['Outcome'])
     y = data['Outcome']
@@ -72,7 +78,7 @@ def train(data_path, model_path, random_state, n_estimators, max_depth):
 
         y_pred = best_model.predict(X_test)
         model_accuracy_score = accuracy_score(y_test, y_pred)
-        print("INFO: Best Model Accuracy:", model_accuracy_score)
+        logger.info("Best model accuracy: %.4f", model_accuracy_score)
 
         mlflow.log_metric("accuracy", model_accuracy_score)
         mlflow.log_param("best_n_estimators", grid_search.best_params_['n_estimators'])
@@ -103,11 +109,13 @@ def train(data_path, model_path, random_state, n_estimators, max_depth):
         with open(model_path, 'wb') as f:
             pickle.dump(best_model, f)
 
-        print(f"INFO: Model saved to {model_path}")
+        logger.info("Model saved to %s", model_path)
+        logger.info("Train stage completed")
 
 
 if __name__ == "__main__":
     load_dotenv()
+    configure_logging()
 
     with open('params.yaml') as f:
         params = yaml.safe_load(f)['train']
