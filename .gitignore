@@ -1,5 +1,8 @@
 myenv/
 .env
 models/
+logs/
+__pycache__/
+*.pyc
 *.pdf
 Sprint-*.md

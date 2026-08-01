@@ -199,9 +199,34 @@ Full dependency list: [`requirements.txt`](../requirements.txt).
 
 ---
 
+## 7. Observability & Logging
+
+All pipeline stages emit structured logs through a single, centralized
+configuration in [`src/logging_config.py`](../src/logging_config.py). This
+replaces the ad-hoc `print()` statements previously used for diagnostics
+(engineering review finding **H-1**).
+
+- **Configuration.** `configure_logging()` sets up console **and** rotating-file
+  handlers on the root logger at each stage's entry point; `get_logger(name)`
+  returns a per-stage logger.
+- **Destinations.** Logs stream to the console and persist to
+  `logs/pipeline.log` (git-ignored, rotating at 5 MB × 3 backups).
+- **Levels.** Controlled by the `LOG_LEVEL` environment variable (default
+  `INFO`): `INFO` for lifecycle, `WARNING` for recoverable issues, `ERROR` for
+  failures, `DEBUG` for development only.
+- **Lifecycle logs.** Each stage emits deliberate start/completion logs plus key
+  outcomes (e.g. best model accuracy, model saved) — enough to trace a run
+  without over-logging.
+
+For the full policy — format, level guidance, and per-stage log inventory — see
+[Logging Strategy](logging.md).
+
+---
+
 ## Related Documentation
 
 - [Project Structure](project-structure.md)
 - [Roadmap](roadmap.md)
 - [Engineering Philosophy](philosophy.md)
 - [Architecture Decision Records](decisions/)
+- [Logging Strategy](logging.md)
