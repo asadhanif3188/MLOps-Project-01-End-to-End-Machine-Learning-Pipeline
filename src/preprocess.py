@@ -3,6 +3,7 @@ import os
 
 import pandas as pd
 import yaml
+from dotenv import load_dotenv
 
 from logging_config import configure_logging, get_logger
 
@@ -27,6 +28,7 @@ def preprocess(input_path, output_path):
 
 
 if __name__ == "__main__":
+    load_dotenv()
     configure_logging()
 
     with open("params.yaml") as f:

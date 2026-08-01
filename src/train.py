@@ -114,8 +114,8 @@ def train(data_path, model_path, random_state, n_estimators, max_depth):
 
 
 if __name__ == "__main__":
-    configure_logging()
     load_dotenv()
+    configure_logging()
 
     with open('params.yaml') as f:
         params = yaml.safe_load(f)['train']

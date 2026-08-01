@@ -39,8 +39,8 @@ def evaluate(data_path, model_path):
 
 
 if __name__ == "__main__":
-    configure_logging()
     load_dotenv()
+    configure_logging()
 
     with open('params.yaml') as f:
         params = yaml.safe_load(f)['test']

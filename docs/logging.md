@@ -44,9 +44,14 @@ def preprocess(input_path, output_path):
 
 
 if __name__ == "__main__":
+    load_dotenv()        # load .env first so LOG_LEVEL / LOG_DIR are honored
     configure_logging()
     ...
 ```
+
+> **Call order matters.** `configure_logging()` reads `LOG_LEVEL` / `LOG_DIR`
+> from the environment at call time, so `load_dotenv()` must run first for
+> values defined in `.env` to take effect.
 
 > The stages run as standalone scripts (`python src/preprocess.py`), so `src/`
 > is on `sys.path` and the sibling import `from logging_config import ...` is
@@ -64,8 +69,18 @@ if __name__ == "__main__":
 2. **Rotating file** (`RotatingFileHandler`) — persisted to
    `logs/pipeline.log`, rotating at **5 MB** with **3** backups retained.
 
-The `logs/` directory is created automatically and is **git-ignored**
-(see [`.gitignore`](../.gitignore)); log files are never committed.
+The `logs/` directory defaults to the **repository root** (anchored to the
+module location, not the process CWD, so the path is stable however a stage is
+launched). It is created automatically and is **git-ignored**
+(see [`.gitignore`](../.gitignore)); log files are never committed. The location
+can be overridden with the `LOG_DIR` environment variable.
+
+### Third-party noise
+
+`configure_logging()` caps known-chatty dependency loggers (`botocore`,
+`urllib3`, `s3transfer`, `git`, …) at `WARNING`, so their output does not swamp
+the pipeline's own logs — even when `LOG_LEVEL=DEBUG` is used to debug pipeline
+code.
 
 ---
 
