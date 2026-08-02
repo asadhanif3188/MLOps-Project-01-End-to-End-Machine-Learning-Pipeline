@@ -1,0 +1,51 @@
+# Keep the build context small, fast, and free of secrets or large artifacts.
+# Everything here is EXCLUDED from the image build context (ADR-005 § security /
+# build cache). A smaller context means faster builds and no accidental leakage
+# of credentials, data, or history into image layers.
+
+# ---- Version control & CI ----
+.git
+.gitignore
+.github
+.editorconfig
+.pre-commit-config.yaml
+
+# ---- Secrets & local environment (NEVER copy into an image) ----
+.env
+.env.*
+!.env.example
+myenv/
+.venv/
+venv/
+
+# ---- Large / versioned artifacts (supplied as volumes at run time) ----
+# Data and models are DVC-managed and mounted, not baked in. The `.dvc/config`
+# remote definition is still copied by the Dockerfile; only DVC's local cache and
+# scratch are excluded here.
+data/
+models/
+logs/
+.dvc/cache/
+.dvc/tmp/
+
+# ---- Python bytecode & tooling caches ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Docs, planning, and IDE files not needed at build time ----
+docs/
+*.md
+*.pdf
+Sprint-*.md
+important-commands.txt
+.vscode/
+
+# ---- Docker files themselves ----
+Dockerfile
+.dockerignore

@@ -46,6 +46,41 @@ Following tools have been used to complete the project.
 - **Experimentation:** MLflow allows users to easily track different experiments (with varying hyperparameters) and compare the performance of models.
 - **Collaboration:** DVC and MLflow enable smooth collaboration in a team environment, where different users can work on the same project and track changes seamlessly.
 
+## Running with Docker
+
+The pipeline ships a production-grade, multi-stage [`Dockerfile`](Dockerfile) that
+runs the same environment on any machine. The image is **non-root**, built on
+`python:3.12-slim`, and keeps data, models, and credentials **out** of the image —
+they are mounted and injected at run time.
+
+**Build the image:**
+```bash
+docker build \
+  --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
+  --build-arg BUILD_VERSION="1.2.0" \
+  -t ml-pipeline:local .
+```
+
+**Run the pipeline** (mount state, supply credentials via `.env` — see
+[`.env.example`](.env.example)):
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/data":/app/data \
+  -v "$(pwd)/models":/app/models \
+  -v "$(pwd)/logs":/app/logs \
+  ml-pipeline:local
+```
+
+Override the command to run a single stage, e.g. `... ml-pipeline:local python src/preprocess.py`.
+A development image with the full lint/type/test toolchain is available via
+`docker build --target development -t ml-pipeline:dev .`.
+
+> Full build/run instructions (including hardened, read-only execution), the
+> design rationale, and the decision record are in
+> [docs/containerization.md](docs/containerization.md) and
+> [ADR-005](docs/decisions/ADR-005-containerization-strategy.md).
+
 ### For Adding DVC Stages
 
 ### Bash Commands
