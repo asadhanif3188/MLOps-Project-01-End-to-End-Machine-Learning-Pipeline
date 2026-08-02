@@ -21,12 +21,42 @@ The project follows [GitHub Flow](docs/github-workflow.md#branch-strategy):
 
 ## Development Setup
 
-<!-- TODO: Document detailed local setup once the README Quick Start is written.
-     In brief: create a Python 3.12 environment, `pip install -r requirements.txt`,
-     copy `.env.example` to `.env`, and configure DVC/MLflow credentials. -->
+Create a Python 3.12 environment, install the development dependencies, and
+enable the git hooks:
 
+```bash
+conda create -p myenv python=3.12 -y && conda activate myenv
+make install-dev            # installs dev deps + registers pre-commit hooks
+cp .env.example .env        # then set the MLflow / DagsHub values (see README)
+```
+
+If you do not have `make`, the equivalent is `pip install -r requirements-dev.txt`
+followed by `pre-commit install` and `pre-commit install --hook-type pre-push`.
+
+The [Developer Guide](docs/developer-guide.md) documents the full local workflow.
 For an overview of the repository layout, see
 [Project Structure](docs/project-structure.md).
+
+## Code Quality
+
+The project uses [Ruff](https://docs.astral.sh/ruff/) (linter and formatter),
+[mypy](https://mypy.readthedocs.io/) (static typing), and
+[pre-commit](https://pre-commit.com/) to keep the codebase consistent. All are
+configured in `pyproject.toml` and wired into the pre-commit hooks, so the same
+checks apply in every environment (and will run in CI once it is added).
+
+Run the full gate before opening a pull request:
+
+```bash
+make check      # lint + format-check + typecheck + test
+```
+
+Individual steps are available as `make format`, `make lint`, `make typecheck`,
+and `make test` (run `make help` for the full list). Once `pre-commit` is
+installed, formatting and static checks run automatically on every commit and the
+test suite on every push. See the
+[Developer Guide](docs/developer-guide.md) for details on each tool and the
+pre-commit workflow.
 
 ## Running Tests
 

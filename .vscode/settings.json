@@ -1,0 +1,33 @@
+{
+  // Workspace editor settings. These make the editor's behaviour match the
+  // command line and pre-commit hooks, so what you see locally is what CI
+  // enforces. Line length, indentation, and line endings all defer to
+  // .editorconfig; the rest wires up Ruff and mypy.
+
+  // Use Ruff as the formatter and linter for Python, and apply its fixes on
+  // save — the same `ruff format` + `ruff check --fix` the hooks run.
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+
+  // Type checking uses the project's strict mypy config (pyproject.toml); the
+  // editor's own basic checker is disabled to avoid duplicate, weaker diagnostics.
+  "python.analysis.typeCheckingMode": "off",
+
+  // Tests live in tests/; discover them with pytest so the Test Explorer works.
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+
+  // Trim editor noise from generated and cache directories.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true
+  }
+}

@@ -21,6 +21,44 @@ markers = [
     "unit: isolated tests of a single component with no external services",
 ]
 
+[tool.ruff]
+# Linter and formatter for the pipeline. Run with: python -m ruff check (lint)
+# and python -m ruff format (format). Ruff replaces the flake8/isort/black stack
+# with a single, fast tool configured entirely here.
+#
+# ``line-length`` is 88 to match the formatter's default and the ``.editorconfig``
+# ``max_line_length`` for ``*.py`` — one number, three tools agree.
+line-length = 88
+target-version = "py312"
+
+# Stages run as scripts with ``src/`` on ``sys.path`` and import their siblings by
+# bare module name (``from exceptions import ...``). Telling Ruff where the source
+# roots are lets the import sorter classify those as first-party (grouped after the
+# third-party block) instead of mistaking them for external packages.
+src = ["src", "tests"]
+
+# Ruff 0.16 formats Python code blocks embedded in Markdown. The docs deliberately
+# contain illustrative and before/after snippets that are prose, not shipped code,
+# so Markdown is excluded — Ruff governs the pipeline's ``.py`` sources only, and
+# ``ruff check .`` / ``ruff format .`` behave the same as the scoped commands.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Rule selection. Each family is enabled deliberately, not by turning on
+# everything and suppressing the fallout:
+#   E, W  pycodestyle errors/warnings   F   pyflakes (unused imports, names)
+#   I     import sorting (isort)        UP  pyupgrade (modern 3.12 syntax)
+#   B     bugbear (likely bugs)         C4  flake8-comprehensions
+#   SIM   flake8-simplify              RUF  Ruff-specific rules (incl. RUF100,
+#   BLE   flake8-blind-except               which flags unused ``# noqa``)
+#
+# ``BLE`` (blind ``except Exception``) is enabled on purpose: it flags silently
+# swallowed catches (``except Exception: pass``). Ruff does not flag the one
+# deliberate process-boundary catch in ``stage_runner.py`` because that handler
+# logs the exception (via ``logger.exception``) rather than hiding it — exactly
+# the distinction the rule is meant to enforce.
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "RUF", "BLE"]
+
 [tool.mypy]
 # Static type checking for the pipeline. Run with: python -m mypy
 python_version = "3.12"

@@ -1,0 +1,69 @@
+# Pre-commit hooks: the same quality gates as CI, run locally before a commit
+# lands. Enable them once per clone with `pre-commit install` (and, for the
+# push-stage tests, `pre-commit install --hook-type pre-push`). Run against the
+# whole tree at any time with `pre-commit run --all-files`.
+#
+# The tool versions here are kept in step with requirements-dev.txt so local
+# hooks, developer environments, and CI all apply the identical rules.
+default_language_version:
+  python: python3.12
+
+# Hooks with no explicit ``stages`` run only at commit time. Without this, a hook
+# that omits ``stages`` runs at *every* installed hook type — so once the pre-push
+# hook is installed, the lint/format/hygiene/mypy hooks would re-run on every push
+# on top of pytest. Pinning the default keeps the commit/push split below honest;
+# the pytest hook opts into ``pre-push`` explicitly.
+default_stages: [pre-commit]
+
+repos:
+  # Ruff: lint (with autofix) then format. Order matters — lint first so its
+  # fixes are themselves formatted by the step that follows.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args: [--fix]
+      - id: ruff-format
+        name: ruff (format)
+
+  # Whitespace, line-ending, and file-hygiene checks. These mirror the rules in
+  # .editorconfig so a commit cannot reintroduce what the editor config forbids.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown uses two trailing spaces for hard line breaks — leave those.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf] # .editorconfig sets end_of_line = lf
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files # guard against committing data/models by mistake
+      - id: check-merge-conflict
+      - id: debug-statements # no stray breakpoint()/pdb in committed code
+
+  # mypy runs from the project environment (language: system) so it uses the
+  # strict config in pyproject.toml. pass_filenames is off because that config
+  # already declares files = ["src"] and relies on mypy_path = "src"; letting
+  # pre-commit pass changed paths instead would break sibling-import resolution.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (type check)
+        entry: python -m mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      # The test suite is fast and deterministic, but running it on every commit
+      # would slow the inner loop, so it is gated at push time instead. Requires
+      # `pre-commit install --hook-type pre-push`.
+      - id: pytest
+        name: pytest (test suite)
+        entry: python -m pytest
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]

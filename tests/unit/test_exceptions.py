@@ -7,6 +7,7 @@ down so a future refactor cannot silently reparent an exception and break the
 "catch ``PipelineError`` at the stage boundary" strategy that ``stage_runner``
 relies on.
 """
+
 import pytest
 
 from exceptions import (

@@ -10,6 +10,7 @@ This is the one place the pipeline catches broadly — deliberately, at the proc
 boundary — and it never swallows: everything is logged with the full traceback
 and re-surfaced as a failure exit code.
 """
+
 import sys
 from collections.abc import Callable
 
@@ -38,6 +39,6 @@ def run_stage(stage: str, main: Callable[[], None]) -> None:
         # (with the chained cause) rather than at every boundary it passed.
         logger.error("%s stage failed: %s", stage, exc, exc_info=True)
         sys.exit(1)
-    except Exception:  # noqa: BLE001 - process-boundary safety net; logged, never swallowed
+    except Exception:
         logger.exception("%s stage failed with an unexpected error", stage)
         sys.exit(1)

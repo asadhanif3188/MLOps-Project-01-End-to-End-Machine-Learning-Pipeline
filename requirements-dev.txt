@@ -2,6 +2,12 @@
 # Install with: pip install -r requirements-dev.txt
 -r requirements.txt
 
+# Linter and formatter; configured in pyproject.toml ([tool.ruff]). Run with
+# `python -m ruff check` (lint) and `python -m ruff format` (format), or via the
+# Makefile targets. Pin the family so every contributor and pre-commit agree on
+# which rules apply; bump deliberately.
+ruff==0.16.1
+
 # Static type checker; configured in pyproject.toml ([tool.mypy]).
 mypy
 
@@ -9,3 +15,7 @@ mypy
 # ([tool.pytest.ini_options]). Run with: python -m pytest
 pytest
 pytest-cov
+
+# Git hook manager; configured in .pre-commit-config.yaml. After installing,
+# run `pre-commit install` once to enable the hooks for this clone.
+pre-commit

@@ -6,3 +6,8 @@ __pycache__/
 *.pyc
 *.pdf
 Sprint-*.md
+
+# Tooling caches (Ruff, mypy, pytest)
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/

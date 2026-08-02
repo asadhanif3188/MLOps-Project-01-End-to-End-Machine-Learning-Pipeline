@@ -12,7 +12,7 @@ actionable errors. So these tests cover both halves of the contract —
 The error paths matter more than the happy paths here: they are the behaviour
 the module was written to guarantee, and the easiest thing to regress.
 """
-import pickle
+
 from pathlib import Path
 
 import pandas as pd
@@ -70,7 +70,9 @@ def test_load_params_non_mapping_section_raises_config_error(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
-def test_load_params_missing_required_key_raises_config_error(params_file: Path) -> None:
+def test_load_params_missing_required_key_raises_config_error(
+    params_file: Path,
+) -> None:
     with pytest.raises(ConfigError, match="missing key"):
         load_params(str(params_file), "train", required=("input", "does_not_exist"))
 

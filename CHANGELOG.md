@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with shared fixtures (`tests/conftest.py`) and configuration in
   `pyproject.toml`; `pytest`/`pytest-cov` added to `requirements-dev.txt`; and
   `docs/testing-strategy.md` documenting the philosophy, layout, and roadmap.
+- Developer experience tooling: Ruff linter and formatter (configured in
+  `pyproject.toml`), a `.pre-commit-config.yaml` running Ruff, file-hygiene
+  checks, mypy, and (at push time) the test suite; a `Makefile` with helpful
+  development commands (`make help`); VS Code workspace settings and recommended
+  extensions under `.vscode/`; `ruff`/`pre-commit` added to
+  `requirements-dev.txt`; and `docs/developer-guide.md` documenting local
+  development, formatting, linting, testing, and the pre-commit workflow.
 
 ### Changed
 
