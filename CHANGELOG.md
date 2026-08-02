@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/design-principles.md` explaining the rationale behind core design and
   technology choices (batch pipeline, Random Forest, Python, DVC, MLflow,
   modular code, YAML configuration).
+- Principal-engineer production-readiness review
+  (`docs/reviews/sprint-02-engineering-review.md`) whose findings drove the
+  Sprint 2 engineering-excellence work.
+- Centralized logging framework: `src/logging_config.py` (console + rotating
+  file handlers, `LOG_LEVEL`/`LOG_DIR` environment control) replacing `print()`
+  across all pipeline stages, with `docs/logging.md` documenting the strategy.
+- Standardized exception handling: a typed hierarchy in `src/exceptions.py`
+  (`PipelineError` → `ConfigError`, `DataError`, `ModelError`,
+  `TrackingError`), centralized IO/config/serialization boundaries in
+  `src/pipeline_io.py`, a uniform stage entry point in `src/stage_runner.py`
+  (log once, exit non-zero), and `docs/exception-strategy.md`.
+- Complete type annotations across `src/` with a strict mypy configuration in
+  `pyproject.toml`, documented in `docs/type-safety.md`.
+- ADR-004 recording the Python quality toolchain decision (Ruff, mypy, pytest,
+  pre-commit).
 - Testing foundation: a `pytest` suite under `tests/` (smoke and unit tests)
   with shared fixtures (`tests/conftest.py`) and configuration in
   `pyproject.toml`; `pytest`/`pytest-cov` added to `requirements-dev.txt`; and
@@ -40,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Pipeline stage scripts (`preprocess.py`, `train.py`, `evaluate.py`)
+  refactored for organization and readability: corrected import grouping,
+  removed redundant intermediates, and reconciled stale docstrings.
+- Core documentation updated to reflect the Sprint 2 engineering work:
+  `docs/architecture.md` (shared infrastructure modules, expanded technology
+  table), `docs/roadmap.md` (v2 delivered vs. remaining scope),
+  `docs/project-structure.md` (new modules, `tests/`, tooling files), and
+  `docs/design-principles.md` (logging, exceptions, typing, testing, and
+  toolchain rationale).
 - Roadmap v1 renamed from "Course Implementation" to "Foundation Release"; v5
   expanded to "Production Cloud Platform" and v6 objectives broadened.
 - ADR-001/002/003 finalized (status Accepted, dated) with a more confident
