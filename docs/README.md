@@ -43,6 +43,13 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-003](decisions/ADR-003-why-dvc.md) | Why DVC |
 | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) |
 
+### Engineering Reviews
+
+| Review | Description |
+|--------|-------------|
+| [Sprint 2 — Production Readiness](reviews/sprint-02-engineering-review.md) | Principal-engineer review that drove the Sprint 2 engineering-excellence work (findings H-1..H-6) |
+| [Sprint 2 — Final Validation](reviews/sprint-02-final-review.md) | Release-readiness validation for v1.1.0: checks, remaining debt, risks, and Sprint 3 recommendations |
+
 ---
 
 ## Process & Governance

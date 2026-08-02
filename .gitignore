@@ -5,7 +5,9 @@ logs/
 __pycache__/
 *.pyc
 *.pdf
-Sprint-*.md
+# Root-level sprint planning docs only (anchored so it does not catch
+# docs/reviews/sprint-*.md, which are tracked deliverables).
+/Sprint-*.md
 
 # Tooling caches (Ruff, mypy, pytest)
 .ruff_cache/

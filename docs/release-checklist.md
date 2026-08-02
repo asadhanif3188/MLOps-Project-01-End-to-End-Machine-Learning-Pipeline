@@ -22,10 +22,10 @@ consistent, documented, and reproducible. Releases follow
 
 ## Verification
 
-- [ ] **Verify tests pass.**
-      <!-- TODO: automated tests are planned (docs/roadmap.md, v2). Until they
-      exist, document manual verification (e.g. `dvc repro`, a full pipeline run,
-      and confirmation that MLflow logged the expected params/metrics). -->
+- [ ] **Verify tests pass** — run `make test` (or `python -m pytest`); the suite
+      must be green (skips for optional, uninstalled runtime deps are expected).
+- [ ] **Verify lint, format, and types** — `make check` (Ruff lint +
+      format-check + mypy) reports no findings.
 - [ ] Confirm the pipeline reproduces cleanly (`dvc repro` / `dvc status`).
 - [ ] Confirm no secrets or credentials are present in the tree.
 

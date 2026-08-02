@@ -89,7 +89,8 @@ Code and docs are written to be understood by the next person.
 - A new contributor should grasp the repository in about ten minutes (see
   [project-structure.md](project-structure.md)).
 - Consistent naming and formatting are enforced by shared conventions
-  (`.editorconfig`; a formatter/linter toolchain is planned in Roadmap v2).
+  (`.editorconfig`) and an automated toolchain — Ruff (lint + format) and mypy,
+  wired into pre-commit hooks (see the [Developer Guide](developer-guide.md)).
 
 ---
 
@@ -97,9 +98,13 @@ Code and docs are written to be understood by the next person.
 
 Stated explicitly so the philosophy isn't mistaken for current state:
 
-- **Automated quality gates** (tests + linting in CI) — planned in Roadmap v3.
+- **Quality gates in CI** — tests, linting, and type checking run locally via
+  pre-commit hooks today; enforcing them server-side on every pull request is
+  planned in Roadmap v3.
   <!-- TODO: revisit once CI is in place. -->
-- **Test coverage** — no automated tests exist yet; targeted in Roadmap v2.
+- **Deeper test coverage** — a testing foundation exists (smoke + unit suites;
+  see [Testing Strategy](testing-strategy.md)), but the MLflow-coupled stage
+  bodies and end-to-end `dvc repro` are not yet covered.
 - **Production operability** (monitoring, drift detection, retraining) — planned
   in Roadmap v6.
 
