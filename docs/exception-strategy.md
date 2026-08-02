@@ -249,5 +249,6 @@ When you write code that can fail:
 ## Related Documentation
 
 - [Logging Strategy](logging.md) — format, levels, and destinations.
+- [Type Safety](type-safety.md) — typing conventions and the mypy configuration.
 - [Architecture](architecture.md) — see §7, Observability & Logging.
 - [Engineering Review](reviews/sprint-02-engineering-review.md) — finding H-2.

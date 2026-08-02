@@ -1,5 +1,4 @@
 """Model training stage: hyperparameter tuning, training, and MLflow tracking."""
-from typing import Any
 from urllib.parse import urlparse
 
 import mlflow
@@ -22,7 +21,7 @@ logger = get_logger("train")
 def hyperparameter_tuning(
     X_train: pd.DataFrame,
     y_train: pd.Series,
-    param_grid: dict[str, list[Any]],
+    param_grid: dict[str, list[int | None]],
 ) -> GridSearchCV:
     """Perform grid search over hyperparameter space using 3-fold cross-validation.
 
@@ -86,7 +85,12 @@ def train(
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20)
     signature = infer_signature(X_train, y_train)
 
-    param_grid = {
+    # Every candidate here is an ``int`` or ``None`` (``max_depth`` allows an
+    # unbounded ``None``), so ``list[int | None]`` is the precise element type.
+    # The explicit annotation is also required: without it the value lists — some
+    # ``list[int]``, one ``list[int | None]`` — infer as the invariant join
+    # ``dict[str, object]``, which would not match the helper's signature.
+    param_grid: dict[str, list[int | None]] = {
         'n_estimators': [100, 200],
         'max_depth': [5, 10, None],
         'min_samples_split': [2, 5],

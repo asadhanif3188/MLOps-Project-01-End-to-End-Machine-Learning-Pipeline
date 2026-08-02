@@ -11,7 +11,7 @@ boundary — and it never swallows: everything is logged with the full traceback
 and re-surfaced as a failure exit code.
 """
 import sys
-from typing import Callable
+from collections.abc import Callable
 
 from exceptions import PipelineError
 from logging_config import get_logger

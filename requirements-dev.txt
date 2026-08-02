@@ -1,0 +1,6 @@
+# Development-only tooling (not needed to run the pipeline).
+# Install with: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Static type checker; configured in pyproject.toml ([tool.mypy]).
+mypy

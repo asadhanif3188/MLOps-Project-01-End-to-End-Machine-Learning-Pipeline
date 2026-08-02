@@ -12,7 +12,8 @@ messages: exception handling is standardized in one place.
 """
 import os
 import pickle
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -31,7 +32,10 @@ def load_params(
         required: Keys that must be present under ``stage``.
 
     Returns:
-        The parameter mapping for ``stage``.
+        The parameter mapping for ``stage``. Values are typed ``Any``: YAML is a
+        dynamic format, so the concrete type of each parameter is only known to
+        the calling stage, which passes them into its own typed ``*(...)`` call
+        where the real types are checked.
 
     Raises:
         ConfigError: If the file is missing or unparseable, the ``stage``
@@ -175,7 +179,9 @@ def load_pickle(path: str) -> Any:
         path: Path to the pickle file.
 
     Returns:
-        The deserialized object.
+        The deserialized object, typed ``Any``: the on-disk type is not known
+        statically, and callers use the result as the concrete artifact they
+        expect (e.g. a fitted estimator with ``.predict``).
 
     Raises:
         ModelError: If the file is missing, or is corrupt / not a valid pickle.
@@ -196,8 +202,12 @@ def load_pickle(path: str) -> Any:
         raise ModelError(f"Could not read model file {path!r}: {exc}") from exc
 
 
-def save_pickle(obj: Any, path: str) -> None:
+def save_pickle(obj: object, path: str) -> None:
     """Serialize an object to disk with pickle, creating parent directories.
+
+    ``obj`` is typed ``object`` rather than ``Any``: this helper makes no
+    assumptions about — and calls nothing on — the value it serializes, so the
+    stricter type documents that and still accepts anything picklable.
 
     Args:
         obj: The object to serialize (e.g. a fitted estimator).
