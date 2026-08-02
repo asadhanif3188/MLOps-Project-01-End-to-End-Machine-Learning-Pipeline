@@ -1,13 +1,16 @@
 # Containerization Strategy
 
-This document defines **how the pipeline will be containerized** and the
-engineering reasoning behind each decision. It is a **design document**: nothing
-here is implemented yet. No `Dockerfile`, `.dockerignore`, or `docker-compose.yml`
-exists in the repository at the time of writing, and none is introduced by this
-document.
+This document defines **how the pipeline is containerized** and the engineering
+reasoning behind each decision.
 
-Its purpose is to record the decisions **before** implementation so the eventual
-build is deliberate rather than improvised. The ratified summary lives in
+The strategy was authored first, as a design document, and is now **implemented**:
+the repository ships a multi-stage [`Dockerfile`](../Dockerfile) and a
+[`.dockerignore`](../.dockerignore) built directly from these decisions. A
+`docker-compose.yml` is **not** included yet (deferred, see
+[§14](#14-future-cicd-integration) and the roadmap). Concrete build and run
+instructions are in [§15](#15-build--run).
+
+The ratified summary lives in
 [ADR-005](decisions/ADR-005-containerization-strategy.md); this document carries
 the full rationale.
 
@@ -449,6 +452,118 @@ Containerization is the artifact CI/CD produces and validates
 The CI provider and pipeline design are **not yet selected** (open TODO in
 [Roadmap v3](roadmap.md#version-3--cicd)); this section defines the container's
 role once they are, and will be ratified alongside the CI ADR.
+
+---
+
+## 15. Build & Run
+
+The repository ships a single multi-stage [`Dockerfile`](../Dockerfile) with
+three targets — `builder` (internal), `runtime` (default, production), and
+`development` — and a [`.dockerignore`](../.dockerignore) that keeps the build
+context small and secret-free. BuildKit is required for the cache mounts and
+`# syntax` directive; it is the default in current Docker.
+
+### Build the production image
+
+```bash
+# From the repository root. The two build args stamp OCI provenance labels.
+docker build \
+  --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
+  --build-arg BUILD_VERSION="1.2.0" \
+  -t ml-pipeline:local .
+```
+
+This produces the lean, **non-root** `runtime` image. The build compiles/installs
+dependencies in the throwaway `builder` stage and copies only the resulting
+virtualenv forward, so no compilers ship in the final image.
+
+### Build the development image
+
+```bash
+docker build --target development -t ml-pipeline:dev .
+```
+
+Identical runtime environment plus the quality toolchain (Ruff, mypy, pytest,
+pre-commit). Intended to be run with the working tree bind-mounted:
+
+```bash
+# Live-edit on the host; run the toolchain inside the container.
+docker run --rm -it -v "$(pwd)":/app ml-pipeline:dev
+# then, inside: make check   /   python -m pytest   /   dvc repro
+```
+
+### Run the pipeline
+
+The `runtime` image's default command is `dvc repro`. State (data, models, logs)
+is **externalized as volumes** and credentials are **injected at run time** —
+nothing sensitive lives in the image ([§10](#10-environment-variable-strategy),
+[§11](#11-volume-strategy)).
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/data":/app/data \
+  -v "$(pwd)/models":/app/models \
+  -v "$(pwd)/logs":/app/logs \
+  ml-pipeline:local
+```
+
+Run a single stage by overriding the command:
+
+```bash
+docker run --rm --env-file .env \
+  -v "$(pwd)/data":/app/data -v "$(pwd)/models":/app/models \
+  ml-pipeline:local python src/preprocess.py
+```
+
+> On Windows PowerShell, replace `$(pwd)` with `${PWD}` and the trailing `\`
+> line-continuations with a backtick (`` ` ``), or put the command on one line.
+
+### Run hardened (optional, recommended)
+
+The image is designed to run under a locked-down runtime — useful as a local
+preview of the Kubernetes restricted Pod Security Standard
+([§13](#13-future-kubernetes-compatibility)):
+
+```bash
+docker run --rm \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --tmpfs /tmp \
+  --env-file .env \
+  -v "$(pwd)/data":/app/data \
+  -v "$(pwd)/models":/app/models \
+  -v "$(pwd)/logs":/app/logs \
+  ml-pipeline:local
+```
+
+Writes are confined to the mounted volumes and `/tmp`; the root filesystem stays
+read-only.
+
+### Notes & known follow-ups
+
+- **`dvc repro` prerequisites.** The default command operates on the DVC
+  pipeline: it needs the DVC-tracked `data/` (mounted, and/or fetched with
+  `dvc pull`) and valid MLflow/DagsHub credentials in the environment. Without a
+  configured remote and data, run individual stages or use the development image
+  for exploration.
+- **No `HEALTHCHECK`** by design — this is a run-to-completion batch job, not a
+  service ([§8](#8-security-considerations)). A liveness/readiness probe belongs
+  to the future serving component (Roadmap v6). A build-time import smoke test in
+  the `Dockerfile` validates the environment instead.
+- **Dependency pinning.** [`requirements.txt`](../requirements.txt) currently
+  pins by name, not version/hash. The base image is pinned by codename
+  (`python:3.12-slim-bookworm`). Moving both to digests/hashes for byte-for-byte
+  reproducibility is the tracked follow-up from
+  [ADR-005](decisions/ADR-005-containerization-strategy.md).
+- **Image size.** The validated images measure ~1.6 GB (runtime) and ~2.1 GB
+  (development). The footprint is dominated by the scientific/MLOps stack
+  (`scipy`, `pyarrow`, `matplotlib`, `mlflow`, `boto3`) rather than avoidable
+  build cruft — multi-stage already keeps compilers and caches out of the runtime
+  image. Concrete reductions for a later pass: switch tracking to `mlflow-skinny`,
+  drop unused heavy transitives, and move the runtime stage to **distroless**
+  ([§7](#7-base-image-selection)).
 
 ---
 
