@@ -8,6 +8,13 @@
 default_language_version:
   python: python3.12
 
+# Hooks with no explicit ``stages`` run only at commit time. Without this, a hook
+# that omits ``stages`` runs at *every* installed hook type — so once the pre-push
+# hook is installed, the lint/format/hygiene/mypy hooks would re-run on every push
+# on top of pytest. Pinning the default keeps the commit/push split below honest;
+# the pytest hook opts into ``pre-push`` explicitly.
+default_stages: [pre-commit]
+
 repos:
   # Ruff: lint (with autofix) then format. Order matters — lint first so its
   # fixes are themselves formatted by the step that follows.

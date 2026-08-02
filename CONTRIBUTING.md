@@ -42,8 +42,8 @@ For an overview of the repository layout, see
 The project uses [Ruff](https://docs.astral.sh/ruff/) (linter and formatter),
 [mypy](https://mypy.readthedocs.io/) (static typing), and
 [pre-commit](https://pre-commit.com/) to keep the codebase consistent. All are
-configured in `pyproject.toml` and wired into the pre-commit hooks, so the checks
-you run locally are exactly the ones CI enforces.
+configured in `pyproject.toml` and wired into the pre-commit hooks, so the same
+checks apply in every environment (and will run in CI once it is added).
 
 Run the full gate before opening a pull request:
 

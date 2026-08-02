@@ -35,7 +35,9 @@ The formatter is black-compatible, so the 88-character line length in
 > Every target below is a thin wrapper over a `python -m …` command, so if you
 > do not have `make`, run the underlying command shown in each section directly.
 > Install `make` via [Chocolatey](https://chocolatey.org/) (`choco install make`)
-> or use WSL if you prefer the shortcuts.
+> or use WSL if you prefer the shortcuts. A few targets (`help`, `clean`) also
+> use POSIX utilities (`grep`, `awk`, `find`, `rm`), so on Windows run them from
+> Git Bash or WSL rather than `cmd`/PowerShell.
 
 ---
 
@@ -79,7 +81,8 @@ commit. See [§6](#6-pre-commit-workflow) for what those hooks do.
 
 While working, the fastest feedback comes from your editor (formatting and lint
 fixes apply on save — see [§7](#7-editor-configuration)). Before opening a pull
-request, run the full gate exactly as CI will:
+request, run the full quality gate — the same checks the pre-commit hooks apply,
+and the ones continuous integration will run once it is added (Roadmap v3):
 
 ```bash
 make check      # lint + format-check + typecheck + test
@@ -121,10 +124,10 @@ make lint-fix   # apply safe autofixes     (python -m ruff check --fix .)
 ```
 
 Most findings are auto-fixable. When a lint rule must genuinely be broken, add a
-scoped, *explained* `# noqa: <CODE>` on the line — for example the deliberate
-process-boundary catch in [`src/stage_runner.py`](../src/stage_runner.py) carries
-`# noqa: BLE001`. Ruff's `RUF100` rule flags any `# noqa` that is no longer
-needed, so suppressions cannot silently rot.
+scoped, *explained* `# noqa: <CODE>` on the line — never a bare `# noqa`, which
+silences everything. Ruff's `RUF100` rule flags any `# noqa` that is no longer
+needed and removes it on `--fix`, so suppressions cannot silently rot: a
+suppression only survives while the rule it names actually fires on that line.
 
 ---
 
@@ -152,9 +155,10 @@ guarding a contract worth protecting, not by moving a number.
 
 ## 6. Pre-commit workflow
 
-[pre-commit](https://pre-commit.com/) runs the same quality gates locally that
-CI enforces, so problems are caught before they are ever pushed. The hooks are
-defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml).
+[pre-commit](https://pre-commit.com/) runs the project's quality gates locally,
+so problems are caught before they are ever pushed (and, once continuous
+integration is added in Roadmap v3, these are the checks it will run). The hooks
+are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml).
 
 ### How it is wired
 
@@ -166,9 +170,10 @@ The hooks run in two stages, chosen to keep the inner loop fast:
 | **push** | the full pytest suite | every `git push` |
 
 Formatting and fast static checks run on every commit; the test suite is gated
-at push time so individual commits stay quick. The tool versions pinned in the
-hook config match `requirements-dev.txt`, so local hooks and CI apply identical
-rules.
+at push time so individual commits stay quick. This split is enforced by
+`default_stages: [pre-commit]` in the hook config, with the pytest hook opting
+into `pre-push` explicitly. The tool versions pinned in the hook config match
+`requirements-dev.txt`, so every environment applies identical rules.
 
 ### Using it
 

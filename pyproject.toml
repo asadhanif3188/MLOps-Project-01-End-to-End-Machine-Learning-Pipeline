@@ -52,17 +52,12 @@ extend-exclude = ["*.md"]
 #   SIM   flake8-simplify              RUF  Ruff-specific rules (incl. RUF100,
 #   BLE   flake8-blind-except               which flags unused ``# noqa``)
 #
-# ``BLE`` (blind ``except Exception``) is enabled on purpose: the one deliberate
-# process-boundary catch in ``stage_runner.py`` carries an explaining
-# ``# noqa: BLE001``, so the rule documents the exception rather than hiding it.
+# ``BLE`` (blind ``except Exception``) is enabled on purpose: it flags silently
+# swallowed catches (``except Exception: pass``). Ruff does not flag the one
+# deliberate process-boundary catch in ``stage_runner.py`` because that handler
+# logs the exception (via ``logger.exception``) rather than hiding it — exactly
+# the distinction the rule is meant to enforce.
 select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "RUF", "BLE"]
-
-[tool.ruff.lint.per-file-ignores]
-# Tests favour readability over some lint niceties:
-#   S101 is not enabled here, but assert-heavy test bodies and long, descriptive
-#   fixture/parametrize lines are expected — keep this list narrow and add rules
-#   only when a real, justified conflict appears.
-"tests/**" = []
 
 [tool.mypy]
 # Static type checking for the pipeline. Run with: python -m mypy
