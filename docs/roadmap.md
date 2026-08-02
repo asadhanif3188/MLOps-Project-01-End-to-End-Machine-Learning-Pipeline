@@ -46,8 +46,8 @@ professional, maintainable codebase.
 
 **Delivered:**
 
-- ✅ Professional documentation: architecture, roadmap, project structure,
-  ADRs, engineering philosophy, design principles, and a rewritten README.
+- ✅ Professional documentation under `docs/`: architecture, roadmap, project
+  structure, ADRs, engineering philosophy, and design principles.
 - ✅ Repository hygiene and governance: LICENSE, CONTRIBUTING, CODE_OF_CONDUCT,
   CHANGELOG, `.editorconfig`, security and support policies, issue/PR templates.
 - ✅ Principal-engineer production-readiness review
@@ -76,6 +76,8 @@ professional, maintainable codebase.
 - ⬜ Decouple stage bodies from MLflow/network so `train` and `evaluate` logic
   becomes unit-testable (see the
   [testing roadmap](testing-strategy.md#4-future-testing-roadmap)).
+- ⬜ Rewrite the root `README.md` to match the professional `docs/` set; it is
+  still the original baseline README.
 
 **Expected outcome:** A repository that reads as an actively maintained,
 professionally engineered project and is safe to change with confidence.

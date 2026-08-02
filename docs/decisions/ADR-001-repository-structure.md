@@ -48,8 +48,12 @@ The design rests on three choices:
    modules imported rather than executed as scripts).
    - *Pros:* better testability, reuse, packaging.
    - *Cons:* more ceremony than a script-per-stage pipeline needs today.
-   - *Decision:* deferred; a package layout is a candidate for the
-     engineering-quality milestone (Roadmap v2).
+   - *Decision:* not adopted. The Roadmap v2 testing foundation was delivered
+     without a package layout: the `pytest` suite imports the stages by their
+     bare module names via `pythonpath = ["src"]` (see
+     [testing-strategy.md](../testing-strategy.md)), so the script-per-stage
+     structure was kept. A package layout remains a candidate only if import or
+     reuse pressure appears later.
 2. **Notebook-driven structure** (Jupyter notebooks as the primary artifact).
    - *Decision:* rejected — poor reproducibility, hard to version and automate.
 3. **Framework-imposed layout** (e.g., Kedro or Cookiecutter Data Science).
@@ -68,9 +72,14 @@ The design rests on three choices:
 
 **Trade-offs and follow-ups**
 
-- Scripts are executed directly rather than imported, which makes unit testing
-  and reuse harder. Introducing an importable structure is planned alongside
-  testing in Roadmap v2.
+- Scripts are executed directly rather than imported. The Roadmap v2 testing
+  foundation addressed the testability gap without a package layout, by putting
+  `src/` on the path for the test runner (`pythonpath = ["src"]`) so tests
+  import the stages the same way the interpreter does at runtime.
 - A flat `src/` will not scale well if many stages or utilities are added later;
   it will be revisited when that pressure appears.
-- No packaging metadata exists yet (`pyproject.toml`/`setup.cfg`).
+- A `pyproject.toml` now exists, but only as central configuration for the
+  tooling (Ruff, mypy, pytest — see
+  [ADR-004](ADR-004-python-quality-toolchain.md)); it declares no packaging
+  metadata, so the pipeline remains a set of runnable scripts rather than an
+  installable distribution.
