@@ -88,11 +88,14 @@ Key settings and their rationale:
 The ML and tracking dependencies are not type-checked here, for one of two
 reasons:
 
-- **No type information at all** — `mlflow`, `scikit-learn`, `dagshub`, and `dvc`
-  ship neither a `py.typed` marker nor a published stub package.
+- **No type information at all** — `mlflow` and `scikit-learn` ship neither a
+  `py.typed` marker nor a published stub package.
 - **Stubs available but not installed** — `pandas` and `yaml` have maintained
   stub packages (`pandas-stubs`, `types-PyYAML`) that are not currently
   dependencies.
+
+(`dagshub` and `dvc` are used only as command-line tools here, never imported,
+so they are not part of the type-checked surface at all.)
 
 All are listed under a `[[tool.mypy.overrides]]` block with
 `ignore_missing_imports = true`, which scopes "untyped" strictly to those

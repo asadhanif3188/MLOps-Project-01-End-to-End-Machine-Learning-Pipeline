@@ -22,16 +22,16 @@ warn_unreachable = true
 no_implicit_optional = true
 strict_equality = true
 
-# The ML, tracking, and config libraries below ship no type information (no
-# bundled ``py.typed`` marker and no published stub packages). Ignoring their
-# missing imports scopes "untyped" strictly to those third-party boundaries; it
-# does not weaken checking of the pipeline's own code.
+# The imported third-party libraries below are not type-checked: mlflow and
+# scikit-learn ship no type information at all, while pandas and yaml have stub
+# packages (pandas-stubs, types-PyYAML) that are not installed here. Ignoring
+# their missing imports scopes "untyped" strictly to those third-party
+# boundaries; it does not weaken checking of the pipeline's own code.
+# (python-dotenv ships its own types, so it is omitted and stays checked.)
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
     "sklearn.*",
-    "dagshub.*",
-    "dvc.*",
     "pandas",
     "pandas.*",
     "yaml",
