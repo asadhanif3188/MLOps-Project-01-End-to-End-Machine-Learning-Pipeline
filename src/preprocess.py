@@ -1,4 +1,5 @@
 """Data preprocessing stage: reads raw CSV and writes processed output."""
+
 from dotenv import load_dotenv
 
 from logging_config import configure_logging, get_logger
@@ -18,12 +19,16 @@ def preprocess(input_path: str, output_path: str) -> None:
     Raises:
         DataError: If the input cannot be read or the output cannot be written.
     """
-    logger.info("Preprocess stage started (input=%s, output=%s)", input_path, output_path)
+    logger.info(
+        "Preprocess stage started (input=%s, output=%s)", input_path, output_path
+    )
 
     df = read_csv(input_path)
     write_csv(df, output_path, header=False, index=False)
 
-    logger.info("Preprocess stage completed: %d rows written to %s", len(df), output_path)
+    logger.info(
+        "Preprocess stage completed: %d rows written to %s", len(df), output_path
+    )
 
 
 def main() -> None:

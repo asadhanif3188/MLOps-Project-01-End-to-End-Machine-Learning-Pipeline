@@ -1,4 +1,5 @@
 """Model training stage: hyperparameter tuning, training, and MLflow tracking."""
+
 from urllib.parse import urlparse
 
 import mlflow
@@ -36,15 +37,13 @@ def hyperparameter_tuning(
     rf_model = RandomForestClassifier()
 
     grid_search = GridSearchCV(
-        estimator=rf_model,
-        param_grid=param_grid,
-        cv=3,
-        n_jobs=-1,
-        verbose=2
+        estimator=rf_model, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2
     )
     logger.info("Hyperparameter tuning started")
     grid_search.fit(X_train, y_train)
-    logger.info("Hyperparameter tuning completed; best params: %s", grid_search.best_params_)
+    logger.info(
+        "Hyperparameter tuning completed; best params: %s", grid_search.best_params_
+    )
 
     return grid_search
 
@@ -75,8 +74,8 @@ def train(
 
     data = read_csv(data_path)
     ensure_columns(data, ["Outcome"], data_path)
-    X = data.drop(columns=['Outcome'])
-    y = data['Outcome']
+    X = data.drop(columns=["Outcome"])
+    y = data["Outcome"]
 
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
@@ -91,10 +90,10 @@ def train(
     # ``list[int]``, one ``list[int | None]`` — infer as the invariant join
     # ``dict[str, object]``, which would not match the helper's signature.
     param_grid: dict[str, list[int | None]] = {
-        'n_estimators': [100, 200],
-        'max_depth': [5, 10, None],
-        'min_samples_split': [2, 5],
-        'min_samples_leaf': [1, 2],
+        "n_estimators": [100, 200],
+        "max_depth": [5, 10, None],
+        "min_samples_split": [2, 5],
+        "min_samples_leaf": [1, 2],
     }
 
     grid_search = hyperparameter_tuning(X_train, y_train, param_grid)
@@ -113,10 +112,16 @@ def train(
         mlflow.set_tracking_uri(tracking_uri)
         with mlflow.start_run():
             mlflow.log_metric("accuracy", model_accuracy_score)
-            mlflow.log_param("best_n_estimators", grid_search.best_params_['n_estimators'])
-            mlflow.log_param("best_max_depth", grid_search.best_params_['max_depth'])
-            mlflow.log_param("best_samples_split", grid_search.best_params_['min_samples_split'])
-            mlflow.log_param("best_samples_leaf", grid_search.best_params_['min_samples_leaf'])
+            mlflow.log_param(
+                "best_n_estimators", grid_search.best_params_["n_estimators"]
+            )
+            mlflow.log_param("best_max_depth", grid_search.best_params_["max_depth"])
+            mlflow.log_param(
+                "best_samples_split", grid_search.best_params_["min_samples_split"]
+            )
+            mlflow.log_param(
+                "best_samples_leaf", grid_search.best_params_["min_samples_leaf"]
+            )
 
             mlflow.log_text(str(cm), "confusion_matrix.txt")
             mlflow.log_text(str(cr), "classification_report.txt")
@@ -157,11 +162,11 @@ def main() -> None:
     )
 
     train(
-        params['input'],
-        params['output'],
-        params['random_state'],
-        params['n_estimators'],
-        params['max_depth'],
+        params["input"],
+        params["output"],
+        params["random_state"],
+        params["n_estimators"],
+        params["max_depth"],
     )
 
 

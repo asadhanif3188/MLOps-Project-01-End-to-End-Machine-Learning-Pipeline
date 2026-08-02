@@ -11,6 +11,7 @@ the process boundary. Its contract has three edges worth pinning:
 
 These are exactly the properties that would silently rot without a test.
 """
+
 import pytest
 
 from exceptions import DataError
@@ -28,6 +29,7 @@ def test_clean_run_does_not_exit() -> None:
 @pytest.mark.unit
 def test_pipeline_error_exits_nonzero() -> None:
     """An expected failure is caught and turned into a non-zero exit."""
+
     def main() -> None:
         raise DataError("dataset missing")
 
@@ -39,6 +41,7 @@ def test_pipeline_error_exits_nonzero() -> None:
 @pytest.mark.unit
 def test_unexpected_error_exits_nonzero() -> None:
     """An unexpected bug is also contained at the boundary (exit 1), not leaked."""
+
     def main() -> None:
         raise ValueError("some unforeseen bug")
 
@@ -53,6 +56,7 @@ def test_pipeline_error_is_logged_with_traceback(
 ) -> None:
     """The failure is logged once, at ERROR, with the stage name and message —
     the actionable record an operator reads instead of a raw traceback."""
+
     def main() -> None:
         raise DataError("dataset missing")
 
@@ -66,6 +70,7 @@ def test_pipeline_error_is_logged_with_traceback(
 @pytest.mark.unit
 def test_keyboard_interrupt_is_not_swallowed() -> None:
     """Ctrl-C must propagate untouched, not be caught as a stage failure."""
+
     def main() -> None:
         raise KeyboardInterrupt
 
@@ -76,6 +81,7 @@ def test_keyboard_interrupt_is_not_swallowed() -> None:
 @pytest.mark.unit
 def test_system_exit_is_not_swallowed() -> None:
     """An explicit ``sys.exit`` from within a stage passes through unchanged."""
+
     def main() -> None:
         raise SystemExit(2)
 

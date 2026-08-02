@@ -1,4 +1,5 @@
 """Model evaluation stage: loads trained model and logs accuracy metrics."""
+
 import mlflow
 from dotenv import load_dotenv
 from mlflow.exceptions import MlflowException
@@ -29,8 +30,8 @@ def evaluate(data_path: str, model_path: str) -> None:
 
     data = read_csv(data_path)
     ensure_columns(data, ["Outcome"], data_path)
-    X = data.drop(columns=['Outcome'])
-    y = data['Outcome']
+    X = data.drop(columns=["Outcome"])
+    y = data["Outcome"]
 
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
@@ -67,8 +68,8 @@ def main() -> None:
     params = load_params("params.yaml", "test", required=("data", "model"))
 
     evaluate(
-        params['data'],
-        params['model'],
+        params["data"],
+        params["model"],
     )
 
 

@@ -10,6 +10,7 @@ Anything that needs a *network* (MLflow, DagsHub) is intentionally absent: those
 boundaries are covered by smoke tests and left to integration testing, not
 reimplemented as mocks here.
 """
+
 from pathlib import Path
 
 import pandas as pd
@@ -46,7 +47,10 @@ def csv_path(tmp_path: Path, sample_dataframe: pd.DataFrame) -> Path:
 def params_file(tmp_path: Path) -> Path:
     """A representative ``params.yaml`` on disk, mirroring the real one."""
     params = {
-        "preprocess": {"input": "data/raw/data.csv", "output": "data/processed/data.csv"},
+        "preprocess": {
+            "input": "data/raw/data.csv",
+            "output": "data/processed/data.csv",
+        },
         "train": {
             "input": "data/raw/data.csv",
             "output": "models/model.pkl",

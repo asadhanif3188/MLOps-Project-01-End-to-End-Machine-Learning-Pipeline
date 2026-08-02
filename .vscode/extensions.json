@@ -1,0 +1,11 @@
+{
+  // Extensions recommended for working on this project. VS Code prompts to
+  // install these when the repository is opened; they make the editor apply the
+  // same tooling the command line and pre-commit hooks use.
+  "recommendations": [
+    "charliermarsh.ruff", // Ruff linter + formatter (mirrors [tool.ruff])
+    "ms-python.python", // Python language support
+    "ms-python.mypy-type-checker", // mypy diagnostics (mirrors [tool.mypy])
+    "editorconfig.editorconfig" // honor .editorconfig (charset, EOL, indent)
+  ]
+}

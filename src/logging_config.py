@@ -24,6 +24,7 @@ be provided via ``.env`` as long as ``load_dotenv()`` runs first):
 - ``LOG_LEVEL`` — log level name (default ``INFO``).
 - ``LOG_DIR`` — directory for the log file (default: ``logs/`` at the repo root).
 """
+
 import logging
 import os
 from logging.handlers import RotatingFileHandler

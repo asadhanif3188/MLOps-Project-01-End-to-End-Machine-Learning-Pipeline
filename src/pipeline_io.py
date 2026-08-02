@@ -10,6 +10,7 @@ Keeping the ``try``/``except`` blocks here (rather than inlined in each stage)
 means the three stages catch the *same* low-level errors and emit the *same*
 messages: exception handling is standardized in one place.
 """
+
 import os
 import pickle
 from collections.abc import Sequence
@@ -21,9 +22,7 @@ import yaml
 from exceptions import ConfigError, DataError, ModelError
 
 
-def load_params(
-    path: str, stage: str, required: Sequence[str] = ()
-) -> dict[str, Any]:
+def load_params(path: str, stage: str, required: Sequence[str] = ()) -> dict[str, Any]:
     """Load one stage's parameters from a YAML config file.
 
     Args:
@@ -191,8 +190,7 @@ def load_pickle(path: str) -> Any:
             return pickle.load(f)
     except FileNotFoundError as exc:
         raise ModelError(
-            f"Model file not found: {path!r}. Run the train stage first to "
-            f"produce it."
+            f"Model file not found: {path!r}. Run the train stage first to produce it."
         ) from exc
     except (pickle.UnpicklingError, EOFError, ValueError) as exc:
         raise ModelError(
@@ -226,6 +224,4 @@ def save_pickle(obj: object, path: str) -> None:
     except OSError as exc:
         raise ModelError(f"Could not write model to {path!r}: {exc}") from exc
     except (pickle.PicklingError, TypeError, AttributeError) as exc:
-        raise ModelError(
-            f"Object could not be pickled to {path!r}: {exc}"
-        ) from exc
+        raise ModelError(f"Object could not be pickled to {path!r}: {exc}") from exc
