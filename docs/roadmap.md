@@ -93,12 +93,16 @@ professionally engineered project and is safe to change with confidence.
 - Continuous integration: run linting and tests on every pull request.
 - Automated pipeline validation (e.g., `dvc repro` / `dvc status`) in CI.
 - Enforced formatting and basic security scanning.
+- Build, scan, and publish the container image
+  ([Containerization Strategy](containerization.md), [ADR-005](decisions/ADR-005-containerization-strategy.md)).
 - Branch protection requiring green checks before merge.
 
 **Expected outcome:** Every change is automatically validated before merge,
 reducing regressions and manual effort.
 
-> **TODO:** Select the CI provider and ratify the pipeline design as an ADR.
+> **TODO:** Select the CI provider and ratify the pipeline design as an ADR. The
+> container's role in CI/CD is designed in the
+> [Containerization Strategy](containerization.md).
 
 ---
 
@@ -108,7 +112,9 @@ reducing regressions and manual effort.
 
 **Objectives:**
 
-- Containerize the pipeline for consistent execution environments.
+- Containerize the pipeline for consistent execution environments
+  ([Containerization Strategy](containerization.md),
+  [ADR-005](decisions/ADR-005-containerization-strategy.md) — strategy designed).
 - Run pipeline stages as orchestrated workloads on Kubernetes.
 - Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
 - Define resource requests/limits for reproducible scheduling.
@@ -116,8 +122,9 @@ reducing regressions and manual effort.
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
 independent of a developer's local machine.
 
-> **TODO:** Ratify container base image, orchestration approach, and secret
-> handling as ADRs.
+> **TODO:** The container **base image** is ratified in
+> [ADR-005](decisions/ADR-005-containerization-strategy.md); still to ratify as
+> ADRs — the orchestration approach and cluster secret handling.
 
 ---
 

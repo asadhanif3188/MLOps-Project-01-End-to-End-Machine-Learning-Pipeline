@@ -27,6 +27,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Exception Strategy](exception-strategy.md) | Exception hierarchy, error propagation, and error logging |
 | [Testing Strategy](testing-strategy.md) | Testing philosophy, `tests/` layout, and the testing roadmap |
 | [Developer Guide](developer-guide.md) | Local setup and the day-to-day tooling (format, lint, type-check, test, pre-commit) |
+| [Containerization Strategy](containerization.md) | Design for containerizing the pipeline (dev/prod images, security, K8s/CI readiness) — design only, not yet implemented |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
@@ -42,6 +43,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-002](decisions/ADR-002-why-mlflow.md) | Why MLflow |
 | [ADR-003](decisions/ADR-003-why-dvc.md) | Why DVC |
 | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) |
+| [ADR-005](decisions/ADR-005-containerization-strategy.md) | Containerization Strategy |
 
 ### Engineering Reviews
 
