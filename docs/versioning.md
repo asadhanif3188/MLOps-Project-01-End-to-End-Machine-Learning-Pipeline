@@ -72,8 +72,10 @@ While the project is at `0.y.z`, anything may change at any time; the public
 interface should not be considered stable. The first stable, tagged release is
 `1.0.0`.
 
-> <!-- TODO: confirm the version to assign to the current course-implementation
-> baseline (v1 in the roadmap) and record it in CHANGELOG.md. -->
+The project has passed that point: `1.0.0` was tagged for the Sprint 1
+professional-repository baseline (2026-08-01) and `1.1.0` for the Sprint 2
+engineering-excellence work. Both are recorded in
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 ---
 

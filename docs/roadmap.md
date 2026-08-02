@@ -18,7 +18,7 @@ prescribing implementation details. Concrete technical decisions are captured as
 
 ---
 
-## Version 1 — Foundation Release ✅
+## Version 1 — Foundation Release
 
 **Objective:** Establish a working, reproducible ML pipeline as the baseline for
 future engineering enhancements.
@@ -39,7 +39,7 @@ tracks experiments — the foundation everything else builds on.
 
 ---
 
-## Version 2 — Engineering Improvements 🚧
+## Version 2 — Engineering Improvements
 
 **Objective:** Elevate the repository from a baseline implementation to a
 professional, maintainable codebase.
@@ -84,7 +84,7 @@ professionally engineered project and is safe to change with confidence.
 
 ---
 
-## Version 3 — CI/CD ⬜
+## Version 3 — CI/CD
 
 **Objective:** Automate quality gates and pipeline reproduction.
 
@@ -102,7 +102,7 @@ reducing regressions and manual effort.
 
 ---
 
-## Version 4 — Kubernetes ⬜
+## Version 4 — Kubernetes
 
 **Objective:** Make the pipeline portable and horizontally runnable.
 
@@ -121,7 +121,7 @@ independent of a developer's local machine.
 
 ---
 
-## Version 5 — Production Cloud Platform ⬜
+## Version 5 — Production Cloud Platform
 
 **Objective:** Provision and operate the pipeline on managed cloud
 infrastructure defined as code.
@@ -143,7 +143,7 @@ reproducibly from code with clear separation of environments.
 
 ---
 
-## Version 6 — Enterprise MLOps ⬜
+## Version 6 — Enterprise MLOps
 
 **Objective:** Add the operational maturity expected of production ML systems.
 
