@@ -193,8 +193,11 @@ Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
 - **CI/CD (Roadmap v3).** Automated lint/test and `dvc repro` on pull requests.
   <!-- TODO: define CI provider and pipeline once chosen. -->
 - **Containerization & orchestration (Roadmap v4).** Package the pipeline as a
-  container and run stages on Kubernetes.
-  <!-- TODO: define container/base image and orchestration approach. -->
+  container and run stages on Kubernetes. The container design is settled in the
+  [Containerization Strategy](containerization.md) and
+  [ADR-005](decisions/ADR-005-containerization-strategy.md); implementation is a
+  later sprint.
+  <!-- TODO: implement the Dockerfile per ADR-005; define orchestration approach. -->
 - **Cloud deployment (Roadmap v5).** Managed object storage for the DVC remote,
   a hosted MLflow tracking server, and a model-serving endpoint.
   <!-- TODO: select cloud provider and serving mechanism. -->
