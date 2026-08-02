@@ -44,24 +44,41 @@ tracks experiments — the foundation everything else builds on.
 **Objective:** Elevate the repository from a baseline implementation to a
 professional, maintainable codebase.
 
-**Objectives:**
+**Delivered:**
 
-- Professional documentation (this sprint): architecture, roadmap, project
-  structure, ADRs, engineering philosophy, design principles, and a rewritten
-  README.
-- Repository hygiene and governance: LICENSE, CONTRIBUTING, CODE_OF_CONDUCT,
+- ✅ Professional documentation: architecture, roadmap, project structure,
+  ADRs, engineering philosophy, design principles, and a rewritten README.
+- ✅ Repository hygiene and governance: LICENSE, CONTRIBUTING, CODE_OF_CONDUCT,
   CHANGELOG, `.editorconfig`, security and support policies, issue/PR templates.
-- Code quality: type hints, formatting/linting (black, isort, ruff), and
-  structured logging in place of `print`.
-- Correctness fixes surfaced during documentation: reconcile
+- ✅ Principal-engineer production-readiness review
+  ([reviews/sprint-02-engineering-review.md](reviews/sprint-02-engineering-review.md)),
+  whose findings drove the rest of the sprint.
+- ✅ Code organization and readability refactor of the pipeline stages.
+- ✅ Centralized logging in place of `print`
+  ([Logging Strategy](logging.md), review finding H-1).
+- ✅ Standardized exception handling: typed hierarchy, wrapped IO/config
+  boundaries, uniform stage entry point
+  ([Exception Strategy](exception-strategy.md), review finding H-2).
+- ✅ Complete type annotations with a strict mypy configuration
+  ([Type Safety](type-safety.md)).
+- ✅ Testing foundation: pytest smoke and unit suites with shared fixtures
+  ([Testing Strategy](testing-strategy.md), review finding H-3).
+- ✅ Developer experience: Ruff linting/formatting, pre-commit hooks, Makefile,
+  VS Code workspace settings
+  ([Developer Guide](developer-guide.md),
+  [ADR-004](decisions/ADR-004-python-quality-toolchain.md)).
+
+**Remaining:**
+
+- ⬜ Correctness fixes surfaced during documentation: reconcile
   `dvc.yaml`/`params.yaml` parameter names, feed the `preprocess` output into
   downstream stages, and evaluate on a held-out split.
-- Automated tests (pytest) with meaningful coverage.
+- ⬜ Decouple stage bodies from MLflow/network so `train` and `evaluate` logic
+  becomes unit-testable (see the
+  [testing roadmap](testing-strategy.md#4-future-testing-roadmap)).
 
 **Expected outcome:** A repository that reads as an actively maintained,
 professionally engineered project and is safe to change with confidence.
-
-> **TODO:** Confirm which v2 items land in this sprint versus later sub-sprints.
 
 ---
 

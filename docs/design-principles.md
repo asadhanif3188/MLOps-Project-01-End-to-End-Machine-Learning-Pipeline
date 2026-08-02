@@ -88,6 +88,60 @@ individual parameters as stage dependencies, so a parameter change alone can
 trigger a re-run. Keeping configuration out of source means experiments vary by
 editing data, not logic, which reinforces reproducibility.
 
+## Why Centralized Logging?
+
+All stages log through a **single configuration module**
+(`src/logging_config.py`) built on the standard library's `logging` package,
+replacing the ad-hoc `print()` calls of the baseline implementation. One module
+means one format, one level policy, and one set of destinations (console plus a
+rotating file) — and switching to `DEBUG` is an environment-variable change, not
+a code change. The standard library was chosen over third-party loggers because
+the pipeline's needs (levels, handlers, rotation) are fully met without adding a
+dependency. Details: [Logging Strategy](logging.md).
+
+## Why a Typed Exception Hierarchy?
+
+Expected failures are instances of a **small typed hierarchy** rooted at
+`PipelineError` (`ConfigError`, `DataError`, `ModelError`, `TrackingError`),
+raised at centralized IO/config boundaries (`src/pipeline_io.py`) and handled
+once at a uniform stage entry point (`src/stage_runner.py`). Types — not message
+strings — say *what kind* of thing went wrong; messages say what to do next;
+`raise ... from` preserves the cause; and a failed stage exits non-zero so
+`dvc repro` and CI stop instead of continuing on bad state. Details:
+[Exception Strategy](exception-strategy.md).
+
+## Why Strict Static Typing?
+
+Every public function in `src/` carries **complete type annotations**, checked
+by a strict [mypy](https://mypy.readthedocs.io/) configuration with no
+suppressions. Types make contracts visible to callers and IDEs and catch
+mismatches before the pipeline runs. `Any` is confined to the two genuinely
+dynamic boundaries (YAML parameters and unpickled artifacts), where the wider
+type is a documented choice rather than missing rigor. Details:
+[Type Safety](type-safety.md).
+
+## Why a Contract-Focused Test Suite?
+
+The `pytest` suite deliberately targets **contracts over coverage numbers**:
+smoke tests pin import/wiring health, and unit tests go deep on the critical
+IO/error layer where regressions are most expensive and most silent. Tests are
+fast, isolated, and deterministic — no network, no MLflow, no real data tree.
+Stage bodies coupled to MLflow are consciously deferred until they are
+decoupled, rather than faked with mocks. Details:
+[Testing Strategy](testing-strategy.md).
+
+## Why Ruff (One Tool for Lint and Format)?
+
+**Ruff** provides both the linter and the formatter, replacing the traditional
+flake8 + isort + black stack with a single fast tool configured in one place
+(`pyproject.toml`). Combined with mypy, pytest, and pre-commit hooks, this gives
+the project **one source of truth per concern** — line length, lint rules, type
+strictness, and test configuration each live in exactly one file, and every
+entry point (CLI, Makefile, hooks, editor) defers to it. The decision and its
+alternatives are recorded in
+[ADR-004](decisions/ADR-004-python-quality-toolchain.md); day-to-day usage is in
+the [Developer Guide](developer-guide.md).
+
 ---
 
 ## Summary
@@ -101,6 +155,11 @@ editing data, not logic, which reinforces reproducibility.
 | MLflow (DagsHub) | Experiment tracking and model registry | [ADR-002](decisions/ADR-002-why-mlflow.md) |
 | Modular code | Single-responsibility stages, 1:1 with DVC | [ADR-001](decisions/ADR-001-repository-structure.md) |
 | YAML config | Readable, diff-able, DVC-tracked parameters | This document |
+| Centralized logging (stdlib) | One config, console + rotating file, env-controlled | [Logging Strategy](logging.md) |
+| Typed exceptions | Failure kind by type; log once; fail loudly | [Exception Strategy](exception-strategy.md) |
+| Strict typing (mypy) | Visible contracts, checked before runtime | [Type Safety](type-safety.md) |
+| Contract-focused tests (pytest) | Signal over coverage percentage | [Testing Strategy](testing-strategy.md) |
+| Ruff + pre-commit toolchain | One source of truth per concern | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) |
 
 ---
 

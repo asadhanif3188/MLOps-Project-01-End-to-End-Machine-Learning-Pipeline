@@ -76,6 +76,17 @@ data/raw/data.csv ──▶ [ preprocess ] ──▶ data/processed/data.csv
 - **MLflow / DagsHub** — remote experiment tracking and (optionally) model
   registry.
 
+The stages share a small infrastructure layer (introduced in Sprint 2):
+
+- **`src/logging_config.py`** — centralized logging configuration (console +
+  rotating file); see [§7](#7-observability--logging).
+- **`src/exceptions.py`** — the typed exception hierarchy rooted at
+  `PipelineError`.
+- **`src/pipeline_io.py`** — IO/config/serialization helpers that wrap every
+  filesystem and config boundary with consistent, typed error handling.
+- **`src/stage_runner.py`** — the uniform stage entry point: logs any failure
+  once (with traceback) and exits non-zero.
+
 ---
 
 ## 3. Pipeline Flow
@@ -92,11 +103,6 @@ dependency order.
   params `preprocess.input`, `preprocess.output`
 - **Output:** `data/processed/data.csv`
 - **Behavior:** reads the raw CSV and re-writes it (without header/index).
-
-> ⚠️ **TODO / known gap:** The docstring in `preprocess.py` states that the
-> `Unnamed: 0` column is dropped, but the current implementation does not perform
-> that transformation. Reconcile the code and its documentation in a future
-> engineering sprint (out of scope for documentation-only work).
 
 ### Stage 2 — `train`
 
@@ -142,9 +148,13 @@ dependency order.
 | Model | `RandomForestClassifier` (scikit-learn) | Baseline for tabular classification |
 | Config | `params.yaml` (declarative parameters) | Separates config from code |
 | Secrets | `python-dotenv` + `.env` | Keeps credentials out of source |
+| Logging | Python `logging` (stdlib), centralized config | [Logging Strategy](logging.md) |
+| Error handling | Typed exception hierarchy (`PipelineError`) | [Exception Strategy](exception-strategy.md) |
+| Lint/format/type/test toolchain | Ruff + mypy + pytest + pre-commit | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) |
 
 For the reasoning behind these choices, see [Design Principles](design-principles.md).
-Full dependency list: [`requirements.txt`](../requirements.txt).
+Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
+[`requirements-dev.txt`](../requirements-dev.txt) (development tooling).
 
 ---
 
@@ -243,3 +253,5 @@ for the hierarchy, propagation rules, and user-facing error contract.
 - [Logging Strategy](logging.md)
 - [Exception Strategy](exception-strategy.md)
 - [Type Safety](type-safety.md)
+- [Testing Strategy](testing-strategy.md)
+- [Developer Guide](developer-guide.md)

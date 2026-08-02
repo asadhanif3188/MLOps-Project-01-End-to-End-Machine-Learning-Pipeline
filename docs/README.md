@@ -41,6 +41,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-001](decisions/ADR-001-repository-structure.md) | Repository Structure |
 | [ADR-002](decisions/ADR-002-why-mlflow.md) | Why MLflow |
 | [ADR-003](decisions/ADR-003-why-dvc.md) | Why DVC |
+| [ADR-004](decisions/ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) |
 
 ---
 
