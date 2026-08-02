@@ -18,9 +18,10 @@ Closes #
 
 ## Testing
 
-<!-- Describe how these changes were verified. Note: automated tests are planned
-     (see docs/roadmap.md, v2) — until then, describe manual verification such as
-     `dvc repro`, pipeline runs, or MLflow results. -->
+<!-- Describe how these changes were verified. Run the suite with
+     `python -m pytest` (see docs/testing-strategy.md) and note any tests added,
+     plus manual verification where relevant (`dvc repro`, pipeline runs, MLflow
+     results). -->
 
 -
 

@@ -28,6 +28,19 @@ The project follows [GitHub Flow](docs/github-workflow.md#branch-strategy):
 For an overview of the repository layout, see
 [Project Structure](docs/project-structure.md).
 
+## Running Tests
+
+Install the development dependencies and run the suite from the repository root:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Select a slice with markers — `python -m pytest -m smoke` or `-m unit`. See the
+[Testing Strategy](docs/testing-strategy.md) for the suite layout and the
+conventions for adding tests. Please accompany behavioural changes with tests.
+
 ## Commit Messages
 
 Follow the [Conventional Commits](docs/github-workflow.md#commit-conventions)
