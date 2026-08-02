@@ -1,3 +1,26 @@
+[tool.pytest.ini_options]
+# Test runner configuration. Run with: python -m pytest
+#
+# ``pythonpath = src`` mirrors how the stages run: they live in ``src/`` and
+# import their siblings by bare module name (``from exceptions import ...``).
+# Adding ``src`` to the path lets the tests import the pipeline the same way,
+# without a package prefix or an editable install.
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+# ``-ra`` prints a short summary of everything that was not a plain pass
+# (skips, xfails, errors) so the reason is visible without re-running verbose.
+# ``--strict-markers`` turns a typo'd marker into an error instead of a silent
+# no-op, keeping the marker taxonomy below honest.
+addopts = "-ra --strict-markers"
+
+# The pipeline's own test taxonomy. Select a slice with ``-m``, e.g.
+# ``pytest -m smoke`` for the fast import/wiring checks.
+markers = [
+    "smoke: fast checks that the pipeline is importable and wired together",
+    "unit: isolated tests of a single component with no external services",
+]
+
 [tool.mypy]
 # Static type checking for the pipeline. Run with: python -m mypy
 python_version = "3.12"
