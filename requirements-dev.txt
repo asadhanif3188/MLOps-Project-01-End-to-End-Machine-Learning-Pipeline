@@ -4,3 +4,8 @@
 
 # Static type checker; configured in pyproject.toml ([tool.mypy]).
 mypy
+
+# Test runner and coverage plugin; configured in pyproject.toml
+# ([tool.pytest.ini_options]). Run with: python -m pytest
+pytest
+pytest-cov

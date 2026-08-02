@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/design-principles.md` explaining the rationale behind core design and
   technology choices (batch pipeline, Random Forest, Python, DVC, MLflow,
   modular code, YAML configuration).
+- Testing foundation: a `pytest` suite under `tests/` (smoke and unit tests)
+  with shared fixtures (`tests/conftest.py`) and configuration in
+  `pyproject.toml`; `pytest`/`pytest-cov` added to `requirements-dev.txt`; and
+  `docs/testing-strategy.md` documenting the philosophy, layout, and roadmap.
 
 ### Changed
 

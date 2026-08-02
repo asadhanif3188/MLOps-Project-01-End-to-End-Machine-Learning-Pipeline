@@ -25,6 +25,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Architecture](architecture.md) | System overview, components, pipeline, and data flow |
 | [Logging Strategy](logging.md) | How the pipeline emits, formats, and persists logs |
 | [Exception Strategy](exception-strategy.md) | Exception hierarchy, error propagation, and error logging |
+| [Testing Strategy](testing-strategy.md) | Testing philosophy, `tests/` layout, and the testing roadmap |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
@@ -84,7 +85,6 @@ Planned documentation, to be added as the project matures (see the
 - **Setup / Installation Guide** — detailed environment setup beyond the README
   quick start. <!-- TODO -->
 - **Pipeline Usage Guide** — running and reproducing stages with DVC. <!-- TODO -->
-- **Testing Guide** — once automated tests exist (Roadmap v2). <!-- TODO -->
 - **CI/CD Documentation** — once continuous integration is added (Roadmap v3).
   <!-- TODO -->
 - **Deployment Guide** — for cloud/Kubernetes deployment (Roadmap v4–v5).
