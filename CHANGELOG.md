@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes yet._
 
+## [1.2.0] - 2026-08-04
+
+Sprint 3 — Containerization & CI: package the pipeline as a reproducible,
+non-root container image, add a Docker Compose local-development workflow, and
+automate the quality gates on GitHub Actions. Design was ratified first
+(ADR-005), then implemented and validated.
+
+### Added
+
+- Containerization strategy and decision record: `docs/containerization.md`
+  (goals, dev/prod split, multi-stage build, base-image selection, security,
+  non-root rationale, env/volume/cache strategy, and CI/Kubernetes readiness) and
+  `docs/decisions/ADR-005-containerization-strategy.md`.
+- Production-grade container image: a multi-stage `Dockerfile` with three targets
+  — `builder` (dependency virtualenv), `development` (adds the Ruff/mypy/pytest/
+  pre-commit toolchain), and `runtime` (the default — a lean, **non-root** image
+  on `python:3.12-slim-bookworm`) — plus a `.dockerignore` that keeps the build
+  context small and secret-free. OCI provenance labels are stamped from
+  `VCS_REF`/`BUILD_VERSION` build args; a build-time import smoke test validates
+  the shipped environment.
+- Local development workflow with Docker Compose: `docker-compose.yml` (a `dev`
+  service with the working tree bind-mounted for live edits and a profile-gated
+  `pipeline` service that runs the production image) and `docs/docker-development.md`
+  documenting startup, shutdown, logs, rebuild, and troubleshooting.
+- Continuous integration on GitHub Actions: `.github/workflows/ci.yml` runs
+  checkout → Python 3.12 → install → Ruff (lint + format check) → pytest → Docker
+  build of the `runtime` image → build validation (non-root UID, core imports,
+  `dvc` entrypoint). Validation only — no deploy, no image push (`push: false`),
+  least-privilege `contents: read`. Documented in `docs/ci-cd.md`.
+- Sprint 3 final engineering-validation review
+  (`docs/reviews/sprint-03-final-review.md`).
+- Screenshot placeholder categories for the Docker build and CI pipeline
+  (`docs/screenshots/docker-build/`, `docs/screenshots/ci-pipeline/`).
+
+### Changed
+
+- Documentation refreshed to reflect the delivered containerization and CI work:
+  `README.md` (CI badge, Docker/Compose quick starts, Continuous Integration
+  section), `docs/architecture.md` (containerization & CI as implemented, not
+  future), `docs/roadmap.md` (v3 CI/CD in progress, v4 containerization marked
+  implemented), `docs/project-structure.md` (Dockerfile, `.dockerignore`,
+  `docker-compose.yml`, `.github/workflows/`, new docs), and
+  `docs/developer-guide.md` (container-based development option; CI now enforced).
+- Fixed a broken relative link to `SECURITY.md` in
+  `docs/decisions/ADR-005-containerization-strategy.md`, surfaced during final
+  link validation.
+
 ## [1.1.0] - 2026-08-02
 
 Sprint 2 — Engineering Excellence: raise the baseline pipeline to a maintainable,
@@ -101,6 +148,7 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/releases/tag/v1.0.0

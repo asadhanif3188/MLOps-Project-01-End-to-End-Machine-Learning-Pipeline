@@ -106,7 +106,7 @@ Adopt the following strategy (detailed in
 - Environment parity across laptop, CI, and (later) Kubernetes; "works on my
   machine" is eliminated for pipeline stages.
 - Small, non-root, scanned images with no baked-in secrets or data — a
-  defensible security posture aligned with [SECURITY.md](../SECURITY.md).
+  defensible security posture aligned with [SECURITY.md](../../SECURITY.md).
 - The artifact is Kubernetes-ready (v4) and CI/CD-ready (v3) by construction, so
   those sprints inherit a settled design.
 - Reproducible builds (pinned base + dependencies) reinforce the project's

@@ -53,6 +53,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 |--------|-------------|
 | [Sprint 2 — Production Readiness](reviews/sprint-02-engineering-review.md) | Principal-engineer review that drove the Sprint 2 engineering-excellence work (findings H-1..H-6) |
 | [Sprint 2 — Final Validation](reviews/sprint-02-final-review.md) | Release-readiness validation for v1.1.0: checks, remaining debt, risks, and Sprint 3 recommendations |
+| [Sprint 3 — Final Validation](reviews/sprint-03-final-review.md) | Release-readiness validation for v1.2.0 (containerization & CI): checks, remaining debt, risks, and Sprint 4 recommendations |
 
 ---
 
