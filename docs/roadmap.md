@@ -11,7 +11,7 @@ prescribing implementation details. Concrete technical decisions are captured as
 |---------|-------|--------|
 | [v1](#version-1--foundation-release) | Foundation Release | ✅ |
 | [v2](#version-2--engineering-improvements) | Engineering Improvements | 🚧 |
-| [v3](#version-3--cicd) | CI/CD | ⬜ |
+| [v3](#version-3--cicd) | CI/CD | 🚧 |
 | [v4](#version-4--kubernetes) | Kubernetes | ⬜ |
 | [v5](#version-5--production-cloud-platform) | Production Cloud Platform | ⬜ |
 | [v6](#version-6--enterprise-mlops) | Enterprise MLOps | ⬜ |
@@ -90,19 +90,26 @@ professionally engineered project and is safe to change with confidence.
 
 **Objectives:**
 
-- Continuous integration: run linting and tests on every pull request.
-- Automated pipeline validation (e.g., `dvc repro` / `dvc status`) in CI.
-- Enforced formatting and basic security scanning.
-- Build, scan, and publish the container image
+- ✅ Continuous integration: run linting and tests on every pull request
+  (GitHub Actions — see [CI/CD](ci-cd.md) and
+  [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)).
+- ✅ Build and validate the container image in CI (build only — **not** pushed).
+- 🚧 Automated pipeline validation (e.g., `dvc repro` / `dvc status`) in CI.
+- 🚧 Basic security/supply-chain scanning (image scan, SBOM, signing).
+- 🚧 Publish the container image on release
   ([Containerization Strategy](containerization.md), [ADR-005](decisions/ADR-005-containerization-strategy.md)).
-- Branch protection requiring green checks before merge.
+- 🚧 Branch protection requiring green checks before merge.
 
 **Expected outcome:** Every change is automatically validated before merge,
 reducing regressions and manual effort.
 
-> **TODO:** Select the CI provider and ratify the pipeline design as an ADR. The
-> container's role in CI/CD is designed in the
-> [Containerization Strategy](containerization.md).
+> **Status:** CI (checkout → setup Python → install → Ruff → pytest → Docker build
+> → build validation) is implemented on **GitHub Actions**. It validates only —
+> no deploy, no image push, no Kubernetes. The remaining items above (publish,
+> scan, branch protection, in-CI pipeline validation) are the path to continuous
+> *delivery*; see [CI/CD § Future CD roadmap](ci-cd.md#future-cd-roadmap).
+>
+> **TODO:** Ratify the CD approach (registry, signing, deploy target) as an ADR.
 
 ---
 
