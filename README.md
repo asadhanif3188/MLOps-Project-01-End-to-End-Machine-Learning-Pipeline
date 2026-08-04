@@ -76,10 +76,24 @@ Override the command to run a single stage, e.g. `... ml-pipeline:local python s
 A development image with the full lint/type/test toolchain is available via
 `docker build --target development -t ml-pipeline:dev .`.
 
+**Local development with Docker Compose** — a new contributor needs only Docker:
+
+```bash
+cp .env.example .env          # add MLflow / DagsHub credentials
+docker compose up -d          # build + start the dev environment
+docker compose exec dev bash  # shell in; run `make check`, `dvc repro`, ...
+```
+
+Your working tree is bind-mounted, so host edits are live inside the container.
+Run the production pipeline image on demand with
+`docker compose --profile pipeline run --rm pipeline`.
+
 > Full build/run instructions (including hardened, read-only execution), the
 > design rationale, and the decision record are in
 > [docs/containerization.md](docs/containerization.md) and
-> [ADR-005](docs/decisions/ADR-005-containerization-strategy.md).
+> [ADR-005](docs/decisions/ADR-005-containerization-strategy.md). The day-to-day
+> Compose workflow is documented in
+> [docs/docker-development.md](docs/docker-development.md).
 
 ### For Adding DVC Stages
 

@@ -1,0 +1,126 @@
+# Docker Compose — LOCAL DEVELOPMENT workflow.
+#
+# Goal: a new contributor clones the repo and runs `docker compose up` to get a
+# ready-to-use development environment — the pinned Python, the full quality
+# toolchain (Ruff, mypy, pytest, pre-commit), DVC, and MLflow — without
+# installing anything on the host beyond Docker itself.
+#
+# This file is for the inner development loop ONLY. It is NOT a production
+# deployment descriptor (see docs/containerization.md and ADR-005). Production
+# orchestration is deferred to Kubernetes (Roadmap v4).
+#
+# Two named services, both built from the single multi-stage Dockerfile:
+#   * dev      — long-lived container built from the `development` target. It is
+#                the default: `docker compose up` starts it and keeps it alive so
+#                you can `docker compose exec dev bash` and work inside it. Your
+#                working tree is bind-mounted, so edits on the host are visible
+#                instantly — no rebuild to pick up a code change.
+#   * pipeline — one-shot batch run of the `runtime` (production) image executing
+#                `dvc repro`. Profile-gated so it does NOT start on a bare
+#                `docker compose up`; run it on demand (see below). This lets you
+#                exercise the real production image locally.
+#
+# Quick start:
+#   cp .env.example .env         # fill in MLflow / DagsHub credentials
+#   docker compose up -d         # build + start the dev environment
+#   docker compose exec dev bash # get a shell; run `make check`, `dvc repro`, ...
+#
+# Run the production pipeline image instead:
+#   docker compose --profile pipeline run --rm pipeline
+#
+# Full docs: docs/docker-development.md
+
+name: mlops-pipeline
+
+services:
+  # ---------------------------------------------------------------------------
+  # dev — the development environment. Built from the Dockerfile `development`
+  # target (runtime deps + toolchain). Kept alive with `sleep infinity` so the
+  # environment is "up" and you attach to it with `exec`; the container itself
+  # runs no long-lived process of its own.
+  # ---------------------------------------------------------------------------
+  dev:
+    build:
+      context: .
+      target: development
+      args:
+        VCS_REF: ${VCS_REF:-dev}
+        BUILD_VERSION: ${BUILD_VERSION:-0.0.0-dev}
+    image: ml-pipeline:dev
+    container_name: mlops-dev
+    # Credentials are OPTIONAL for the dev loop (lint/type/test need none). The
+    # file is loaded when present so `dvc repro` inside the container can reach
+    # MLflow/DagsHub; a fresh clone with no .env still starts cleanly.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Keep the bind-mounted tree free of .pyc clutter on the host.
+      PYTHONDONTWRITEBYTECODE: "1"
+    working_dir: /app
+    # Bind-mount the working tree so host edits are live inside the container.
+    # Only what the inner loop needs is mounted — data/models/logs are writable
+    # state; the rest is source and configuration.
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./dvc.yaml:/app/dvc.yaml
+      - ./params.yaml:/app/params.yaml
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./Makefile:/app/Makefile
+      - ./.dvc:/app/.dvc
+      # Persist pip's cache across rebuilds so re-installs are fast.
+      - pip-cache:/root/.cache/pip
+    # Interactive-ready: `docker compose exec dev bash` and `run` both get a TTY.
+    stdin_open: true
+    tty: true
+    # No real foreground process — hold the container open so we can exec into it.
+    command: ["sleep", "infinity"]
+    networks:
+      - mlops
+
+  # ---------------------------------------------------------------------------
+  # pipeline — run the PRODUCTION image (`runtime` target) exactly as it would
+  # run in CI/CD or a cluster, executing the full DVC pipeline once and exiting.
+  # Profile-gated: excluded from the default `up`; start it explicitly with
+  # `--profile pipeline`.
+  # ---------------------------------------------------------------------------
+  pipeline:
+    build:
+      context: .
+      target: runtime
+      args:
+        VCS_REF: ${VCS_REF:-dev}
+        BUILD_VERSION: ${BUILD_VERSION:-0.0.0-dev}
+    image: ml-pipeline:local
+    container_name: mlops-pipeline
+    profiles: ["pipeline"]
+    # The batch run DOES need credentials to log to MLflow/DagsHub.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Only writable state is mounted; source is baked into the production image.
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    command: ["dvc", "repro"]
+    networks:
+      - mlops
+
+# Named volume for pip's wheel cache — survives container/image rebuilds.
+volumes:
+  pip-cache:
+
+# Dedicated bridge network. One network for the project keeps service-to-service
+# DNS clean (services reach each other by name) and isolates it from other
+# Compose projects on the host.
+networks:
+  mlops:
+    driver: bridge

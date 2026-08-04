@@ -27,7 +27,8 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Exception Strategy](exception-strategy.md) | Exception hierarchy, error propagation, and error logging |
 | [Testing Strategy](testing-strategy.md) | Testing philosophy, `tests/` layout, and the testing roadmap |
 | [Developer Guide](developer-guide.md) | Local setup and the day-to-day tooling (format, lint, type-check, test, pre-commit) |
-| [Containerization Strategy](containerization.md) | Design for containerizing the pipeline (dev/prod images, security, K8s/CI readiness) — design only, not yet implemented |
+| [Containerization Strategy](containerization.md) | Design and build of the container image (dev/prod stages, security, K8s/CI readiness) |
+| [Docker Development Workflow](docker-development.md) | Running the local dev environment with Docker Compose (startup, logs, rebuild, troubleshooting) |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
