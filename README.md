@@ -1,5 +1,7 @@
 # MLOps Project 01 - End-to-End Machine Learning Pipeline 
 
+[![CI](https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/actions/workflows/ci.yml)
+
 This project demonstrates how to build an end-to-end machine learning pipeline using DVC (Data Version Control) for data and model versioning, and MLflow for experiment tracking. 
 
 The pipeline focuses on training a Random Forest Classifier on the Pima Indians Diabetes Dataset, with clear stages for data preprocessing, model training, and evaluation.
@@ -94,6 +96,22 @@ Run the production pipeline image on demand with
 > [ADR-005](docs/decisions/ADR-005-containerization-strategy.md). The day-to-day
 > Compose workflow is documented in
 > [docs/docker-development.md](docs/docker-development.md).
+
+## Continuous Integration
+
+Every push to `main` and every pull request is validated by a GitHub Actions
+pipeline ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It runs the
+same quality gates you run locally and then builds and validates the container
+image:
+
+1. Checkout → set up Python 3.12 → install dependencies
+2. **Ruff** lint + format check
+3. **Pytest** suite
+4. **Docker build** of the production image (built and validated — never pushed)
+
+CI is validation only — it does not deploy, publish images, or use Kubernetes.
+See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
+reproduce each gate locally.
 
 ### For Adding DVC Stages
 

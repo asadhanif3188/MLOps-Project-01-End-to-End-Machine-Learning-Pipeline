@@ -119,9 +119,12 @@ reducing regressions and manual effort.
 
 **Objectives:**
 
-- Containerize the pipeline for consistent execution environments
-  ([Containerization Strategy](containerization.md),
-  [ADR-005](decisions/ADR-005-containerization-strategy.md) — strategy designed).
+- ✅ Containerize the pipeline for consistent execution environments —
+  **implemented** in Sprint 3: multi-stage [`Dockerfile`](../Dockerfile),
+  [`.dockerignore`](../.dockerignore), and a [`docker-compose.yml`](../docker-compose.yml)
+  local dev workflow ([Containerization Strategy](containerization.md),
+  [Docker Development](docker-development.md),
+  [ADR-005](decisions/ADR-005-containerization-strategy.md)).
 - Run pipeline stages as orchestrated workloads on Kubernetes.
 - Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
 - Define resource requests/limits for reproducible scheduling.

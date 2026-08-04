@@ -5,9 +5,10 @@ reasoning behind each decision.
 
 The strategy was authored first, as a design document, and is now **implemented**:
 the repository ships a multi-stage [`Dockerfile`](../Dockerfile) and a
-[`.dockerignore`](../.dockerignore) built directly from these decisions. A
-`docker-compose.yml` is **not** included yet (deferred, see
-[§14](#14-future-cicd-integration) and the roadmap). Concrete build and run
+[`.dockerignore`](../.dockerignore) built directly from these decisions, plus a
+[`docker-compose.yml`](../docker-compose.yml) for the local development workflow
+(documented in [Docker Development](docker-development.md)). The image is also
+built and validated in CI ([§14](#14-cicd-integration)). Concrete build and run
 instructions are in [§15](#15-build--run).
 
 The ratified summary lives in
@@ -131,8 +132,8 @@ identical environment.
 
 **Production image** optimizes for a trustworthy, minimal artifact: only runtime
 dependencies, code copied in, non-root, and as close to read-only as the stages
-allow. This is the image CI builds, scans, and pushes
-([§14](#14-future-cicd-integration)), and the one Kubernetes eventually runs
+allow. This is the image CI builds and validates
+([§14](#14-cicd-integration)), and the one Kubernetes eventually runs
 ([§13](#13-future-kubernetes-compatibility)).
 
 ---
@@ -259,8 +260,10 @@ repository's existing [Security Policy](../SECURITY.md). The controls:
   builds, and no accidental secret or large-artifact leakage into layers.
 - **Pinned dependencies.** Base image digest and Python requirements are pinned
   so a build cannot silently pull a compromised or breaking version.
-- **Vulnerability scanning.** Images are scanned (e.g. **Trivy**) in the lifecycle
-  ([§5](#5-image-lifecycle)) and gated in CI ([§14](#14-future-cicd-integration)).
+- **Vulnerability scanning.** A CVE scan (e.g. **Trivy**) is part of the designed
+  image lifecycle ([§5](#5-image-lifecycle)); the current CI
+  ([§14](#14-cicd-integration)) builds and validates the image but does not yet
+  gate on a scan.
 - **Read-only root filesystem where feasible.** Runtime containers request a
   read-only root FS, with writes confined to explicit volumes/`tmpfs`
   ([§11](#11-volume-strategy)). This aligns with the Kubernetes restricted
@@ -316,7 +319,7 @@ image.**
   `.dockerignore`d; in a container it is passed with `--env-file` or, in Compose,
   an `env_file:` reference — the file itself is never copied into a layer.
 - **CI.** Secrets come from the CI provider's secret store and are exposed to the
-  build/run as masked environment variables ([§14](#14-future-cicd-integration)).
+  build/run as masked environment variables ([§14](#14-cicd-integration)).
   Build-time secrets, if ever needed, use BuildKit `--secret` mounts, not build
   args.
 - **Kubernetes (future).** Non-secret config comes from **ConfigMaps**; secrets
@@ -391,7 +394,7 @@ changes**.
   builds reproducible ([§7](#7-base-image-selection)).
 - **Registry cache in CI.** CI builds use `--cache-from`/`--cache-to` against the
   registry (or the runner's cache) so cold CI builders still benefit from prior
-  layers ([§14](#14-future-cicd-integration)).
+  layers ([§14](#14-cicd-integration)).
 
 ---
 
@@ -425,33 +428,27 @@ them.
 
 ---
 
-## 14. Future CI/CD Integration
+## 14. CI/CD Integration
 
-Containerization is the artifact CI/CD produces and validates
-([Roadmap v3](roadmap.md#version-3--cicd)). The intended integration:
+The image is wired into continuous integration on **GitHub Actions**
+([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)). What is implemented
+today:
 
-- **Build in CI.** On pull requests, build the image with BuildKit and layer
-  caching ([§12](#12-build-cache-optimization)) to validate that the container
-  builds cleanly — an extension of the existing quality gates
+- **Build in CI.** Every push to `main` and every pull request builds the
+  `runtime` image with BuildKit and the GitHub Actions layer cache
+  ([§12](#12-build-cache-optimization)), proving the container builds cleanly —
+  an extension of the existing quality gates
   ([ADR-004](decisions/ADR-004-python-quality-toolchain.md)).
-- **Test in the container.** Run the pytest suite
-  ([Testing Strategy](testing-strategy.md)) *inside* the built image so tests
-  validate the shipped environment, not just the host.
-- **Scan as a gate.** Fail the build on high/critical CVEs via image scanning
-  (Trivy) before anything is published ([§5](#5-image-lifecycle)).
-- **Publish on merge/release.** On merges to the default branch and on tagged
-  releases, push to **GHCR** with the dual tag scheme (`sha-*` + SemVer),
-  authenticated via the CI provider's native registry credentials.
-- **Provenance & SBOM.** Emit build provenance and an SBOM for published images so
-  releases are auditable and supply-chain-verifiable
-  ([§8](#8-security-considerations)).
-- **Reproduce the pipeline in CI.** Longer term, use the image to run
-  `dvc repro`/`dvc status` in CI — the v3 objective of automated pipeline
-  validation — on the exact artifact that runs in production.
+- **Validate the built image.** CI runs the freshly built image and asserts its
+  contract — it runs as the **non-root** user (UID 10001), the core stack imports
+  cleanly, and the `dvc` entrypoint is present
+  ([§8](#8-security-considerations), [§9](#9-non-root-user-rationale)).
+- **No publish, no deploy.** The build job holds `push: false` and the workflow
+  is granted only `contents: read`, so CI cannot push an image or deploy anything
+  — it is a validation gate, by design.
 
-The CI provider and pipeline design are **not yet selected** (open TODO in
-[Roadmap v3](roadmap.md#version-3--cicd)); this section defines the container's
-role once they are, and will be ratified alongside the CI ADR.
+The pipeline stages, failure strategy, and local reproduction are documented in
+[CI/CD](ci-cd.md).
 
 ---
 
