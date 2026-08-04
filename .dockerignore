@@ -49,3 +49,5 @@ important-commands.txt
 # ---- Docker files themselves ----
 Dockerfile
 .dockerignore
+docker-compose.yml
+docker-compose.*.yml
