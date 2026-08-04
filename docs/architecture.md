@@ -39,6 +39,9 @@ classification of the `Outcome` column.
 | Experiment tracking | MLflow via DagsHub (remote) |
 | Data/artifact versioning | DVC with S3-compatible remote (DagsHub) |
 | Model type | `RandomForestClassifier` (scikit-learn) |
+| Packaging | Multi-stage Docker image (non-root `runtime`) — [Containerization](containerization.md) |
+| Local dev environment | Docker Compose (`dev` service) — [Docker Development](docker-development.md) |
+| Continuous integration | GitHub Actions: lint, test, image build/validate — [CI/CD](ci-cd.md) |
 | Serving | ❌ Not implemented — see [roadmap](roadmap.md) |
 
 ---
@@ -151,6 +154,8 @@ dependency order.
 | Logging | Python `logging` (stdlib), centralized config | [Logging Strategy](logging.md) |
 | Error handling | Typed exception hierarchy (`PipelineError`) | [Exception Strategy](exception-strategy.md) |
 | Lint/format/type/test toolchain | Ruff + mypy + pytest + pre-commit | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) |
+| Containerization | Multi-stage Docker (`python:3.12-slim`) | [ADR-005](decisions/ADR-005-containerization-strategy.md) |
+| Continuous integration | GitHub Actions | [CI/CD](ci-cd.md) |
 
 For the reasoning behind these choices, see [Design Principles](design-principles.md).
 Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
@@ -184,31 +189,44 @@ Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
 
 ---
 
-## 6. Future Cloud Architecture
+## 6. Containerization & Continuous Integration
 
-> This section describes the **target** state. None of it is implemented today;
-> each item is a forward-looking objective aligned with the
-> [roadmap](roadmap.md).
+Sprint 3 packaged the pipeline for reproducible execution and automated its
+quality gates. Both are **implemented and in the repository today**.
 
-- **CI/CD (Roadmap v3).** Automated lint/test and `dvc repro` on pull requests.
-  <!-- TODO: define CI provider and pipeline once chosen. -->
-- **Containerization & orchestration (Roadmap v4).** Package the pipeline as a
-  container and run stages on Kubernetes. The container design is settled in the
-  [Containerization Strategy](containerization.md) and
-  [ADR-005](decisions/ADR-005-containerization-strategy.md); implementation is a
-  later sprint.
-  <!-- TODO: implement the Dockerfile per ADR-005; define orchestration approach. -->
-- **Cloud deployment (Roadmap v5).** Managed object storage for the DVC remote,
-  a hosted MLflow tracking server, and a model-serving endpoint.
-  <!-- TODO: select cloud provider and serving mechanism. -->
-- **Enterprise MLOps (Roadmap v6).** Monitoring, drift detection, automated
-  retraining, and governance.
-  <!-- TODO: define monitoring and retraining triggers. -->
+### Containerization
+
+- A single multi-stage [`Dockerfile`](../Dockerfile) builds three targets from
+  one source of truth: `builder` (installs the dependency virtualenv),
+  `development` (adds the Ruff/mypy/pytest/pre-commit toolchain), and `runtime`
+  (the default — a lean, **non-root** production image on `python:3.12-slim`).
+- A [`.dockerignore`](../.dockerignore) keeps the build context small and free of
+  secrets, data, and history.
+- State (`data/`, `models/`, `logs/`) is mounted as volumes and credentials are
+  injected at run time — nothing sensitive is baked into the image.
+- The full rationale is in the [Containerization Strategy](containerization.md)
+  and [ADR-005](decisions/ADR-005-containerization-strategy.md).
+
+### Local development environment
+
+- A [`docker-compose.yml`](../docker-compose.yml) provides a `dev` service (the
+  `development` image, working tree bind-mounted for live edits) and a
+  profile-gated `pipeline` service that runs the production image's `dvc repro`.
+  A contributor runs `docker compose up` and works entirely in-container. See the
+  [Docker Development Workflow](docker-development.md).
+
+### Continuous integration
+
+- A [GitHub Actions workflow](../.github/workflows/ci.yml) validates every push to
+  `main` and every pull request: checkout → Python 3.12 → install dependencies →
+  Ruff (lint + format check) → pytest → Docker build of the `runtime` image →
+  build validation (non-root UID, core imports, `dvc` entrypoint). It is
+  validation-only — it does not deploy, push images, or use Kubernetes. See
+  [CI/CD](ci-cd.md).
 
 > 📌 **Diagram placeholders:**
-> [`diagrams/deployment-architecture/`](diagrams/deployment-architecture/),
-> [`diagrams/kubernetes-architecture/`](diagrams/kubernetes-architecture/),
-> [`diagrams/cicd-flow/`](diagrams/cicd-flow/)
+> [`diagrams/cicd-flow/`](diagrams/cicd-flow/),
+> [`diagrams/deployment-architecture/`](diagrams/deployment-architecture/)
 
 ---
 
@@ -258,3 +276,6 @@ for the hierarchy, propagation rules, and user-facing error contract.
 - [Type Safety](type-safety.md)
 - [Testing Strategy](testing-strategy.md)
 - [Developer Guide](developer-guide.md)
+- [Containerization Strategy](containerization.md)
+- [Docker Development Workflow](docker-development.md)
+- [CI/CD](ci-cd.md)

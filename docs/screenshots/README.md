@@ -10,3 +10,5 @@ placeholder for a specific category of screenshot:
 - [`project-execution/`](project-execution/) — Project Execution
 - [`folder-structure/`](folder-structure/) — Folder Structure
 - [`training-logs/`](training-logs/) — Training Logs
+- [`docker-build/`](docker-build/) — Docker image build (Sprint 3)
+- [`ci-pipeline/`](ci-pipeline/) — GitHub Actions CI run (Sprint 3)

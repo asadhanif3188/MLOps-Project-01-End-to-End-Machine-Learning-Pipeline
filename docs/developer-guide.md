@@ -82,13 +82,31 @@ commit. See [§6](#6-pre-commit-workflow) for what those hooks do.
 While working, the fastest feedback comes from your editor (formatting and lint
 fixes apply on save — see [§7](#7-editor-configuration)). Before opening a pull
 request, run the full quality gate — the same checks the pre-commit hooks apply,
-and the ones continuous integration will run once it is added (Roadmap v3):
+and a superset of what [continuous integration](ci-cd.md) runs on every pull
+request:
 
 ```bash
 make check      # lint + format-check + typecheck + test
 ```
 
 `make help` lists every available target with a one-line description.
+
+### Developing in a container (alternative)
+
+If you would rather not install Python and the toolchain on your host, the
+project ships a Docker Compose development environment that provides all of it:
+
+```bash
+cp .env.example .env          # credentials (optional for lint/type/test)
+docker compose up -d          # build + start the dev container
+docker compose exec dev bash  # shell in; the same `make` targets work here
+```
+
+Your working tree is bind-mounted, so edits on the host are live in the
+container — no rebuild for a code change. The full lifecycle (startup, logs,
+rebuild, troubleshooting) is documented in the
+[Docker Development Workflow](docker-development.md); the image itself is
+described in the [Containerization Strategy](containerization.md).
 
 ---
 
@@ -156,8 +174,8 @@ guarding a contract worth protecting, not by moving a number.
 ## 6. Pre-commit workflow
 
 [pre-commit](https://pre-commit.com/) runs the project's quality gates locally,
-so problems are caught before they are ever pushed (and, once continuous
-integration is added in Roadmap v3, these are the checks it will run). The hooks
+so problems are caught before they are ever pushed — the same checks
+[continuous integration](ci-cd.md) re-runs on every pull request. The hooks
 are defined in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml).
 
 ### How it is wired

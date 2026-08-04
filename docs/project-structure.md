@@ -42,6 +42,9 @@ For the reasoning behind this layout, see
 │   ├── type-safety.md
 │   ├── testing-strategy.md
 │   ├── developer-guide.md
+│   ├── containerization.md #   container image design (ADR-005)
+│   ├── docker-development.md #  local Docker Compose dev workflow
+│   ├── ci-cd.md            #   CI pipeline + CD roadmap
 │   ├── github-workflow.md
 │   ├── versioning.md
 │   ├── release-checklist.md
@@ -50,11 +53,15 @@ For the reasoning behind this layout, see
 │   ├── reviews/          #   engineering reviews (sprint-02 production readiness)
 │   ├── diagrams/         #   diagram placeholders (by category)
 │   └── screenshots/      #   screenshot placeholders (by category)
-├── .github/              # Issue/PR templates and GitHub config
+├── .github/              # GitHub config
+│   ├── workflows/        #   CI pipeline (ci.yml — lint, test, image build)
 │   ├── ISSUE_TEMPLATE/
 │   └── pull_request_template.md
 ├── .vscode/              # VS Code workspace settings & recommended extensions
 ├── .dvc/                 # DVC internal config (remote definition)
+├── Dockerfile            # Multi-stage image (builder/development/runtime)
+├── .dockerignore         # Files excluded from the Docker build context
+├── docker-compose.yml    # Local dev workflow (dev + pipeline services)
 ├── dvc.yaml              # DVC pipeline definition (stages, deps, params, outs)
 ├── params.yaml           # Declarative pipeline parameters
 ├── pyproject.toml        # Tool configuration (ruff, mypy, pytest)
@@ -144,20 +151,39 @@ and versioned by DVC.
   **`testing-strategy.md`**, **`developer-guide.md`** — engineering strategy
   references introduced in Sprint 2 (observability, error handling, typing,
   testing, and day-to-day tooling).
+- **`containerization.md`**, **`docker-development.md`**, **`ci-cd.md`** —
+  Sprint 3 references: the container image design, the local Docker Compose
+  development workflow, and the CI pipeline.
 - **`github-workflow.md`**, **`versioning.md`**, **`release-checklist.md`** —
   process and governance (branching, SemVer, releases).
 - **`repository-metadata.md`** — recommended repository description and topics.
-- **`decisions/`** — Architecture Decision Records (ADR-001..004 + index).
+- **`decisions/`** — Architecture Decision Records (ADR-001..005 + index).
 - **`reviews/`** — engineering reviews (the Sprint 2 production-readiness
   review that drove the engineering-excellence work).
 - **`diagrams/`** — placeholder subfolders for diagrams (system architecture,
   pipeline flow, deployment, Kubernetes, CI/CD).
 - **`screenshots/`** — placeholder subfolders for screenshots (MLflow UI, DVC
-  pipeline, project execution, folder structure, training logs).
+  pipeline, project execution, folder structure, training logs, Docker build,
+  CI pipeline).
 
 ### `.github/` — GitHub configuration
 Issue templates (`bug_report.md`, `feature_request.md`, `documentation.md`) and
-the pull request template used to standardize contributions.
+the pull request template used to standardize contributions, plus
+**`workflows/ci.yml`** — the GitHub Actions continuous-integration pipeline
+(lint, test, and container image build/validation). See [CI/CD](ci-cd.md).
+
+### Containerization & CI
+- **`Dockerfile`** — a single multi-stage build with three targets: `builder`
+  (installs the dependency virtualenv), `development` (adds the quality
+  toolchain), and `runtime` (the default — a lean, non-root production image).
+  See [Containerization Strategy](containerization.md) and
+  [ADR-005](decisions/ADR-005-containerization-strategy.md).
+- **`.dockerignore`** — keeps the build context small and free of secrets, data,
+  and history.
+- **`docker-compose.yml`** — the local development workflow: a `dev` service
+  (working tree bind-mounted for live edits) and a profile-gated `pipeline`
+  service that runs the production image. See
+  [Docker Development](docker-development.md).
 
 ### Configuration & pipeline definition
 - **`dvc.yaml`** — the pipeline graph: stages with their dependencies,
