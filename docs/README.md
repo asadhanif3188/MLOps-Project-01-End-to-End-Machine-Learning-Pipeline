@@ -29,6 +29,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Developer Guide](developer-guide.md) | Local setup and the day-to-day tooling (format, lint, type-check, test, pre-commit) |
 | [Containerization Strategy](containerization.md) | Design and build of the container image (dev/prod stages, security, K8s/CI readiness) |
 | [Docker Development Workflow](docker-development.md) | Running the local dev environment with Docker Compose (startup, logs, rebuild, troubleshooting) |
+| [CI/CD](ci-cd.md) | Continuous integration pipeline (stages, failure strategy, local validation) and the future CD roadmap |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
@@ -95,8 +96,6 @@ Planned documentation, to be added as the project matures (see the
 [roadmap](roadmap.md)):
 
 - **Pipeline Usage Guide** — running and reproducing stages with DVC. <!-- TODO -->
-- **CI/CD Documentation** — once continuous integration is added (Roadmap v3).
-  <!-- TODO -->
 - **Deployment Guide** — for cloud/Kubernetes deployment (Roadmap v4–v5).
   <!-- TODO -->
 - **Monitoring & Operations** — for enterprise MLOps (Roadmap v6). <!-- TODO -->
