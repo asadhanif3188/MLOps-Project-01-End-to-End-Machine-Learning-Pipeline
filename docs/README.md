@@ -23,6 +23,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System overview, components, pipeline, and data flow |
+| [Pipeline Contract](pipeline-contract.md) | Stage inputs/outputs, artifact ownership, evaluation boundary, external-service boundaries, and reproducibility expectations (current vs target) |
 | [Logging Strategy](logging.md) | How the pipeline emits, formats, and persists logs |
 | [Exception Strategy](exception-strategy.md) | Exception hierarchy, error propagation, and error logging |
 | [Testing Strategy](testing-strategy.md) | Testing philosophy, `tests/` layout, and the testing roadmap |
@@ -46,6 +47,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-003](decisions/ADR-003-why-dvc.md) | Why DVC |
 | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) |
 | [ADR-005](decisions/ADR-005-containerization-strategy.md) | Containerization Strategy |
+| [ADR-006](decisions/ADR-006-pipeline-reproducibility.md) | Pipeline Reproducibility as an Engineering Requirement |
 
 ### Engineering Reviews
 
