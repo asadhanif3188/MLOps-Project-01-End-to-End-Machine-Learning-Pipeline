@@ -1,6 +1,6 @@
 # ADR-005: Containerization Strategy
 
-- **Status:** Accepted (design only — not yet implemented)
+- **Status:** Accepted
 - **Date:** 2026-08-02
 - **Deciders:** Asad Hanif
 - **Related:** [Containerization Strategy](../containerization.md),
@@ -12,11 +12,12 @@
 > assigned to the Python Quality Toolchain decision. Containerization takes the
 > next free number.
 
-> **Scope note.** This ADR ratifies the *design*. No `Dockerfile`,
-> `.dockerignore`, or `docker-compose.yml` is created by it. Implementation is
-> deferred to a later sprint; this record exists so that implementation follows a
-> settled design rather than improvised choices. The full rationale lives in
-> [containerization.md](../containerization.md).
+> **Scope note.** This ADR ratifies the *design*, and that design was
+> **implemented in Sprint 3**: the repository now ships a multi-stage
+> `Dockerfile`, a `.dockerignore`, and a `docker-compose.yml` that follow the
+> choices recorded here. The record exists so that the implementation followed a
+> settled design rather than improvised choices. The full rationale and the
+> as-built details live in [containerization.md](../containerization.md).
 
 ## Context
 
@@ -114,8 +115,10 @@ Adopt the following strategy (detailed in
 
 **Trade-offs and follow-ups**
 
-- **Nothing is implemented yet.** The `Dockerfile`, `.dockerignore`, and any
-  Compose file are future work; this ADR only ratifies the design.
+- **Implemented in Sprint 3.** The `Dockerfile`, `.dockerignore`, and
+  `docker-compose.yml` described by this design now exist in the repository;
+  Sprint 3 CI also builds and validates the production image. This ADR ratified
+  the design that the implementation followed.
 - `slim` is larger than Alpine/distroless — an accepted cost for build
   reliability, partly offset by multi-stage builds; distroless revisit is a
   follow-up.

@@ -32,8 +32,8 @@ Following tools have been used to complete the project.
 
 ### Training:
 
-- The train.py script trains a Random Forest Classifier on the preprocessed data.
-- The model is saved as models/random_forest.pkl.
+- The train.py script trains a Random Forest Classifier, tuning hyperparameters with a grid search, on the dataset (data/raw/data.csv).
+- The model is saved as models/model.pkl.
 - Hyperparameters and the model itself are logged into MLflow for tracking and comparison.
 
 ### Evaluation:

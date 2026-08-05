@@ -9,6 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes yet._
 
+## [1.2.0] - 2026-08-05
+
+Sprint 3 — Containerization & Continuous Integration: make the pipeline portable
+and self-validating. Ship a production-grade container image and a Compose-based
+development workflow, and add a GitHub Actions CI pipeline that lints, tests, and
+builds the image on every push and pull request.
+
+### Added
+
+- Production-grade, multi-stage `Dockerfile` with three named targets from a
+  single source of truth — `builder` (dependency compilation into an isolated
+  virtualenv), `development` (builder + Ruff/mypy/pytest/pre-commit toolchain),
+  and `runtime` (lean, non-root production image, the default target) — built on
+  `python:3.12-slim-bookworm` with BuildKit cache mounts and OCI provenance
+  labels.
+- `.dockerignore` that keeps data, models, credentials, and local tooling out of
+  the build context and image layers.
+- `docker-compose.yml` development workflow: a bind-mounted `dev` service for the
+  inner loop and an on-demand `pipeline` profile that runs the production image,
+  plus `.env.example` for MLflow / DagsHub credentials.
+- Continuous integration pipeline (`.github/workflows/ci.yml`): a `quality` job
+  (Ruff lint + format check, pytest) gating a `docker` job that builds the
+  `runtime` image and validates it (non-root UID 10001, core imports resolve,
+  DVC entrypoint present).
+- CI status badge on the root `README.md`.
+- ADR-005 recording the containerization strategy (Docker/OCI, multi-stage
+  build, `slim` base, non-root, twelve-factor config, externalized state).
+
+### Changed
+
+- ADR-005 status moved from "Accepted (design only — not yet implemented)" to
+  "Accepted", with scope and consequences updated to reflect that the design was
+  implemented in Sprint 3.
+- Documentation refreshed for Sprint 3 (architecture, roadmap, project structure,
+  and the documentation index) to describe the container image, Compose workflow,
+  and CI pipeline.
+
+### Security
+
+- Production image runs as a dedicated non-root user (UID/GID 10001) with a
+  `nologin` shell; build toolchain and compilers are confined to the `builder`
+  stage and never reach runtime.
+- Secrets and data are injected at run time (via `--env-file` / mounted volumes),
+  never baked into image layers; base image pinned by codename
+  (`python:3.12-slim-bookworm`), with digest pinning recorded as a follow-up.
+- CI workflow granted least-privilege `contents: read` only, structurally
+  preventing it from pushing images or writing to the repository.
+
+### CI
+
+- CI is validation only — it lints, tests, and builds/validates the image on
+  every push to `main` and every pull request; it does not deploy, publish
+  images, or use Kubernetes (continuous delivery is deferred to Roadmap v3+).
+- Concurrency control cancels superseded in-flight runs per ref; pip and
+  BuildKit (`type=gha`) layer caches speed repeat runs.
+
+### Documentation
+
+- `docs/containerization.md` — containerization strategy and as-built
+  build/run instructions (including hardened, read-only execution).
+- `docs/docker-development.md` — day-to-day Docker Compose development workflow.
+- `docs/ci-cd.md` — CI stages, failure strategy, local reproduction, and the
+  future continuous-delivery roadmap.
+
 ## [1.1.0] - 2026-08-02
 
 Sprint 2 — Engineering Excellence: raise the baseline pipeline to a maintainable,
@@ -101,6 +165,7 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/releases/tag/v1.0.0
