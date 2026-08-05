@@ -9,52 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes yet._
 
-## [1.2.0] - 2026-08-04
+## [1.2.0] - 2026-08-05
 
-Sprint 3 — Containerization & CI: package the pipeline as a reproducible,
-non-root container image, add a Docker Compose local-development workflow, and
-automate the quality gates on GitHub Actions. Design was ratified first
-(ADR-005), then implemented and validated.
+Sprint 3 — Containerization & Continuous Integration: make the pipeline portable
+and self-validating. Ship a production-grade container image and a Compose-based
+development workflow, and add a GitHub Actions CI pipeline that lints, tests, and
+builds the image on every push and pull request.
 
 ### Added
 
-- Containerization strategy and decision record: `docs/containerization.md`
-  (goals, dev/prod split, multi-stage build, base-image selection, security,
-  non-root rationale, env/volume/cache strategy, and CI/Kubernetes readiness) and
-  `docs/decisions/ADR-005-containerization-strategy.md`.
-- Production-grade container image: a multi-stage `Dockerfile` with three targets
-  — `builder` (dependency virtualenv), `development` (adds the Ruff/mypy/pytest/
-  pre-commit toolchain), and `runtime` (the default — a lean, **non-root** image
-  on `python:3.12-slim-bookworm`) — plus a `.dockerignore` that keeps the build
-  context small and secret-free. OCI provenance labels are stamped from
-  `VCS_REF`/`BUILD_VERSION` build args; a build-time import smoke test validates
-  the shipped environment.
-- Local development workflow with Docker Compose: `docker-compose.yml` (a `dev`
-  service with the working tree bind-mounted for live edits and a profile-gated
-  `pipeline` service that runs the production image) and `docs/docker-development.md`
-  documenting startup, shutdown, logs, rebuild, and troubleshooting.
-- Continuous integration on GitHub Actions: `.github/workflows/ci.yml` runs
-  checkout → Python 3.12 → install → Ruff (lint + format check) → pytest → Docker
-  build of the `runtime` image → build validation (non-root UID, core imports,
-  `dvc` entrypoint). Validation only — no deploy, no image push (`push: false`),
-  least-privilege `contents: read`. Documented in `docs/ci-cd.md`.
-- Sprint 3 final engineering-validation review
-  (`docs/reviews/sprint-03-final-review.md`).
-- Screenshot placeholder categories for the Docker build and CI pipeline
-  (`docs/screenshots/docker-build/`, `docs/screenshots/ci-pipeline/`).
+- Production-grade, multi-stage `Dockerfile` with three named targets from a
+  single source of truth — `builder` (dependency compilation into an isolated
+  virtualenv), `development` (builder + Ruff/mypy/pytest/pre-commit toolchain),
+  and `runtime` (lean, non-root production image, the default target) — built on
+  `python:3.12-slim-bookworm` with BuildKit cache mounts and OCI provenance
+  labels.
+- `.dockerignore` that keeps data, models, credentials, and local tooling out of
+  the build context and image layers.
+- `docker-compose.yml` development workflow: a bind-mounted `dev` service for the
+  inner loop and an on-demand `pipeline` profile that runs the production image,
+  plus `.env.example` for MLflow / DagsHub credentials.
+- Continuous integration pipeline (`.github/workflows/ci.yml`): a `quality` job
+  (Ruff lint + format check, pytest) gating a `docker` job that builds the
+  `runtime` image and validates it (non-root UID 10001, core imports resolve,
+  DVC entrypoint present).
+- CI status badge on the root `README.md`.
+- ADR-005 recording the containerization strategy (Docker/OCI, multi-stage
+  build, `slim` base, non-root, twelve-factor config, externalized state).
 
 ### Changed
 
-- Documentation refreshed to reflect the delivered containerization and CI work:
-  `README.md` (CI badge, Docker/Compose quick starts, Continuous Integration
-  section), `docs/architecture.md` (containerization & CI as implemented, not
-  future), `docs/roadmap.md` (v3 CI/CD in progress, v4 containerization marked
-  implemented), `docs/project-structure.md` (Dockerfile, `.dockerignore`,
-  `docker-compose.yml`, `.github/workflows/`, new docs), and
-  `docs/developer-guide.md` (container-based development option; CI now enforced).
-- Fixed a broken relative link to `SECURITY.md` in
-  `docs/decisions/ADR-005-containerization-strategy.md`, surfaced during final
-  link validation.
+- ADR-005 status moved from "Accepted (design only — not yet implemented)" to
+  "Accepted", with scope and consequences updated to reflect that the design was
+  implemented in Sprint 3.
+- Documentation refreshed for Sprint 3 (architecture, roadmap, project structure,
+  and the documentation index) to describe the container image, Compose workflow,
+  and CI pipeline.
+
+### Security
+
+- Production image runs as a dedicated non-root user (UID/GID 10001) with a
+  `nologin` shell; build toolchain and compilers are confined to the `builder`
+  stage and never reach runtime.
+- Secrets and data are injected at run time (via `--env-file` / mounted volumes),
+  never baked into image layers; base image pinned by codename
+  (`python:3.12-slim-bookworm`), with digest pinning recorded as a follow-up.
+- CI workflow granted least-privilege `contents: read` only, structurally
+  preventing it from pushing images or writing to the repository.
+
+### CI
+
+- CI is validation only — it lints, tests, and builds/validates the image on
+  every push to `main` and every pull request; it does not deploy, publish
+  images, or use Kubernetes (continuous delivery is deferred to Roadmap v3+).
+- Concurrency control cancels superseded in-flight runs per ref; pip and
+  BuildKit (`type=gha`) layer caches speed repeat runs.
+
+### Documentation
+
+- `docs/containerization.md` — containerization strategy and as-built
+  build/run instructions (including hardened, read-only execution).
+- `docs/docker-development.md` — day-to-day Docker Compose development workflow.
+- `docs/ci-cd.md` — CI stages, failure strategy, local reproduction, and the
+  future continuous-delivery roadmap.
 
 ## [1.1.0] - 2026-08-02
 
