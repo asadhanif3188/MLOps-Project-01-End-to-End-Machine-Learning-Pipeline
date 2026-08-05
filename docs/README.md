@@ -54,6 +54,12 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Sprint 2 — Production Readiness](reviews/sprint-02-engineering-review.md) | Principal-engineer review that drove the Sprint 2 engineering-excellence work (findings H-1..H-6) |
 | [Sprint 2 — Final Validation](reviews/sprint-02-final-review.md) | Release-readiness validation for v1.1.0: checks, remaining debt, risks, and Sprint 3 recommendations |
 
+### Retrospectives
+
+| Retrospective | Description |
+|---------------|-------------|
+| [Sprint 3 — v1.2.0](retrospectives/sprint-03-retrospective.md) | Containerization & CI: what was planned, delivered, decided, and deliberately deferred, plus lessons learned |
+
 ---
 
 ## Process & Governance
