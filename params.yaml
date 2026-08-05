@@ -3,12 +3,13 @@ preprocess:
   output: data/processed/data.csv
 
 train:
-  input: data/raw/data.csv
+  input: data/processed/data.csv
   output: models/model.pkl
   random_state: 42
   n_estimators: 100
   max_depth: 5
 
 test:
-  data: data/raw/data.csv
+  data: data/processed/data.csv
   model: models/model.pkl
+  metrics: metrics/metrics.json

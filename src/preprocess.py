@@ -24,7 +24,11 @@ def preprocess(input_path: str, output_path: str) -> None:
     )
 
     df = read_csv(input_path)
-    write_csv(df, output_path, header=False, index=False)
+    # Keep the header row: downstream stages (train/evaluate) select the
+    # ``Outcome`` column by name, so the processed artifact must carry its
+    # column names. (Previously written headerless, which is why the raw file
+    # was consumed directly instead of this output — see ADR-006 / D8.)
+    write_csv(df, output_path, header=True, index=False)
 
     logger.info(
         "Preprocess stage completed: %d rows written to %s", len(df), output_path

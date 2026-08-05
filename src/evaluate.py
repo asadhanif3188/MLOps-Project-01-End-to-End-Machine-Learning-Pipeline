@@ -7,21 +7,30 @@ from sklearn.metrics import accuracy_score
 
 from exceptions import ModelError, TrackingError
 from logging_config import configure_logging, get_logger
-from pipeline_io import ensure_columns, load_params, load_pickle, read_csv, require_env
+from pipeline_io import (
+    ensure_columns,
+    load_params,
+    load_pickle,
+    read_csv,
+    require_env,
+    write_json,
+)
 from stage_runner import run_stage
 
 logger = get_logger("evaluate")
 
 
-def evaluate(data_path: str, model_path: str) -> None:
+def evaluate(data_path: str, model_path: str, metrics_path: str) -> None:
     """Load trained model and evaluate accuracy on dataset.
 
     Args:
         data_path: Path to CSV dataset.
         model_path: Path to pickled model file.
+        metrics_path: Path to write the metrics artifact (JSON).
 
     Raises:
-        DataError: If the dataset cannot be read or lacks the ``Outcome`` column.
+        DataError: If the dataset cannot be read or lacks the ``Outcome`` column,
+            or if the metrics artifact cannot be written.
         ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
         ModelError: If the model cannot be loaded or fails to predict.
         TrackingError: If logging the metric to MLflow fails.
@@ -47,6 +56,11 @@ def evaluate(data_path: str, model_path: str) -> None:
 
     model_accuracy_score = accuracy_score(y, predictions)
 
+    # Persist metrics as a first-class, DVC-tracked artifact before the network
+    # boundary, so the pipeline's declared ``metrics`` output exists independently
+    # of MLflow availability.
+    write_json({"accuracy": float(model_accuracy_score)}, metrics_path)
+
     try:
         mlflow.set_tracking_uri(tracking_uri)
         with mlflow.start_run():
@@ -65,11 +79,12 @@ def main() -> None:
     load_dotenv()
     configure_logging()
 
-    params = load_params("params.yaml", "test", required=("data", "model"))
+    params = load_params("params.yaml", "test", required=("data", "model", "metrics"))
 
     evaluate(
         params["data"],
         params["model"],
+        params["metrics"],
     )
 
 

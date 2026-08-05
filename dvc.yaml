@@ -13,13 +13,13 @@ stages:
   train:
     cmd: python src/train.py
     deps:
-    - data/raw/data.csv
+    - data/processed/data.csv
     - src/train.py
     params:
-    - train.data
+    - train.input
     - train.max_depth
-    - train.model
     - train.n_estimators
+    - train.output
     - train.random_state
     outs:
     - models/model.pkl
@@ -27,6 +27,13 @@ stages:
   evaluate:
     cmd: python src/evaluate.py
     deps:
-    - data/raw/data.csv
+    - data/processed/data.csv
     - models/model.pkl
     - src/evaluate.py
+    params:
+    - test.data
+    - test.metrics
+    - test.model
+    metrics:
+    - metrics/metrics.json:
+        cache: false
