@@ -19,6 +19,7 @@ addopts = "-ra --strict-markers"
 markers = [
     "smoke: fast checks that the pipeline is importable and wired together",
     "unit: isolated tests of a single component with no external services",
+    "integration: multi-stage tests that run stages together through real files (still no network; MLflow is stubbed)",
 ]
 
 [tool.ruff]
