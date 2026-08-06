@@ -1,51 +1,164 @@
-"""Model training stage: hyperparameter tuning, training, and MLflow tracking."""
+"""Model training stage.
 
-from urllib.parse import urlparse
+Structured as four separable concerns, wired together only in :func:`train` /
+:func:`main`:
 
-import mlflow
+* **ML computation** — :func:`run_training` (with :func:`build_param_grid` and
+  :func:`hyperparameter_tuning`) splits, tunes, fits, and scores. It takes a
+  feature matrix and target and returns a :class:`TrainingResult`; it performs
+  no file IO, reads no environment, and imports no MLflow, so it is
+  deterministic given its inputs and unit-testable without a tracking server.
+* **Artifact persistence** — the fitted model is pickled via
+  :func:`pipeline_io.save_pickle` (the DVC-tracked output this stage owns).
+* **MLflow tracking** — delegated to :mod:`tracking`, imported lazily at the
+  boundary so importing this module does not require MLflow.
+* **Orchestration** — :func:`train` / :func:`main` read config and data, invoke
+  the computation, persist the model, then log the run.
+"""
+
+from dataclasses import dataclass
+from typing import Any
+
 import pandas as pd
 from dotenv import load_dotenv
-from mlflow.exceptions import MlflowException
-from mlflow.models import infer_signature
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import GridSearchCV, train_test_split
 
-from exceptions import TrackingError
 from logging_config import configure_logging, get_logger
 from pipeline_io import ensure_columns, load_params, read_csv, require_env, save_pickle
 from stage_runner import run_stage
 
 logger = get_logger("train")
 
+# Held-out fraction for the in-training accuracy estimate. Fixed here (not
+# configured) because it governs an internal reporting split, not the pipeline's
+# evaluation dataset.
+TEST_SIZE = 0.20
+
+# Registry name used when MLflow's artifact store is remote (see tracking).
+REGISTERED_MODEL_NAME = "Best Random Forest Classifier"
+
+
+@dataclass(frozen=True)
+class TrainingResult:
+    """The outputs of the MLflow-free training computation.
+
+    Attributes:
+        model: The fitted best estimator (ready to pickle and to predict with).
+        accuracy: Accuracy on the internal held-out split.
+        best_params: The hyperparameters that produced ``model`` — the configured
+            ``n_estimators``/``max_depth`` plus the tuned
+            ``min_samples_split``/``min_samples_leaf``.
+        confusion_matrix: Text rendering of the confusion matrix.
+        classification_report: Text rendering of the classification report.
+    """
+
+    model: RandomForestClassifier
+    accuracy: float
+    best_params: dict[str, Any]
+    confusion_matrix: str
+    classification_report: str
+
+
+def build_param_grid() -> dict[str, list[int]]:
+    """Return the grid searched by :func:`hyperparameter_tuning`.
+
+    Only the leaf/split regularization is tuned here. ``n_estimators``,
+    ``max_depth``, and ``random_state`` come from ``params.yaml`` and are set
+    directly on the base estimator, so the configured values genuinely govern the
+    model instead of being shadowed by a hardcoded grid (resolving the previously
+    inert ``train.*`` hyperparameters).
+    """
+    return {
+        "min_samples_split": [2, 5],
+        "min_samples_leaf": [1, 2],
+    }
+
 
 def hyperparameter_tuning(
     X_train: pd.DataFrame,
     y_train: pd.Series,
-    param_grid: dict[str, list[int | None]],
+    base_estimator: RandomForestClassifier,
+    param_grid: dict[str, list[int]],
 ) -> GridSearchCV:
-    """Perform grid search over hyperparameter space using 3-fold cross-validation.
+    """Grid-search ``param_grid`` around ``base_estimator`` with 3-fold CV.
 
     Args:
         X_train: Training feature matrix.
         y_train: Training target vector.
-        param_grid: Dictionary of hyperparameters and their candidate values.
+        base_estimator: The seeded estimator whose fixed hyperparameters
+            (``n_estimators``, ``max_depth``, ``random_state``) come from config.
+        param_grid: The parameters to tune (see :func:`build_param_grid`).
 
     Returns:
-        GridSearchCV object fitted with best parameters.
+        The fitted :class:`GridSearchCV`.
     """
-    rf_model = RandomForestClassifier()
-
     grid_search = GridSearchCV(
-        estimator=rf_model, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2
+        estimator=base_estimator, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2
     )
     logger.info("Hyperparameter tuning started")
     grid_search.fit(X_train, y_train)
     logger.info(
         "Hyperparameter tuning completed; best params: %s", grid_search.best_params_
     )
-
     return grid_search
+
+
+def run_training(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    random_state: int,
+    n_estimators: int,
+    max_depth: int | None,
+    test_size: float = TEST_SIZE,
+) -> TrainingResult:
+    """Split, tune, fit, and score — the stage's pure ML computation.
+
+    Deterministic given ``X``, ``y``, and ``random_state``: both the train/test
+    split and the Random Forest are seeded, so repeated calls yield the same
+    model and accuracy. Performs no IO and makes no MLflow calls.
+
+    Args:
+        X: Feature matrix.
+        y: Target vector.
+        random_state: Seed applied to both the split and the estimator.
+        n_estimators: Number of trees (set on the estimator).
+        max_depth: Maximum tree depth, or ``None`` for unbounded.
+        test_size: Held-out fraction for the internal accuracy estimate.
+
+    Returns:
+        A :class:`TrainingResult` with the fitted model and its metrics.
+    """
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state
+    )
+
+    base_estimator = RandomForestClassifier(
+        n_estimators=n_estimators, max_depth=max_depth, random_state=random_state
+    )
+    grid_search = hyperparameter_tuning(
+        X_train, y_train, base_estimator, build_param_grid()
+    )
+    best_model = grid_search.best_estimator_
+
+    y_pred = best_model.predict(X_test)
+    accuracy = float(accuracy_score(y_test, y_pred))
+
+    best_params: dict[str, Any] = {
+        "n_estimators": n_estimators,
+        "max_depth": max_depth,
+        "min_samples_split": grid_search.best_params_["min_samples_split"],
+        "min_samples_leaf": grid_search.best_params_["min_samples_leaf"],
+    }
+    return TrainingResult(
+        model=best_model,
+        accuracy=accuracy,
+        best_params=best_params,
+        confusion_matrix=str(confusion_matrix(y_test, y_pred)),
+        classification_report=str(classification_report(y_test, y_pred)),
+    )
 
 
 def train(
@@ -56,28 +169,26 @@ def train(
     n_estimators: int,
     max_depth: int | None,
 ) -> None:
-    """Train a Random Forest model, tune hyperparameters, log to MLflow.
+    """Orchestrate the train stage: read → compute → persist → track.
 
     Stage contract:
-        * Input:  the processed dataset (``data_path``) — the ``preprocess``
-          output — which must contain the ``target`` column plus feature columns.
-        * Output: the pickled model artifact at ``model_path`` (owned by this
-          stage).
-        * Configuration: ``target`` and the training hyperparameters, all read
-          from the ``train`` section of ``params.yaml``.
+        * Input:  the processed dataset (``data_path``, the ``preprocess``
+          output), containing ``target`` plus feature columns.
+        * Output: the pickled model artifact at ``model_path`` (owned here).
+        * Configuration: ``target`` and the training hyperparameters from the
+          ``train`` section of ``params.yaml``.
 
     Args:
-        data_path: Path to the processed CSV dataset (the ``preprocess`` output).
+        data_path: Path to the processed CSV dataset.
         model_path: Path to save the pickled model.
-        target: Name of the label column to predict; every other column is a
-            feature. Kept in ``params.yaml`` rather than hardcoded so the
-            train/evaluate column contract has a single, explicit source.
-        random_state: Random seed for reproducibility.
-        n_estimators: Baseline number of estimators (used in grid search).
-        max_depth: Baseline max depth (used in grid search).
+        target: Name of the label column; every other column is a feature.
+        random_state: Seed for the split and the estimator (reproducibility).
+        n_estimators: Number of trees.
+        max_depth: Maximum tree depth, or ``None`` for unbounded.
 
     Raises:
-        DataError: If the dataset cannot be read or lacks the ``target`` column.
+        DataError: If the dataset cannot be read/lacks ``target``, or the model
+            cannot be written.
         ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
         TrackingError: If MLflow tracking fails.
         ModelError: If the trained model cannot be serialized.
@@ -89,76 +200,45 @@ def train(
     X = data.drop(columns=[target])
     y = data[target]
 
+    # Validate the tracking config up front — fail fast before the expensive fit.
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
-    # --- Model training (no tracking): failures here surface as-is, not as a
-    #     TrackingError. ---
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20)
-    signature = infer_signature(X_train, y_train)
+    result = run_training(
+        X,
+        y,
+        random_state=random_state,
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+    )
+    logger.info("Best model accuracy: %.4f", result.accuracy)
 
-    # Every candidate here is an ``int`` or ``None`` (``max_depth`` allows an
-    # unbounded ``None``), so ``list[int | None]`` is the precise element type.
-    # The explicit annotation is also required: without it the value lists — some
-    # ``list[int]``, one ``list[int | None]`` — infer as the invariant join
-    # ``dict[str, object]``, which would not match the helper's signature.
-    param_grid: dict[str, list[int | None]] = {
-        "n_estimators": [100, 200],
-        "max_depth": [5, 10, None],
-        "min_samples_split": [2, 5],
-        "min_samples_leaf": [1, 2],
-    }
-
-    grid_search = hyperparameter_tuning(X_train, y_train, param_grid)
-    best_model = grid_search.best_estimator_
-
-    y_pred = best_model.predict(X_test)
-    model_accuracy_score = accuracy_score(y_test, y_pred)
-    logger.info("Best model accuracy: %.4f", model_accuracy_score)
-
-    cm = confusion_matrix(y_test, y_pred)
-    cr = classification_report(y_test, y_pred)
-
-    # --- Experiment tracking (network boundary): scoped narrowly so only MLflow
-    #     failures become TrackingError. ---
-    try:
-        mlflow.set_tracking_uri(tracking_uri)
-        with mlflow.start_run():
-            mlflow.log_metric("accuracy", model_accuracy_score)
-            mlflow.log_param(
-                "best_n_estimators", grid_search.best_params_["n_estimators"]
-            )
-            mlflow.log_param("best_max_depth", grid_search.best_params_["max_depth"])
-            mlflow.log_param(
-                "best_samples_split", grid_search.best_params_["min_samples_split"]
-            )
-            mlflow.log_param(
-                "best_samples_leaf", grid_search.best_params_["min_samples_leaf"]
-            )
-
-            mlflow.log_text(str(cm), "confusion_matrix.txt")
-            mlflow.log_text(str(cr), "classification_report.txt")
-
-            tracking_url_type_store = urlparse(mlflow.get_artifact_uri()).scheme
-
-            if tracking_url_type_store != "file":
-                mlflow.sklearn.log_model(
-                    best_model,
-                    "model",
-                    registered_model_name="Best Random Forest Classifier",
-                    signature=signature,
-                )
-            else:
-                mlflow.sklearn.log_model(best_model, "model", signature=signature)
-    except MlflowException as exc:
-        raise TrackingError(
-            f"MLflow tracking failed against {tracking_uri!r}: {exc}. Check the "
-            f"tracking URI and your DagsHub credentials / network connection."
-        ) from exc
-
-    # Persist the best estimator locally (a ModelError-typed boundary).
-    save_pickle(best_model, model_path)
-
+    # Persist the owned artifact before the network boundary, so the DVC output
+    # exists independently of MLflow availability.
+    save_pickle(result.model, model_path)
     logger.info("Model saved to %s", model_path)
+
+    # Cross the tracking boundary last; the lazy import keeps MLflow out of this
+    # module's import graph so the computation above stays testable without it.
+    from tracking import build_signature, log_training_run
+
+    log_training_run(
+        tracking_uri,
+        model=result.model,
+        signature=build_signature(X, y),
+        metrics={"accuracy": result.accuracy},
+        params={
+            "best_n_estimators": result.best_params["n_estimators"],
+            "best_max_depth": result.best_params["max_depth"],
+            "best_samples_split": result.best_params["min_samples_split"],
+            "best_samples_leaf": result.best_params["min_samples_leaf"],
+        },
+        text_artifacts={
+            "confusion_matrix.txt": result.confusion_matrix,
+            "classification_report.txt": result.classification_report,
+        },
+        registered_model_name=REGISTERED_MODEL_NAME,
+    )
+
     logger.info("Train stage completed")
 
 

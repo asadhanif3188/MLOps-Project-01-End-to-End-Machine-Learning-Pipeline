@@ -1,11 +1,31 @@
-"""Model evaluation stage: loads trained model and logs accuracy metrics."""
+"""Model evaluation stage.
 
-import mlflow
+Separates its concerns like the train stage:
+
+* **ML computation** — :func:`compute_metrics` loads no files and calls no
+  MLflow; it takes a model and a labelled feature matrix and returns metrics, so
+  it is unit-testable without a tracking server.
+* **Artifact persistence** — metrics are written via
+  :func:`pipeline_io.write_json` (the DVC-tracked output this stage owns).
+* **MLflow tracking** — delegated to :mod:`tracking`, imported lazily.
+* **Orchestration** — :func:`evaluate` / :func:`main` read config, load the
+  dataset and model, compute metrics, persist them, then log to MLflow.
+
+Evaluation methodology: the model is scored over the *entire* dataset at
+``evaluate.data``. Today that path is the same processed dataset ``train`` fits
+on, so the reported accuracy is **in-sample**. Pointing ``evaluate.data`` at a
+held-out split — a configuration/graph change, not a code change, since the
+dataset input is already explicit — is what turns it into a generalization
+estimate. See pipeline-contract.md §8.
+"""
+
+from typing import Any
+
+import pandas as pd
 from dotenv import load_dotenv
-from mlflow.exceptions import MlflowException
 from sklearn.metrics import accuracy_score
 
-from exceptions import ModelError, TrackingError
+from exceptions import ModelError
 from logging_config import configure_logging, get_logger
 from pipeline_io import (
     ensure_columns,
@@ -20,32 +40,63 @@ from stage_runner import run_stage
 logger = get_logger("evaluate")
 
 
+def compute_metrics(
+    model: Any, X: pd.DataFrame, y: pd.Series, source: str
+) -> dict[str, float]:
+    """Score ``model`` on labelled data ``(X, y)`` — the pure evaluation compute.
+
+    Predicts over every row of ``X`` and returns the accuracy against ``y``.
+    Performs no file IO and makes no MLflow calls, so it is unit-testable with a
+    plain in-memory model and no tracking server.
+
+    Args:
+        model: A fitted estimator exposing ``predict``.
+        X: Feature matrix to predict on.
+        y: True labels aligned with ``X``.
+        source: Human-readable origin of the data, used in the error message.
+
+    Returns:
+        A metrics mapping, currently ``{"accuracy": <float>}``.
+
+    Raises:
+        ModelError: If the model fails to predict on ``X`` (e.g. its feature
+            schema does not match what the model was trained on).
+    """
+    try:
+        predictions = model.predict(X)
+    except (ValueError, AttributeError) as exc:
+        raise ModelError(
+            f"Model failed to predict on {source!r}: {exc}. The model and dataset "
+            f"features may be incompatible."
+        ) from exc
+    return {"accuracy": float(accuracy_score(y, predictions))}
+
+
 def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) -> None:
-    """Load trained model and evaluate accuracy on dataset.
+    """Orchestrate the evaluate stage: read → compute → persist → track.
 
     Stage contract:
-        * Inputs: the trained model artifact (``model_path``, the ``train``
-          output) and the evaluation dataset (``data_path``), which must contain
-          the ``target`` column plus the same feature columns the model expects.
-        * Output: the metrics artifact at ``metrics_path`` (owned by this stage),
-          written as JSON before the MLflow boundary.
-        * Configuration: ``target`` and the input/output paths, all read from the
-          ``evaluate`` section of ``params.yaml``.
+        * Inputs: the model artifact (``model_path``, the ``train`` output) and
+          the evaluation dataset (``data_path``), which must contain ``target``
+          plus the features the model expects. Both are explicit paths — there is
+          no hidden dataset loading and no dependency on train's in-memory state.
+        * Output: the metrics artifact at ``metrics_path`` (owned here), written
+          as JSON before the MLflow boundary.
+        * Configuration: ``target`` and the paths from the ``evaluate`` section
+          of ``params.yaml``.
 
     Args:
         data_path: Path to the evaluation CSV dataset.
         model_path: Path to the pickled model file.
-        target: Name of the label column; must match the column ``train`` fit on.
-            Read from ``params.yaml`` so train and evaluate share one explicit
-            column contract rather than each hardcoding the name.
+        target: Name of the label column (must match the column ``train`` fit on).
         metrics_path: Path to write the metrics artifact (JSON).
 
     Raises:
-        DataError: If the dataset cannot be read or lacks the ``target`` column,
-            or if the metrics artifact cannot be written.
+        DataError: If the dataset cannot be read/lacks ``target``, or the metrics
+            cannot be written.
         ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
         ModelError: If the model cannot be loaded or fails to predict.
-        TrackingError: If logging the metric to MLflow fails.
+        TrackingError: If logging to MLflow fails.
     """
     logger.info("Evaluate stage started (data=%s, model=%s)", data_path, model_path)
 
@@ -57,33 +108,19 @@ def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) ->
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
     model = load_pickle(model_path)
+    metrics = compute_metrics(model, X, y, data_path)
 
-    try:
-        predictions = model.predict(X)
-    except (ValueError, AttributeError) as exc:
-        raise ModelError(
-            f"Model loaded from {model_path!r} failed to predict on {data_path!r}: "
-            f"{exc}. The model and dataset features may be incompatible."
-        ) from exc
+    # Persist the owned artifact before the network boundary, so the declared
+    # metrics output exists independently of MLflow availability.
+    write_json(metrics, metrics_path)
 
-    model_accuracy_score = accuracy_score(y, predictions)
+    # Cross the tracking boundary last; the lazy import keeps MLflow out of this
+    # module's import graph so the computation above stays testable without it.
+    from tracking import log_evaluation
 
-    # Persist metrics as a first-class, DVC-tracked artifact before the network
-    # boundary, so the pipeline's declared ``metrics`` output exists independently
-    # of MLflow availability.
-    write_json({"accuracy": float(model_accuracy_score)}, metrics_path)
+    log_evaluation(tracking_uri, metrics)
 
-    try:
-        mlflow.set_tracking_uri(tracking_uri)
-        with mlflow.start_run():
-            mlflow.log_metric("accuracy", model_accuracy_score)
-    except MlflowException as exc:
-        raise TrackingError(
-            f"MLflow tracking failed against {tracking_uri!r}: {exc}. Check the "
-            f"tracking URI and your DagsHub credentials / network connection."
-        ) from exc
-
-    logger.info("Evaluate stage completed; model accuracy: %.4f", model_accuracy_score)
+    logger.info("Evaluate stage completed; model accuracy: %.4f", metrics["accuracy"])
 
 
 def main() -> None:
