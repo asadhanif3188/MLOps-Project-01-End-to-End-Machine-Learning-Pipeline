@@ -58,8 +58,20 @@ def test_load_params_invalid_yaml_raises_config_error(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_load_params_missing_section_raises_config_error(params_file: Path) -> None:
-    with pytest.raises(ConfigError, match="no 'evaluate' section"):
-        load_params(str(params_file), "evaluate")
+    # ``deploy`` is deliberately not a pipeline stage, so the section is absent.
+    with pytest.raises(ConfigError, match="no 'deploy' section"):
+        load_params(str(params_file), "deploy")
+
+
+@pytest.mark.unit
+def test_load_params_returns_evaluate_section(params_file: Path) -> None:
+    """The evaluate stage's config contract: the ``evaluate`` section (renamed
+    from ``test`` in Sprint 4 PR 3) exposes its declared input/output keys."""
+    section = load_params(
+        str(params_file), "evaluate", required=("data", "model", "target", "metrics")
+    )
+    assert section["target"] == "Outcome"
+    assert section["metrics"] == "metrics/metrics.json"
 
 
 @pytest.mark.unit

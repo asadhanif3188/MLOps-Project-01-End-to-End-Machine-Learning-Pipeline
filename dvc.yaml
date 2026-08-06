@@ -21,6 +21,7 @@ stages:
     - train.n_estimators
     - train.output
     - train.random_state
+    - train.target
     outs:
     - models/model.pkl
 
@@ -31,9 +32,10 @@ stages:
     - models/model.pkl
     - src/evaluate.py
     params:
-    - test.data
-    - test.metrics
-    - test.model
+    - evaluate.data
+    - evaluate.metrics
+    - evaluate.model
+    - evaluate.target
     metrics:
     - metrics/metrics.json:
         cache: false

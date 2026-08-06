@@ -54,9 +54,16 @@ def params_file(tmp_path: Path) -> Path:
         "train": {
             "input": "data/processed/data.csv",
             "output": "models/model.pkl",
+            "target": "Outcome",
             "random_state": 42,
             "n_estimators": 100,
             "max_depth": 5,
+        },
+        "evaluate": {
+            "data": "data/processed/data.csv",
+            "model": "models/model.pkl",
+            "target": "Outcome",
+            "metrics": "metrics/metrics.json",
         },
     }
     path = tmp_path / "params.yaml"
