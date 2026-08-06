@@ -14,25 +14,30 @@ For the reasoning behind this layout, see
 ```text
 .
 ├── src/                  # Pipeline code
-│   ├── preprocess.py     #   stage: raw CSV → processed CSV
-│   ├── train.py          #   stage: train + tune model, log to MLflow
-│   ├── evaluate.py       #   stage: evaluate model, log metric
+│   ├── preprocess.py     #   stage: raw CSV → processed CSV (headered)
+│   ├── train.py          #   stage: seeded train + tune, persist model, track
+│   ├── evaluate.py       #   stage: score model → metrics.json, track
+│   ├── tracking.py       #   MLflow experiment-tracking boundary (lazy-imported)
 │   ├── logging_config.py #   centralized logging configuration
 │   ├── exceptions.py     #   typed exception hierarchy (PipelineError, …)
 │   ├── pipeline_io.py    #   IO/config/serialization helpers (typed errors)
 │   └── stage_runner.py   #   uniform stage entry point (log once, exit non-zero)
-├── tests/                # Pytest suite
-│   ├── conftest.py       #   shared fixtures
+├── tests/                # Pytest suite (smoke · unit · integration · contract)
+│   ├── conftest.py       #   shared fixtures (incl. MLflow stub)
 │   ├── smoke/            #   fast import/wiring checks
-│   └── unit/             #   isolated component tests
+│   ├── unit/             #   isolated component + stage-compute tests
+│   ├── integration/      #   full preprocess→train→evaluate run (MLflow stubbed)
+│   └── contract/         #   static dvc.yaml/params.yaml/src consistency checks
 ├── data/                 # Datasets (DVC-tracked; contents not stored in Git)
 │   ├── raw/              #   raw input data (data.csv, tracked via data.csv.dvc)
-│   └── processed/        #   preprocessed output
+│   └── processed/        #   preprocessed output (consumed by train/evaluate)
+├── metrics/              # Metrics artifact (metrics.json — evaluate output)
 ├── models/               # Serialized model artifacts (DVC-tracked, git-ignored)
 ├── logs/                 # Rotating pipeline logs (git-ignored)
 ├── docs/                 # Project documentation (see docs/README.md portal)
 │   ├── README.md         #   documentation index
 │   ├── architecture.md
+│   ├── pipeline-contract.md #  stage contracts, artifact ownership, eval boundary
 │   ├── roadmap.md
 │   ├── project-structure.md
 │   ├── design-principles.md
@@ -50,7 +55,9 @@ For the reasoning behind this layout, see
 │   ├── release-checklist.md
 │   ├── repository-metadata.md
 │   ├── decisions/        #   Architecture Decision Records (ADRs)
-│   ├── reviews/          #   engineering reviews (sprint-02 production readiness)
+│   ├── reviews/          #   engineering & release-readiness reviews
+│   ├── retrospectives/   #   per-sprint retrospectives
+│   ├── proof/            #   sprint proof-impact assessments
 │   ├── diagrams/         #   diagram placeholders (by category)
 │   └── screenshots/      #   screenshot placeholders (by category)
 ├── .github/              # GitHub config
@@ -88,15 +95,22 @@ For the reasoning behind this layout, see
 One Python module per pipeline stage, each runnable directly and mapped 1:1 to a
 DVC stage:
 
-- **`preprocess.py`** — reads the raw dataset and writes the processed CSV. Reads
-  its paths from the `preprocess` section of `params.yaml`.
-- **`train.py`** — trains a `RandomForestClassifier` using `GridSearchCV`, logs
-  parameters/metrics/artifacts to MLflow, and serializes the best model to
-  `models/model.pkl`.
-- **`evaluate.py`** — loads the serialized model and logs an accuracy metric to
-  MLflow.
+- **`preprocess.py`** — reads the raw dataset and writes the processed CSV (with
+  header). Reads its paths from the `preprocess` section of `params.yaml`.
+- **`train.py`** — consumes the **processed** dataset and trains a seeded
+  `RandomForestClassifier` (configured `n_estimators`/`max_depth`/`random_state`
+  plus a small `GridSearchCV`), serializes the best model to `models/model.pkl`,
+  and logs the run to MLflow. Its ML computation (`run_training`) is separated
+  from IO and tracking so it is unit-testable without a tracking server.
+- **`evaluate.py`** — loads the model, scores it, writes the metrics artifact
+  `metrics/metrics.json`, and logs the accuracy to MLflow. Its scoring
+  (`compute_metrics`) is likewise MLflow-free.
+- **`tracking.py`** — the single MLflow experiment-tracking boundary. The stages
+  import it lazily, so importing (or unit-testing) a stage needs neither MLflow
+  nor credentials.
 
-The stages share four infrastructure modules (added in Sprint 2):
+The stages share the infrastructure modules (added in Sprint 2; the tracking
+boundary added in Sprint 4):
 
 - **`logging_config.py`** — the single source of truth for logging: console +
   rotating-file handlers, `LOG_LEVEL`/`LOG_DIR` environment control. See
@@ -114,21 +128,34 @@ The stages share four infrastructure modules (added in Sprint 2):
 All modules carry complete type annotations checked by a strict mypy
 configuration (see [Type Safety](type-safety.md)).
 
-> ⚠️ **Known gaps** (documented in [architecture.md](architecture.md), to be
-> fixed in a future sprint): the `train`/`evaluate` scripts read `data/raw`
-> rather than the `preprocess` output, and `dvc.yaml` param names don't match
-> `params.yaml`.
+> The pipeline-correctness gaps this section previously flagged (raw data
+> consumed instead of the `preprocess` output, `dvc.yaml`/`params.yaml` parameter
+> mismatch) were resolved in Sprint 4; the wiring is now enforced by the
+> `contract` tests below and by CI. The one remaining, documented limitation is
+> **in-sample evaluation** — see
+> [pipeline-contract §8](pipeline-contract.md#8-evaluation-boundary).
 
 ### `tests/` — Automated tests
-A `pytest` suite (see [Testing Strategy](testing-strategy.md)):
+A `pytest` suite in four tiers (see [Testing Strategy](testing-strategy.md)):
 
-- **`conftest.py`** — shared fixtures.
+- **`conftest.py`** — shared fixtures, including `stub_tracking`, which swaps the
+  lazily-imported `tracking` module for an in-memory recorder so stage tests run
+  without importing MLflow or touching the network.
 - **`smoke/`** — fast import/wiring checks across all of `src/`.
-- **`unit/`** — isolated tests of the critical components (`exceptions.py`,
-  `pipeline_io.py`, `stage_runner.py`) with no network or external services.
+- **`unit/`** — isolated tests of the infrastructure modules (`exceptions.py`,
+  `pipeline_io.py`, `stage_runner.py`) **and** the stages' pure ML-compute
+  functions (`preprocess`, `train`, `evaluate`), with no network or external
+  services.
+- **`integration/`** — an end-to-end `preprocess → train → evaluate` run through
+  real temp files with MLflow stubbed, proving each stage's output is consumable
+  by the next.
+- **`contract/`** — static checks that `dvc.yaml`, `params.yaml`, and `src/`
+  agree with the [Pipeline Contract](pipeline-contract.md) (parameter
+  consistency, single-owner artifacts, declared lineage, acyclic graph). Pure
+  parsing — no data, network, or credentials.
 
-Run with `make test` (or `python -m pytest`); markers `smoke` and `unit` select
-slices of the suite.
+Run with `make test` (or `python -m pytest`); markers `smoke`, `unit`,
+`integration`, and `contract` select slices of the suite.
 
 ### `data/` — Datasets (DVC-tracked)
 - **`raw/`** — original input data. `data.csv` is versioned via
@@ -140,9 +167,16 @@ slices of the suite.
 Serialized model(s), e.g. `model.pkl`. Git-ignored (`models/` in `.gitignore`)
 and versioned by DVC.
 
+### `metrics/` — Metrics artifact
+The `evaluate` stage's `metrics/metrics.json`, declared in `dvc.yaml` as an
+uncached DVC metric (`cache: false`) so the file itself is committed and diffable
+while DVC still tracks it as a stage output.
+
 ### `docs/` — Documentation
 - **`README.md`** — the documentation index / portal.
 - **`architecture.md`** — system architecture and data flow.
+- **`pipeline-contract.md`** — stage inputs/outputs, artifact ownership, the
+  evaluation boundary, and reproducibility expectations (Sprint 4).
 - **`roadmap.md`** — versioned milestones.
 - **`project-structure.md`** — this document.
 - **`design-principles.md`** — rationale behind core design and technology choices.
@@ -157,9 +191,13 @@ and versioned by DVC.
 - **`github-workflow.md`**, **`versioning.md`**, **`release-checklist.md`** —
   process and governance (branching, SemVer, releases).
 - **`repository-metadata.md`** — recommended repository description and topics.
-- **`decisions/`** — Architecture Decision Records (ADR-001..005 + index).
-- **`reviews/`** — engineering reviews (the Sprint 2 production-readiness
-  review that drove the engineering-excellence work).
+- **`decisions/`** — Architecture Decision Records (ADR-001..006 + index).
+- **`reviews/`** — engineering and release-readiness reviews (the Sprint 2
+  production-readiness review plus the per-sprint final validations).
+- **`retrospectives/`** — per-sprint look-backs (planned vs delivered,
+  decisions, lessons, deferred work).
+- **`proof/`** — sprint proof-impact assessments (what the project can
+  credibly claim after each sprint, evidence-based).
 - **`diagrams/`** — placeholder subfolders for diagrams (system architecture,
   pipeline flow, deployment, Kubernetes, CI/CD).
 - **`screenshots/`** — placeholder subfolders for screenshots (MLflow UI, DVC
@@ -243,7 +281,8 @@ was chosen.
   pre-commit hooks. See the [Developer Guide](developer-guide.md) and
   [ADR-004](decisions/ADR-004-python-quality-toolchain.md).
 - **Tests:** `tests/<marker>/test_<subject>.py` (e.g.
-  `tests/unit/test_pipeline_io.py`), marked `smoke` or `unit`.
+  `tests/unit/test_pipeline_io.py`), marked `smoke`, `unit`, `integration`, or
+  `contract`.
 
 ---
 

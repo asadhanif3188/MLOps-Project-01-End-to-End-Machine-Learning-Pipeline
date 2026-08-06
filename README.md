@@ -27,19 +27,19 @@ Following tools have been used to complete the project.
 
 ### Preprocessing:
 
-- The preprocess.py script reads the raw dataset (data/raw/data.csv), performs basic preprocessing (such as renaming columns), and outputs the processed data to data/processed/data.csv.
-- This stage ensures that data is consistently processed across runs.
+- `src/preprocess.py` reads the raw dataset (`data/raw/data.csv`) and writes the processed dataset to `data/processed/data.csv`, preserving the header row so downstream stages can select the target and feature columns by name.
+- It is the single owner of the processed dataset; `train` consumes that output directly (`preprocess` is the only stage that reads the raw file).
 
 ### Training:
 
-- The train.py script trains a Random Forest Classifier, tuning hyperparameters with a grid search, on the dataset (data/raw/data.csv).
-- The model is saved as models/model.pkl.
-- Hyperparameters and the model itself are logged into MLflow for tracking and comparison.
+- `src/train.py` trains a Random Forest Classifier on the **processed** dataset (`data/processed/data.csv`).
+- `n_estimators`, `max_depth`, and `random_state` are read from `params.yaml` and applied to the estimator; a small `GridSearchCV` then tunes the leaf/split regularization. The train/test split and the estimator are seeded, so training is deterministic given the same inputs and parameters.
+- The best model is saved to `models/model.pkl`, and hyperparameters, metrics, and artifacts are logged to MLflow.
 
 ### Evaluation:
 
-- The evaluate.py script loads the trained model and evaluates its performance (accuracy) on the dataset.
-- The evaluation metrics are logged to MLflow for tracking.
+- `src/evaluate.py` loads the trained model, scores it, writes the accuracy to the DVC-tracked metrics artifact `metrics/metrics.json`, and logs the metric to MLflow.
+- **Evaluation boundary:** the model is currently scored over the full processed dataset — the same data `train` fits on — so the reported accuracy is **in-sample**, not a generalization estimate. Moving to a held-out split is a configuration change tracked in the [pipeline contract](docs/pipeline-contract.md#8-evaluation-boundary).
 
 
 
@@ -59,7 +59,7 @@ they are mounted and injected at run time.
 ```bash
 docker build \
   --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
-  --build-arg BUILD_VERSION="1.2.0" \
+  --build-arg BUILD_VERSION="1.3.0" \
   -t ml-pipeline:local .
 ```
 
@@ -113,7 +113,13 @@ CI is validation only — it does not deploy, publish images, or use Kubernetes.
 See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
 reproduce each gate locally.
 
-### For Adding DVC Stages
+### How the DVC Stages Are Defined
+
+The pipeline graph lives in [`dvc.yaml`](dvc.yaml); the commands below reproduce
+it from scratch and match the corrected lineage
+`raw → preprocess → processed → train → model → evaluate → metrics`. Note that
+`train` and `evaluate` depend on the **processed** dataset (not the raw file),
+and `evaluate` declares `metrics/metrics.json` as an uncached metrics output.
 
 ### Bash Commands
 ```
@@ -126,15 +132,17 @@ dvc stage add -n preprocess \
 	
 ```
 dvc stage add -n train \
-    -p train.data,train.model,train.random_state,train.n_estimators,train.max_depth \
-    -d src/train.py -d data/raw/data.csv \
+    -p train.input,train.output,train.target,train.random_state,train.n_estimators,train.max_depth \
+    -d src/train.py -d data/processed/data.csv \
     -o models/model.pkl \
     python src/train.py
 ```	
 
 ```
 dvc stage add -n evaluate \
-    -d src/evaluate.py -d models/model.pkl -d data/raw/data.csv \
+    -p evaluate.data,evaluate.model,evaluate.target,evaluate.metrics \
+    -d src/evaluate.py -d models/model.pkl -d data/processed/data.csv \
+    -M metrics/metrics.json \
     python src/evaluate.py
 ```
 
@@ -144,9 +152,9 @@ dvc stage add -n preprocess -p preprocess.input,preprocess.output -d src/preproc
 ```	
 	
 ```
-dvc stage add -n train -p train.data,train.model,train.random_state,train.n_estimators,train.max_depth -d src/train.py -d data/raw/data.csv -o models/model.pkl python src/train.py
+dvc stage add -n train -p train.input,train.output,train.target,train.random_state,train.n_estimators,train.max_depth -d src/train.py -d data/processed/data.csv -o models/model.pkl python src/train.py
 ```	
 
 ```
-dvc stage add -n evaluate -d src/evaluate.py -d models/model.pkl -d data/raw/data.csv python src/evaluate.py
+dvc stage add -n evaluate -p evaluate.data,evaluate.model,evaluate.target,evaluate.metrics -d src/evaluate.py -d models/model.pkl -d data/processed/data.csv -M metrics/metrics.json python src/evaluate.py
 ```

@@ -1,7 +1,9 @@
 # ADR-006: Pipeline Reproducibility as an Engineering Requirement
 
-- **Status:** Accepted (design) — implementation deferred to Sprint 4 PRs 2–6
-- **Date:** 2026-08-05
+- **Status:** Accepted — implemented in Sprint 4 (v1.3.0), except a held-out
+  evaluation split and a committed `dvc.lock` (tracked as open deviations D5 / D7
+  in the [pipeline contract](../pipeline-contract.md#11-deviation-status-sprint-4))
+- **Date:** 2026-08-05 (design ratified); implementation landed 2026-08-06
 - **Deciders:** Asad Hanif
 - **Related:** [Pipeline Contract](../pipeline-contract.md),
   [ADR-003 (Why DVC)](ADR-003-why-dvc.md),
@@ -17,6 +19,13 @@
 > that introduces this ADR.** Statements about current behavior describe the
 > repository as it exists today; statements about required behavior describe the
 > target the following PRs must meet.
+
+> **Implementation status (updated 2026-08-06).** The Sprint 4 implementation PRs
+> have since landed. The "Context" below describes the repository *before* those
+> PRs and is retained as the historical record that motivated this decision; the
+> decisions have been implemented, with the current state and the two remaining
+> open items (in-sample evaluation, no `dvc.lock`) recorded in
+> [pipeline-contract.md §11](../pipeline-contract.md#11-deviation-status-sprint-4).
 
 ## Context
 

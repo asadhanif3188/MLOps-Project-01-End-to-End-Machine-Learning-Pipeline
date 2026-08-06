@@ -9,6 +9,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes yet._
 
+## [1.3.0] - 2026-08-06
+
+Sprint 4 — Pipeline Correctness & Reproducibility: turn attention from the
+infrastructure *around* the ML pipeline to the pipeline itself. Correct the DVC
+dependency graph so it models the real lineage, make configuration consistent
+across `dvc.yaml`/`params.yaml`/code, separate the ML computation from the MLflow
+boundary so stage logic is unit-testable, seed the training run for
+determinism, and enforce the pipeline contract automatically in CI. Documentation
+is reconciled to the as-built pipeline, and remaining limitations (in-sample
+evaluation, no committed `dvc.lock`, name-pinned dependencies) are documented
+rather than hidden.
+
+### Added
+
+- `src/tracking.py` — the single MLflow experiment-tracking boundary. All
+  MLflow calls (and therefore every tracking network interaction) go through it;
+  the stages import it lazily at the tracking boundary, so importing or
+  unit-testing a stage requires neither MLflow nor credentials
+  ([ADR-006](docs/decisions/ADR-006-pipeline-reproducibility.md) decision 4).
+- A DVC-tracked **metrics artifact**: `evaluate` now writes
+  `metrics/metrics.json`, declared under `metrics:` (`cache: false`) in
+  `dvc.yaml` — accuracy is a first-class, versioned output, not only an MLflow
+  entry and a log line (resolves deviation D4).
+- Contract test suite (`tests/contract/test_pipeline_contract.py`) and a new
+  `contract` pytest marker: eight pure-parsing checks that assert
+  `dvc.yaml`/`params.yaml`/`src` agree with the pipeline contract (parameter
+  consistency, no orphaned params, single-owner artifacts, the declared
+  lineage `raw → preprocess → processed → train → model → evaluate → metrics`,
+  and an acyclic graph). No data, network, or credentials.
+- End-to-end integration test (`tests/integration/test_pipeline.py`): runs
+  `preprocess → train → evaluate` through real temp files with MLflow stubbed,
+  proving each stage's output is consumable by the next.
+- Stage-level unit tests for `preprocess`, `train`, and `evaluate`
+  (`tests/unit/`), exercising the extracted pure-compute functions without any
+  external service.
+- Pipeline contract ([docs/pipeline-contract.md](docs/pipeline-contract.md)) and
+  [ADR-006](docs/decisions/ADR-006-pipeline-reproducibility.md) recording
+  reproducibility and stage contracts as engineering requirements.
+- Sprint 4 release documents: the
+  [final engineering review](docs/reviews/sprint-04-final-review.md), the
+  [retrospective](docs/retrospectives/sprint-04-retrospective.md), and the
+  [proof-impact assessment](docs/proof/sprint-04-proof-impact.md).
+
+### Changed
+
+- **Corrected the DVC pipeline graph** (`dvc.yaml`): `train` now depends on the
+  processed dataset (`data/processed/data.csv`) instead of the raw file, and
+  `evaluate` depends on the processed dataset **and** the model. The graph is now
+  the single linear chain the architecture always described.
+- **Reconciled the parameter contract** (`params.yaml`): `train` uses
+  `input`/`output`/`target`/`random_state`/`n_estimators`/`max_depth`; the
+  evaluation section was renamed `test:` → `evaluate:` with explicit
+  `data`/`model`/`target`/`metrics`. `dvc.yaml` param keys and the code now
+  reference the same authoritative names, with no orphaned parameters.
+- **Refactored the ML stages into separable concerns** (`train.py`,
+  `evaluate.py`): a pure ML computation (`run_training` / `compute_metrics`) that
+  performs no IO and imports no MLflow, artifact persistence via `pipeline_io`,
+  and the lazily-imported `tracking` boundary. Existing MLflow behavior
+  (metrics, params, artifacts, conditional model registration) is preserved, not
+  removed, to make testing easier.
+- `preprocess` now writes the processed CSV **with its header row**
+  (`header=True`), so downstream stages can select `Outcome`/feature columns by
+  name — the prerequisite for `train` consuming the processed dataset (resolves
+  deviation D8).
+
+### Fixed
+
+- **Preprocess output is now consumed downstream** — the orphaned
+  `data/processed/data.csv` produced by `preprocess` is `train`'s input
+  (deviation D1).
+- **Configuration drift eliminated** — `dvc.yaml` no longer references
+  `train.data`/`train.model` (which did not exist in `params.yaml`), and the
+  `evaluate` stage's parameters are declared in the graph (deviations D2, D3).
+- **Training is now deterministic** — `train_test_split` and the
+  `RandomForestClassifier` are seeded from `train.random_state`, and the
+  configured `n_estimators`/`max_depth` are applied to the estimator instead of
+  being inert (deviation D7, seeding portion).
+
+### CI
+
+- New `quality`-job step **"DVC pipeline integrity (graph + status, offline)"**:
+  runs `dvc dag` (parseable, acyclic graph) and local `dvc status`, with
+  `DVC_NO_ANALYTICS=true` so the step makes no network call and never touches the
+  DagsHub remote. `dvc repro --dry` is deliberately not used — it requires the
+  remote-only raw dataset; the guarantees it would give are enforced offline by
+  the contract tests. `dvc` was already installed (a runtime dependency), so this
+  adds no new install.
+- The contract tests run as part of the existing `pytest` step, so a broken
+  stage contract, an inconsistent parameter, or a mis-wired lineage fails a pull
+  request. Sprint 3's `docker` job (build + non-root/imports/entrypoint
+  validation) and least-privilege `contents: read` permissions are unchanged.
+
+### Testing
+
+- The suite grew to **84 tests** across four tiers: `smoke` (import/wiring),
+  `unit` (isolated component and stage-compute tests), `integration` (full
+  three-stage run, MLflow stubbed), and `contract` (static
+  `dvc.yaml`/`params.yaml`/`src` consistency). All tiers are deterministic and
+  run offline; unit tests require no live MLflow, network, or credentials.
+- A `stub_tracking` fixture swaps the lazily-imported `tracking` module for an
+  in-memory recorder, so stage read → compute → persist paths run end-to-end in
+  tests without importing MLflow.
+
+### Documentation
+
+- Reconciled [docs/pipeline-contract.md](docs/pipeline-contract.md) from a
+  design contract (CURRENT vs TARGET) to the **as-built** pipeline, with the
+  remaining deviations (D5 in-sample evaluation, D7 `dvc.lock`) called out
+  explicitly.
+- Updated [architecture.md](docs/architecture.md),
+  [project-structure.md](docs/project-structure.md), and
+  [roadmap.md](docs/roadmap.md) to match the corrected pipeline, the new
+  `tracking.py` module, the four-tier test layout, and the CI pipeline-integrity
+  step.
+- Rewrote the stale sections of the root [README.md](README.md): the training
+  stage no longer claims to read raw data or grid-search all hyperparameters, the
+  evaluation description reflects the metrics artifact and the in-sample boundary,
+  and the DVC-stage snippets match the corrected `dvc.yaml`.
+
 ## [1.2.0] - 2026-08-05
 
 Sprint 3 — Containerization & Continuous Integration: make the pipeline portable
@@ -165,7 +284,8 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/releases/tag/v1.0.0

@@ -152,9 +152,10 @@ suppression only survives while the rule it names actually fires on that line.
 ## 5. Running tests
 
 Tests use pytest and live under [`tests/`](../tests/). They are fast, isolated,
-and deterministic by design — the full suite runs in well under a second and
-needs no network, MLflow, or real data. The [Testing Strategy](testing-strategy.md)
-explains the layout and conventions in depth.
+and deterministic by design — the full suite runs in well under a minute and
+needs no network, MLflow, or real data (the ML-stage tests dominate the runtime
+via a small `GridSearchCV`). The [Testing Strategy](testing-strategy.md)
+explains the four-tier layout and conventions in depth.
 
 ```bash
 make test         # the whole suite            (python -m pytest)
@@ -163,9 +164,11 @@ make test-unit    # isolated component tests    (python -m pytest -m unit)
 make coverage     # suite + coverage report     (python -m pytest --cov=src --cov-report=term-missing)
 ```
 
-The `smoke` and `unit` markers are declared (and enforced with
-`--strict-markers`) in `pyproject.toml`; select any slice with `pytest -m
-<marker>`. Coverage is available on demand via `make coverage`, but note the
+Four markers — `smoke`, `unit`, `integration`, `contract` — are declared (and
+enforced with `--strict-markers`) in `pyproject.toml`; select any slice with
+`pytest -m <marker>` (e.g. `pytest -m contract` for the offline pipeline-contract
+checks). The `make` shortcuts cover the two most-run tiers; the others run
+directly via `pytest -m`. Coverage is available on demand via `make coverage`, but note the
 project **does not chase a coverage percentage** — tests earn their place by
 guarding a contract worth protecting, not by moving a number.
 

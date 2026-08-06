@@ -1,7 +1,8 @@
 # Pipeline Contract
 
-- **Status:** Draft (design contract) — governs Sprint 4 (v1.3.0) implementation
-- **Date:** 2026-08-05
+- **Status:** Active (as-built) — reconciled to the implementation delivered in
+  Sprint 4 (v1.3.0)
+- **Date:** 2026-08-06 (originally drafted 2026-08-05 as a design contract)
 - **Owner:** Asad Hanif
 - **Related:** [ADR-006 (Pipeline Reproducibility)](decisions/ADR-006-pipeline-reproducibility.md),
   [ADR-003 (Why DVC)](decisions/ADR-003-why-dvc.md),
@@ -16,29 +17,25 @@ This document defines the **engineering contract** for the ML pipeline: what eac
 stage consumes, what it produces, who owns each artifact, where external services
 sit, and what counts as a valid, reproducible run.
 
-It is a **design contract, not an implementation claim.** Where the current code
-does not yet satisfy the contract, this document says so explicitly and marks the
-gap. Nothing here asserts that a behavior exists unless it does.
+It began (Sprint 4, PR 1) as a **design contract** distinguishing what the
+repository did then (CURRENT) from what the sprint would implement (TARGET). The
+implementation PRs (PR 2–PR 6) have since landed, so this document now describes
+the **as-built** pipeline. The wiring and configuration assertions below are
+**enforced automatically** by the `contract` test suite
+([`tests/contract/test_pipeline_contract.py`](../tests/contract/test_pipeline_contract.py))
+and by CI (`dvc dag` + `dvc status`), so this is not a claim on trust — a broken
+contract fails a pull request.
 
-Throughout, two states are distinguished:
-
-| Marker | Meaning |
-|--------|---------|
-| **CURRENT** | What the repository does today, as verified in `dvc.yaml`, `params.yaml`, and `src/*.py` at the time of writing. |
-| **TARGET** | What the contract requires the pipeline to do once Sprint 4 implementation lands. Not yet implemented in this PR. |
-
-This PR (Sprint 4, PR 1) introduces **no implementation changes**. It records the
-contract that later PRs (PR 2–PR 6) will implement and that CI (PR 6) will enforce.
-
-The current state below is consistent with the "known gaps" already recorded in
-[architecture.md](architecture.md#3-pipeline-flow); this document is the
-authoritative, stage-by-stage elaboration of that summary.
+Two deviations from the original target **remain open and are documented
+honestly** rather than hidden: evaluation is still **in-sample** (D5) and no
+`dvc.lock` is committed (part of D7). See [§8](#8-evaluation-boundary) and
+[§11](#11-deviation-status-sprint-4).
 
 ---
 
 ## 2. Logical Pipeline
 
-The intended logical pipeline is a linear artifact-lineage chain:
+The pipeline is a linear artifact-lineage chain:
 
 ```text
 raw data
@@ -64,150 +61,127 @@ metrics             (artifact)
 
 Experiment metadata (parameters, metrics, model registry) is logged to **MLflow
 on DagsHub** as a side channel from `train` and `evaluate`; it is a boundary, not
-a pipeline stage (see §9). Data and artifact lineage is owned by **DVC** (see
+a pipeline stage (see [§9](#9-external-service-boundaries)). Data and artifact
+lineage is owned by **DVC** (see
 [ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
 
-**CURRENT vs TARGET at a glance:**
+**As wired today** (`dvc.yaml`), confirmed by `dvc dag`:
 
 ```text
-CURRENT (as wired today)                 TARGET (this contract)
-
-raw data                                 raw data
-   ├────────────┐                           │
-   ▼            ▼                            ▼
-preprocess    (raw fed directly)         preprocess
-   │            │                            │
-   ▼            ▼                            ▼
-processed     train ──▶ model            processed data
- (orphaned)     │                            │
-                ▼                            ▼
-             evaluate (on raw)            train ──▶ model
-                │                            │
-                ▼                            ▼
-             accuracy (MLflow only,       evaluate (on held-out)
-              no metrics artifact)           │
-                                             ▼
-                                          metrics (tracked artifact)
+data/raw/data.csv.dvc
+        │
+        ▼
+   preprocess ──▶ data/processed/data.csv
+                        │
+              ┌─────────┴──────────┐
+              ▼                    ▼
+           train ──▶ model ──▶ evaluate ──▶ metrics/metrics.json
 ```
 
-In the current wiring, `train` and `evaluate` both read `data/raw/data.csv`
-directly; the `processed data` artifact is produced but not consumed, and no
-metrics **artifact** is written. The target restores the single linear chain.
+`train` and `evaluate` both consume the **processed** dataset; `preprocess` is
+the only stage that reads the raw file; `evaluate` additionally consumes the
+model and produces the metrics artifact. The single linear chain the architecture
+always described is now the chain DVC actually builds.
 
 ---
 
 ## 3. Stage Contracts
 
-Each stage below documents its **purpose**, **inputs**, **outputs**,
-**configuration**, **artifact ownership**, and **failure conditions**, in both
-CURRENT and TARGET form. Paths and parameter names are stated exactly as they
-appear in the repository.
+Each stage documents its **purpose**, **inputs**, **outputs**, **configuration**,
+**artifact ownership**, and **failure conditions**. Paths and parameter names are
+stated exactly as they appear in the repository.
 
 ### 3.1 `preprocess`
 
 **Purpose:** Produce the processed dataset that training consumes, from the raw
 dataset.
 
-| Aspect | CURRENT | TARGET |
-|--------|---------|--------|
-| Command | `python src/preprocess.py` | unchanged |
-| Input (data) | `data/raw/data.csv` | `data/raw/data.csv` |
-| Input (code) | `src/preprocess.py` | unchanged |
-| Config keys | `preprocess.input`, `preprocess.output` (from `params.yaml`) | unchanged |
-| Output | `data/processed/data.csv` | `data/processed/data.csv` (**consumed by `train`**) |
-| DVC declaration | `deps: data/raw/data.csv, src/preprocess.py`; `params: preprocess.input, preprocess.output`; `outs: data/processed/data.csv` | unchanged, plus this output must be a real `train` dependency |
-| Behavior | Reads the raw CSV and re-writes it **without header and without index** (`header=False, index=False`); performs no cleaning or transformation today. | Behavior is deliberately left open by this contract (Sprint 4 PR 3/PR 4). If the processed file is to be consumed by `train`, the **column contract** (see below) must be preserved. |
+| Aspect | As built |
+|--------|----------|
+| Command | `python src/preprocess.py` |
+| Input (data) | `data/raw/data.csv` |
+| Input (code) | `src/preprocess.py` |
+| Config keys | `preprocess.input`, `preprocess.output` (from `params.yaml`) |
+| Output | `data/processed/data.csv` — **consumed by `train`** |
+| DVC declaration | `deps: data/raw/data.csv, src/preprocess.py`; `params: preprocess.input, preprocess.output`; `outs: data/processed/data.csv` |
+| Behavior | Reads the raw CSV and re-writes it **with its header** (`header=True, index=False`); performs no cleaning or transformation today. The header is preserved so `train`/`evaluate` can select the `Outcome`/feature columns by name (resolving the former headerless-output mismatch, D8). |
 
 **Artifact ownership:** `preprocess` **owns** `data/processed/data.csv`. No other
-stage may write it.
+stage writes it.
 
-**Failure conditions (current, via typed exceptions):**
+**Failure conditions (via typed exceptions):**
 
 - `DataError` — raw input missing, empty, or not valid CSV.
 - `DataError` — processed output directory/file cannot be written.
 - `ConfigError` — `params.yaml` missing, unparseable, or missing
   `preprocess.input`/`preprocess.output`.
 
-**Contract note — column header.** The processed file is currently written with
-`header=False`. Downstream stages validate the presence of an `Outcome` column
-(`ensure_columns(..., ["Outcome"])`). Therefore, **as written today the processed
-file could not be consumed by `train`/`evaluate` unchanged** — its header row is
-absent. This is one reason the current wiring routes `train`/`evaluate` at the raw
-file instead. The TARGET requires this mismatch to be resolved (either the
-processed file retains its header, or the downstream contract is redefined) before
-`train` may consume the processed dataset. This contract does **not** prescribe
-which; it only requires the input/output column contract to be explicit and
-consistent (Sprint 4 PR 3).
-
 ### 3.2 `train`
 
-**Purpose:** Fit and select a model from the training dataset and persist it as the
-model artifact.
+**Purpose:** Fit and select a model from the training dataset and persist it as
+the model artifact.
 
-| Aspect | CURRENT | TARGET |
-|--------|---------|--------|
-| Command | `python src/train.py` | unchanged |
-| Input (data) | `data/raw/data.csv` — read from `params['train']['input']` | `data/processed/data.csv` — the `preprocess` output |
-| Input (code) | `src/train.py` | unchanged |
-| Config keys read by code | `train.input`, `train.output`, `train.random_state`, `train.n_estimators`, `train.max_depth` | consistent set, all consumed (see §4) |
-| Config keys declared in `dvc.yaml` | `train.data`, `train.model`, `train.max_depth`, `train.n_estimators`, `train.random_state` | must match the keys the code actually reads |
-| Output | `models/model.pkl` | `models/model.pkl` |
-| DVC declaration | `deps: data/raw/data.csv, src/train.py`; `outs: models/model.pkl` | `deps` must include `data/processed/data.csv`, not `data/raw/data.csv` |
-| Behavior | Requires `MLFLOW_TRACKING_URI`; splits with `train_test_split(test_size=0.20)`; runs `GridSearchCV` (cv=3) over a **hardcoded** grid; logs params/metrics/artifacts to MLflow; pickles the best estimator. | Preserve MLflow behavior behind a testable boundary; make the data input the processed dataset; make configured parameters actually govern behavior. |
+| Aspect | As built |
+|--------|----------|
+| Command | `python src/train.py` |
+| Input (data) | `data/processed/data.csv` — the `preprocess` output, read from `params['train']['input']` |
+| Input (code) | `src/train.py` |
+| Config keys read by code | `train.input`, `train.output`, `train.target`, `train.random_state`, `train.n_estimators`, `train.max_depth` |
+| Config keys declared in `dvc.yaml` | `train.input`, `train.output`, `train.target`, `train.random_state`, `train.n_estimators`, `train.max_depth` — the same set the code reads |
+| Output | `models/model.pkl` |
+| DVC declaration | `deps: data/processed/data.csv, src/train.py`; `outs: models/model.pkl` |
+| Behavior | Requires `MLFLOW_TRACKING_URI`; splits with `train_test_split(test_size=0.20, random_state=...)`; builds a `RandomForestClassifier` with the configured `n_estimators`/`max_depth`/`random_state`; runs `GridSearchCV` (cv=3) over leaf/split regularization (`min_samples_split`, `min_samples_leaf`); logs params/metrics/artifacts to MLflow and conditionally registers the model; pickles the best estimator. The ML computation (`run_training`) is IO-free and MLflow-free. |
 
-**Artifact ownership:** `train` **owns** `models/model.pkl`. No other stage writes
-it. `train` also **owns** its MLflow run (params, metrics, model registry entry).
+**Artifact ownership:** `train` **owns** `models/model.pkl`. It also owns its
+MLflow run (params, metrics, model registry entry).
 
-**Failure conditions (current, via typed exceptions):**
+**Failure conditions (via typed exceptions):**
 
-- `DataError` — dataset missing/empty/invalid, or missing the `Outcome` column.
+- `DataError` — dataset missing/empty/invalid, or missing the `target` column.
 - `ConfigError` — `MLFLOW_TRACKING_URI` unset/empty; or required `train.*` params
   absent.
 - `TrackingError` — MLflow logging fails (URI, credentials, or network).
 - `ModelError` — the fitted estimator cannot be pickled.
 
-**Contract note — configured parameters not applied (CURRENT).** `train.py`
-loads `random_state`, `n_estimators`, and `max_depth` and passes them into
-`train()`, but the function body does **not** use them: the hyperparameter grid is
-hardcoded, and `train_test_split` is called **without** a `random_state`. As a
-result these parameters are currently inert and the split/fit are non-deterministic
-(see §7). The TARGET requires configured parameters to actually govern the run, or
-to be removed if genuinely unused — no orphaned parameters.
+**Configured parameters govern the run.** `random_state` seeds both the split and
+the estimator; `n_estimators`/`max_depth` are set on the estimator (no longer
+shadowed by a hardcoded grid). These parameters are therefore live, and training
+is deterministic given the same inputs and parameters (resolving the former inert
+parameters / non-determinism, C5 / D7-seeding).
 
 ### 3.3 `evaluate`
 
 **Purpose:** Measure the trained model against an evaluation dataset and emit
 metrics.
 
-| Aspect | CURRENT | TARGET |
-|--------|---------|--------|
-| Command | `python src/evaluate.py` | unchanged |
-| Input (data) | `data/raw/data.csv` — read from `params['test']['data']` | An explicit **held-out** evaluation dataset (see §8) |
-| Input (model) | `models/model.pkl` — read from `params['test']['model']` | `models/model.pkl` (the `train` output) |
-| Input (code) | `src/evaluate.py` | unchanged |
-| Config keys read by code | `test.data`, `test.model` (section literally named `test`) | An `evaluate.*` (or otherwise stage-aligned) section; naming consistent with the stage |
-| Config keys declared in `dvc.yaml` | **none** | evaluation params declared |
-| Output | **None tracked by DVC.** Logs an `accuracy` metric to MLflow and to the log stream only. | A declared **metrics artifact** (e.g. a metrics file), DVC-tracked. |
-| DVC declaration | `deps: data/raw/data.csv, models/model.pkl, src/evaluate.py`; no `params`, no `outs`/`metrics` | `deps` include the evaluation data + model; a `metrics:` (or `outs:`) declaration for the metrics artifact |
-| Behavior | Requires `MLFLOW_TRACKING_URI`; loads the model; predicts over the **entire** dataset; computes `accuracy_score`; logs it to MLflow. | Predict over the held-out set; write metrics as a first-class artifact; preserve MLflow logging where appropriate. |
+| Aspect | As built |
+|--------|----------|
+| Command | `python src/evaluate.py` |
+| Input (data) | `data/processed/data.csv` — read from `params['evaluate']['data']` |
+| Input (model) | `models/model.pkl` — the `train` output, read from `params['evaluate']['model']` |
+| Input (code) | `src/evaluate.py` |
+| Config keys read by code | `evaluate.data`, `evaluate.model`, `evaluate.target`, `evaluate.metrics` (section named `evaluate`, aligned with the stage) |
+| Config keys declared in `dvc.yaml` | `evaluate.data`, `evaluate.model`, `evaluate.target`, `evaluate.metrics` |
+| Output | `metrics/metrics.json` — a DVC-tracked **metrics artifact** (`cache: false`) |
+| DVC declaration | `deps: data/processed/data.csv, models/model.pkl, src/evaluate.py`; `params: evaluate.data, evaluate.model, evaluate.target, evaluate.metrics`; `metrics: metrics/metrics.json (cache: false)` |
+| Behavior | Requires `MLFLOW_TRACKING_URI`; loads the model; predicts over the dataset; computes `accuracy_score`; writes the metrics artifact **before** the MLflow boundary; logs the metric to MLflow. The scoring (`compute_metrics`) is IO-free and MLflow-free. |
 
-**Artifact ownership:** In the TARGET, `evaluate` **owns** the metrics artifact. In
-the CURRENT state, no metrics artifact exists on disk or in DVC — the only record of
-`accuracy` is the MLflow run and the process logs.
+**Artifact ownership:** `evaluate` **owns** `metrics/metrics.json` and its MLflow
+evaluation run.
 
-**Failure conditions (current, via typed exceptions):**
+**Failure conditions (via typed exceptions):**
 
-- `DataError` — dataset missing/empty/invalid, or missing the `Outcome` column.
-- `ConfigError` — `MLFLOW_TRACKING_URI` unset/empty; or required `test.*` params
-  absent.
+- `DataError` — dataset missing/empty/invalid, or missing the `target` column.
+- `ConfigError` — `MLFLOW_TRACKING_URI` unset/empty; or required `evaluate.*`
+  params absent.
 - `ModelError` — model file missing/corrupt, or the model fails to predict on the
-  provided features.
+  provided features (e.g. a feature-schema mismatch).
 - `TrackingError` — MLflow logging fails (URI, credentials, or network).
 
-**Contract note — evaluation boundary (CURRENT).** `evaluate` scores the model on
-the same full raw dataset the model was trained from. There is no held-out set, so
-the reported `accuracy` is an **in-sample** figure and must not be presented as a
-generalization estimate. See §8.
+**Evaluation boundary (OPEN limitation).** `evaluate.data` currently points at the
+same processed dataset `train` fits on, so the reported `accuracy` is an
+**in-sample** figure and must not be presented as a generalization estimate. See
+[§8](#8-evaluation-boundary).
 
 ---
 
@@ -215,7 +189,7 @@ generalization estimate. See §8.
 
 **`params.yaml` is the single authoritative source of pipeline parameters.**
 `dvc.yaml` references parameter *keys*; the stage code reads parameter *values*.
-The contract requires all three to agree.
+All three agree — and the `contract` tests enforce that agreement on every change.
 
 ### 4.1 Current `params.yaml` sections
 
@@ -225,36 +199,40 @@ preprocess:
   output: data/processed/data.csv
 
 train:
-  input:  data/raw/data.csv
+  input:  data/processed/data.csv
   output: models/model.pkl
+  target: Outcome
   random_state: 42
   n_estimators: 100
   max_depth: 5
 
-test:
-  data:  data/raw/data.csv
-  model: models/model.pkl
+evaluate:
+  data:   data/processed/data.csv
+  model:  models/model.pkl
+  target: Outcome
+  metrics: metrics/metrics.json
 ```
 
-### 4.2 Known configuration inconsistencies (CURRENT)
+### 4.2 Configuration contract — status
 
-| # | Inconsistency | Evidence | TARGET resolution |
-|---|---------------|----------|-------------------|
-| C1 | `dvc.yaml` `train` stage declares params `train.data` and `train.model`, which **do not exist** in `params.yaml` (it defines `train.input`/`train.output`). | `dvc.yaml` `train.params`; `params.yaml` `train:` | One authoritative name per parameter; `dvc.yaml` params must match `params.yaml` keys and the keys the code reads. |
-| C2 | `train.py` reads `train.input`/`train.output`; it does **not** read `train.data`/`train.model`. | `src/train.py:main` | Same as C1 — align names across code, `params.yaml`, and `dvc.yaml`. |
-| C3 | `evaluate.py` reads a section named `test` (`test.data`, `test.model`), while the stage is named `evaluate`. | `src/evaluate.py:main` | Section name aligned with the stage (or explicitly justified). |
-| C4 | `dvc.yaml` `evaluate` stage declares **no** params, so evaluation configuration is invisible to the DVC graph. | `dvc.yaml` `evaluate` | Declare evaluation params in `dvc.yaml`. |
-| C5 | `train.random_state`, `train.n_estimators`, `train.max_depth` are loaded but **not applied** by `train()`. | `src/train.py:train` (hardcoded grid; `train_test_split` has no `random_state`) | Configured parameters must govern behavior, or be removed. |
+The five inconsistencies recorded in the original design contract (C1–C5) are all
+resolved. They are retained here as a verification checklist, each now enforced by
+a named `contract` test:
 
-These map directly to the "param name mismatch" and related gaps recorded in
-[architecture.md](architecture.md#3-pipeline-flow) and
-[ADR-003](decisions/ADR-003-why-dvc.md#consequences).
+| # | Former inconsistency | Status | Enforced by |
+|---|----------------------|--------|-------------|
+| C1 | `dvc.yaml` `train` declared `train.data`/`train.model`, absent from `params.yaml`. | **Resolved** — `dvc.yaml` references `train.input`/`train.output`, which exist. | `test_every_dvc_param_key_exists_in_params_yaml` |
+| C2 | `train.py` read `train.input`/`train.output` while `dvc.yaml` named other keys. | **Resolved** — code, `params.yaml`, and `dvc.yaml` use one naming. | same as C1 + `test_declared_outputs_match_params` |
+| C3 | `evaluate.py` read a section named `test`, not `evaluate`. | **Resolved** — the section is `evaluate`, aligned with the stage. | `test_no_orphaned_params` |
+| C4 | `dvc.yaml` `evaluate` declared no params. | **Resolved** — `evaluate.data/model/target/metrics` are declared. | `test_no_orphaned_params` |
+| C5 | `train.random_state`/`n_estimators`/`max_depth` were loaded but not applied. | **Resolved** — all three govern the split/estimator. | covered by stage unit tests (`tests/unit/test_train.py`) |
 
-### 4.3 Parameter contract rules (TARGET)
+### 4.3 Parameter contract rules (enforced)
 
 1. Every parameter a stage reads is defined in `params.yaml`.
 2. Every parameter key `dvc.yaml` references exists in `params.yaml`.
-3. No parameter is declared or loaded that no stage uses (**no orphaned params**).
+3. No parameter is declared for a stage yet referenced by no stage (**no orphaned
+   params**).
 4. Parameter section names correspond to their stage names.
 5. Parameters that affect reproducibility (e.g. seeds) are declared and applied.
 
@@ -263,72 +241,76 @@ These map directly to the "param name mismatch" and related gaps recorded in
 ## 5. Artifact Ownership & Lineage
 
 Each artifact has exactly **one** producing stage ("owner"). Consumers may read it
-but never write it.
+but never write it. `test_each_artifact_has_exactly_one_producer` enforces the
+single-owner rule; `test_processed_data_is_consumed_not_orphaned` enforces that
+`preprocess`'s output has a downstream consumer.
 
-| Artifact | Owner (writes) | Consumers (read) — CURRENT | Consumers (read) — TARGET | Tracking |
-|----------|----------------|----------------------------|---------------------------|----------|
-| `data/raw/data.csv` | External / ingestion (`data/raw/data.csv.dvc`) | `preprocess`, `train`, `evaluate` | `preprocess` only | DVC (`.dvc` pointer) |
-| `data/processed/data.csv` | `preprocess` | *(none — orphaned)* | `train` (and evaluation source, per §8) | DVC stage output |
-| `models/model.pkl` | `train` | `evaluate` | `evaluate` | DVC stage output |
-| metrics artifact | `evaluate` (TARGET) | — | downstream reporting / CI | DVC metrics (TARGET) |
-| MLflow run (params, metrics, registry) | `train`, `evaluate` | MLflow/DagsHub UI | unchanged | MLflow (external) |
+| Artifact | Owner (writes) | Consumers (read) | Tracking |
+|----------|----------------|------------------|----------|
+| `data/raw/data.csv` | External / ingestion (`data/raw/data.csv.dvc`) | `preprocess` only | DVC (`.dvc` pointer) |
+| `data/processed/data.csv` | `preprocess` | `train`, `evaluate` | DVC stage output |
+| `models/model.pkl` | `train` | `evaluate` | DVC stage output |
+| `metrics/metrics.json` | `evaluate` | downstream reporting / CI | DVC metric (`cache: false`) |
+| MLflow run (params, metrics, registry) | `train`, `evaluate` | MLflow/DagsHub UI | MLflow (external) |
 
 **Rules:**
 
 - A stage writes only the artifact(s) it owns.
-- The raw dataset is owned upstream of the pipeline (DVC-tracked pointer) and must
-  not be mutated by any stage.
-- In the TARGET, the raw dataset has exactly one direct consumer (`preprocess`);
-  training and evaluation consume derived artifacts, not the raw file.
+- The raw dataset is owned upstream of the pipeline (DVC-tracked pointer) and is
+  not mutated by any stage.
+- The raw dataset has exactly one direct consumer (`preprocess`); training and
+  evaluation consume the derived processed artifact, not the raw file.
 
 ---
 
 ## 6. Stage Input/Output Summary
 
-The explicit contract (TARGET), for quick reference:
-
 | Stage | Input | Output | Configuration |
 |-------|-------|--------|---------------|
-| `preprocess` | Raw dataset | Processed dataset | Preprocessing parameters |
-| `train` | Processed dataset | Model artifact | Training parameters (incl. seed) |
-| `evaluate` | Model + evaluation dataset | Metrics artifact | Evaluation parameters |
+| `preprocess` | Raw dataset | Processed dataset | `preprocess.input`, `preprocess.output` |
+| `train` | Processed dataset | Model artifact | `train.*` (target + seed + tree hyperparameters) |
+| `evaluate` | Model + evaluation dataset | Metrics artifact | `evaluate.*` (data, model, target, metrics) |
 
-The CURRENT deviations from this table are enumerated per stage in §3 and
-summarized in §11.
+The one remaining gap versus the ideal contract is that the `train` "input" and
+the `evaluate` "evaluation dataset" are currently the **same** processed file
+(in-sample evaluation) — see [§8](#8-evaluation-boundary).
 
 ---
 
 ## 7. Reproducibility Expectations
 
-Reproducibility is treated as an **engineering requirement**, not a nicety
-(rationale in [ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
+Reproducibility is an **engineering requirement**, not a nicety (rationale in
+[ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
 
-**TARGET expectations:**
+**Achieved:**
 
 1. **Declared lineage.** The pipeline is reconstructable from declared inputs,
-   parameters, and dependencies. `dvc.yaml` accurately models the real DAG:
-   `raw → preprocess → processed → train → model → evaluate → metrics`.
-2. **Deterministic given fixed inputs + params + seed.** Random operations
-   (data split, estimator construction) are seeded from `params.yaml`. Repeated
-   runs on the same inputs and params yield the same model and metrics.
-3. **Change detection.** `dvc status` / `dvc repro` re-run exactly the stages whose
-   declared dependencies changed, and no others.
-4. **Locked state.** A committed `dvc.lock` records the resolved dependency hashes
-   for a run. *(CURRENT: no `dvc.lock` is present in the repository — the graph has
-   not been locked. TARGET: locked and validated in CI.)*
-5. **CI enforcement.** Pipeline integrity (valid DAG, consistent params, buildable
-   graph) is validated automatically (Sprint 4 PR 6), without requiring production
-   credentials or live external services.
+   parameters, and dependencies. `dvc.yaml` accurately models the real DAG
+   `raw → preprocess → processed → train → model → evaluate → metrics`, confirmed
+   by `dvc dag` and the `contract` lineage tests.
+2. **Deterministic given fixed inputs + params + seed.** The data split and the
+   estimator are seeded from `train.random_state`; repeated runs on the same
+   inputs and params yield the same model and metrics.
+3. **CI enforcement.** Pipeline integrity (valid DAG, consistent params, buildable
+   graph, correct lineage) is validated automatically on every push and pull
+   request, without production credentials or live external services (see
+   [CI/CD](ci-cd.md)).
 
-**CURRENT reproducibility gaps:**
+**Remaining reproducibility limitations (documented, not fixed):**
 
-- `train_test_split` is called without `random_state`, and the estimator/grid do
-  not fix a seed → training is **non-deterministic**.
-- `train.random_state` exists but is not applied (see C5).
-- No `dvc.lock` exists → the resolved pipeline state is not pinned.
-- Reproducibility is not yet enforced in CI.
-
-Each gap is scheduled for a later Sprint 4 PR; none is fixed in this PR.
+4. **No committed `dvc.lock`.** The resolved dependency hashes for a run are not
+   pinned, so `dvc status` cannot serve as a true "up to date" drift gate and CI
+   validates the pipeline **definition**, not a locked **execution**. Committing a
+   `dvc.lock` requires a runnable dataset in CI (the raw dataset is remote-only
+   today).
+5. **No in-CI execution.** CI does not run `dvc repro` — the first stage's data
+   dependency lives only on the DagsHub remote. A future execution check would use
+   a small committed fixture dataset plus a committed `dvc.lock`.
+6. **Dependencies/base image are name-pinned, not digest-pinned** (carried from
+   Sprint 3). Byte-for-byte repeatable rebuilds need hash/digest pinning
+   ([ADR-005](decisions/ADR-005-containerization-strategy.md)). Until then,
+   "reproducible" means *logically* reproducible (same declared inputs, params,
+   and seed), not bit-for-bit.
 
 ---
 
@@ -336,26 +318,27 @@ Each gap is scheduled for a later Sprint 4 PR; none is fixed in this PR.
 
 The evaluation boundary defines **what data proves what claim.**
 
-**CURRENT:**
+**As built:**
 
-- `train` performs an internal `train_test_split` (20% test) purely to report an
-  in-training accuracy; that split is not persisted or exported.
-- `evaluate` scores the model over the **entire** `data/raw/data.csv` — which
-  includes the rows the model was trained on.
-- Consequently the `accuracy` logged by `evaluate` is an **in-sample** metric.
+- `train` performs an internal `train_test_split` (20% test, seeded) purely to
+  report an in-training accuracy; that split is not persisted or exported.
+- `evaluate` scores the model over the **entire** `data/processed/data.csv` — the
+  same dataset the model was trained on.
+- Consequently the `accuracy` written to `metrics/metrics.json` and logged to
+  MLflow is an **in-sample** metric.
 
-**TARGET:**
+**Honest-evaluation rule (enforced by documentation and code comments):** no
+model-performance claim is made unless the methodology supports it. Until a genuine
+held-out split exists, any reported accuracy is labeled **in-sample** and must not
+be cited as a generalization estimate.
 
-- There is an explicit, documented held-out evaluation dataset that `evaluate`
-  consumes and that `train` does **not** fit on.
-- The contract records: what data trains, what data evaluates, how tuning is done,
-  which split is held out, and which metrics are produced.
-- **Honest-evaluation rule:** no model-performance claim is made unless the
-  evaluation methodology supports it. Until a genuine held-out split exists, any
-  reported accuracy is labeled in-sample.
-
-This section is the "evaluation boundary" deliverable required by the Sprint 4
-plan; the boundary is defined here **before** implementation changes.
+**Path to a held-out split (deviation D5, still open).** Because `evaluate.data` is
+already an explicit, configured input — and `evaluate` has no dependency on train's
+in-memory split — turning this into a held-out evaluation is a
+**configuration/graph change, not a code change**: add a splitting step (or a
+second processed artifact) and point `evaluate.data` at the held-out portion. This
+is the single most valuable remaining pipeline-correctness improvement and is
+tracked for a future sprint.
 
 ---
 
@@ -364,29 +347,37 @@ plan; the boundary is defined here **before** implementation changes.
 The pipeline touches two external systems. Both are **boundaries**, isolated from
 core ML logic.
 
-| Boundary | Used by | Purpose | Required to run? (CURRENT) | Contract (TARGET) |
-|----------|---------|---------|----------------------------|-------------------|
-| **MLflow on DagsHub** | `train`, `evaluate` | Experiment tracking, metric logging, model registry | **Yes** — both stages call `require_env("MLFLOW_TRACKING_URI")` and connect to MLflow; they cannot complete without it. | MLflow logging preserved, but isolated behind a boundary so **core ML logic is unit-testable without the service** (see [ADR-006](decisions/ADR-006-pipeline-reproducibility.md)). |
-| **DVC remote (S3-compatible, DagsHub)** | data/model retrieval | Store/fetch DVC-tracked data & models | Needed to `dvc pull`/`push` artifacts; not needed for local reasoning about the graph | Unchanged; graph validation in CI must not require remote credentials. |
+| Boundary | Used by | Purpose | Required to run? | Testability |
+|----------|---------|---------|------------------|-------------|
+| **MLflow on DagsHub** | `train`, `evaluate` | Experiment tracking, metric logging, model registry | **Yes to run a stage end-to-end** — both stages call `require_env("MLFLOW_TRACKING_URI")`. | **Not required for tests.** All MLflow access is funneled through [`src/tracking.py`](../src/tracking.py), imported *lazily* at the boundary. The stages' ML computation (`run_training`, `compute_metrics`) imports no MLflow, and tests replace `tracking` with an in-memory stub. |
+| **DVC remote (S3-compatible, DagsHub)** | data/model retrieval | Store/fetch DVC-tracked data & models | Needed to `dvc pull`/`push` artifacts; **not** needed to reason about or validate the graph. | Graph validation in CI (`dvc dag`, local `dvc status`, contract tests) requires no remote credentials. |
 
 **Environment/config boundary:**
 
 - `MLFLOW_TRACKING_URI` (and DagsHub credentials) are provided via `.env`
   (`python-dotenv`); see [`.env.example`](../.env.example). Secrets are never
   committed.
-- **Contract rule:** ordinary **unit tests must not require** live MLflow, DagsHub,
-  network access, or production credentials. Tests that genuinely exercise external
-  behavior are **integration** tests and are marked/segregated as such. (Rationale:
-  [ADR-006](decisions/ADR-006-pipeline-reproducibility.md).)
+- **Contract rule (enforced):** ordinary **unit tests do not require** live MLflow,
+  DagsHub, network access, or production credentials. The `stub_tracking` fixture
+  neutralizes the tracking boundary; the `contract` tests parse files only. Tests
+  that genuinely exercise external behavior would be **integration** tests, marked
+  as such. (Rationale: [ADR-006](decisions/ADR-006-pipeline-reproducibility.md).)
+
+> **Nuance, stated honestly.** The MLflow *coupling* was removed from the ML
+> *computation*, which is what makes the stages unit-testable. The stage
+> *orchestration* (`train()` / `evaluate()`) still calls `require_env` and will
+> refuse to run end-to-end without `MLFLOW_TRACKING_URI` set. That is by design —
+> MLflow logging is a preserved capability, not an optional one — and it does not
+> weaken testability, because tests exercise the pure functions and the stubbed
+> boundary, not the network.
 
 ---
 
 ## 10. What Constitutes a Valid Pipeline Execution
 
-A pipeline execution is **valid** when all of the following hold. Items already
-true today are marked CURRENT; items requiring Sprint 4 work are marked TARGET.
+A pipeline execution is **valid** when all of the following hold.
 
-**Structural validity (TARGET):**
+**Structural validity (enforced by `contract` tests + `dvc dag` in CI):**
 
 1. `dvc.yaml` models the DAG `raw → preprocess → processed → train → model →
    evaluate → metrics`, with `train` depending on the processed data and
@@ -396,45 +387,57 @@ true today are marked CURRENT; items requiring Sprint 4 work are marked TARGET.
    owns.
 4. A declared metrics artifact is produced by `evaluate`.
 
-**Execution validity (partly CURRENT):**
+**Execution validity:**
 
 5. Each stage exits non-zero on failure with a typed, actionable error, stopping
-   `dvc repro`/CI. *(CURRENT — provided by `stage_runner` + typed exceptions.)*
-6. Required configuration is present and validated before compute. *(CURRENT — via
-   `load_params` / `require_env`.)*
-7. Given identical inputs, params, and seed, the run is reproducible. *(TARGET.)*
+   `dvc repro`/CI (via `stage_runner` + typed exceptions).
+6. Required configuration is present and validated before compute (via
+   `load_params` / `require_env`).
+7. Given identical inputs, params, and seed, the run is reproducible (seeded
+   split and estimator).
 
-**Evidence validity (TARGET):**
+**Evidence validity:**
 
-8. Metrics are emitted as a first-class artifact, not only to logs/MLflow.
-9. Any performance claim is backed by a held-out evaluation (see §8).
-10. `dvc status` reports "up to date" for an unchanged, committed pipeline
-    (`dvc.lock` present and consistent).
+8. Metrics are emitted as a first-class artifact (`metrics/metrics.json`), not only
+   to logs/MLflow.
+9. Any performance claim is backed by an evaluation whose methodology supports it.
+   **Today the evaluation is in-sample (§8), so the current accuracy supports no
+   generalization claim.**
+10. *(Not yet achievable)* `dvc status` reports "up to date" for an unchanged,
+    committed pipeline — this needs a committed `dvc.lock`, which is absent (§7).
 
 An execution that logs an `accuracy` number but violates the evaluation boundary
-(§8), or that cannot be reproduced (§7), is **not** a valid execution under this
-contract even if the process exits 0.
+(§8) is **not** a valid basis for a generalization claim even though the process
+exits 0 and the pipeline is structurally correct.
 
 ---
 
-## 11. Current Deviations Summary (Current → Target)
+## 11. Deviation Status (Sprint 4)
 
-| ID | Deviation (CURRENT) | TARGET | Sprint 4 PR |
-|----|---------------------|--------|-------------|
-| D1 | `preprocess` output `data/processed/data.csv` is not consumed; `train` reads raw data. | `train` consumes the processed dataset. | PR 2 |
-| D2 | `dvc.yaml` `train` params (`train.data`/`train.model`) don't match `params.yaml` (`train.input`/`train.output`) or the code. | One authoritative parameter naming. | PR 2 / PR 3 |
-| D3 | `evaluate` reads a `test` section; `dvc.yaml` declares no evaluate params. | Stage-aligned, declared evaluation params. | PR 2 / PR 3 |
-| D4 | No metrics artifact is produced (MLflow/log only). | Declared, DVC-tracked metrics artifact. | PR 2 / PR 4 |
-| D5 | `evaluate` scores on the full training data (in-sample). | Held-out evaluation set. | PR 4 |
-| D6 | `train`/`evaluate` require `MLFLOW_TRACKING_URI`; ML logic is coupled to the service, blocking isolated tests. | MLflow isolated behind a boundary; unit tests need no external service. | PR 4 / PR 5 |
-| D7 | Training is non-deterministic; `random_state` unused; no `dvc.lock`. | Seeded, deterministic, locked, CI-validated. | PR 4 / PR 6 |
-| D8 | Processed CSV written without header, incompatible with the downstream `Outcome` column contract. | Consistent column contract across stage boundaries. | PR 3 |
+The eight deviations the design contract enumerated, with their status after the
+Sprint 4 implementation PRs:
+
+| ID | Deviation (original) | Status after Sprint 4 |
+|----|----------------------|-----------------------|
+| D1 | `preprocess` output orphaned; `train` read raw data. | ✅ **Resolved** — `train` consumes `data/processed/data.csv`; raw is `preprocess`-only. |
+| D2 | `dvc.yaml` `train` params (`train.data`/`train.model`) mismatched `params.yaml`/code. | ✅ **Resolved** — one authoritative naming (`train.input`/`train.output`). |
+| D3 | `evaluate` read a `test` section; no evaluate params in `dvc.yaml`. | ✅ **Resolved** — `evaluate` section; params declared in the graph. |
+| D4 | No metrics artifact (MLflow/log only). | ✅ **Resolved** — DVC-tracked `metrics/metrics.json`. |
+| D5 | `evaluate` scores on the full training data (in-sample). | ⬜ **Open** — still in-sample; a held-out split is a future config change (§8). |
+| D6 | ML logic coupled to MLflow, blocking isolated tests. | ✅ **Resolved** — MLflow isolated behind `tracking.py` (lazy import); ML compute is unit-tested without the service. Stage orchestration still requires the URI to *run* end-to-end (by design; §9). |
+| D7 | Non-deterministic training; `random_state` unused; no `dvc.lock`. | 🟡 **Partially resolved** — seeded and deterministic; `random_state` applied. **`dvc.lock` still absent** (§7). |
+| D8 | Processed CSV written headerless, incompatible with the `Outcome` column contract. | ✅ **Resolved** — written `header=True`; consumable by `train`/`evaluate`. |
+
+**Summary:** six of eight deviations fully resolved; D7 partially resolved
+(determinism yes, `dvc.lock` no); D5 (in-sample evaluation) remains open. D5 and
+the `dvc.lock`/execution-check portion of D7 are the pipeline's known limitations
+after Sprint 4.
 
 ---
 
 ## 12. Out of Scope
 
-This contract does **not** cover, and Sprint 4 does not deliver: Kubernetes, Helm,
+This contract does **not** cover, and Sprint 4 did not deliver: Kubernetes, Helm,
 Terraform, cloud deployment, continuous delivery, model serving, Prometheus/Grafana,
 distributed training, a production MLflow deployment, container registry publishing,
 Trivy/SBOM/image signing. These belong to later milestones (see
@@ -453,8 +456,7 @@ reproducibility) around them.
   update this document in the same PR.
 - Where implementation and this contract diverge, **the divergence is a defect** —
   either the implementation or the contract is corrected; they are not allowed to
-  drift silently.
+  drift silently. The `contract` test suite makes most such divergences fail CI
+  automatically.
 - The decision rationale behind this contract lives in
   [ADR-006](decisions/ADR-006-pipeline-reproducibility.md).
-</content>
-</invoke>

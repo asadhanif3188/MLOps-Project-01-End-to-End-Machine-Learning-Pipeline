@@ -61,9 +61,11 @@ This keeps data versioning and experiment tracking on the same platform
 
 - Additional tooling and mental model (`.dvc` files, remotes, `dvc repro`).
 - Requires remote credentials/configuration to `pull`/`push` artifacts.
-- The current stage wiring has two known inconsistencies, scheduled for
-  correction in Roadmap v2:
-  - `dvc.yaml` references params `train.data`/`train.model`, while `params.yaml`
-    defines `train.input`/`train.output`.
-  - The `train`/`evaluate` stages depend on `data/raw/data.csv`, so the
-    `preprocess` output (`data/processed/data.csv`) is not consumed downstream.
+- The two stage-wiring inconsistencies this ADR originally flagged — the
+  `train.data`/`train.model` vs `train.input`/`train.output` parameter mismatch,
+  and `train`/`evaluate` reading `data/raw/data.csv` so the `preprocess` output
+  went unconsumed — were **corrected in Sprint 4** (v1.3.0). The graph now models
+  `raw → preprocess → processed → train → model → evaluate → metrics`, and the
+  wiring is enforced by the `contract` tests and CI. See
+  [ADR-006](ADR-006-pipeline-reproducibility.md) and the
+  [pipeline contract](../pipeline-contract.md).
