@@ -52,7 +52,7 @@ def params_file(tmp_path: Path) -> Path:
             "output": "data/processed/data.csv",
         },
         "train": {
-            "input": "data/raw/data.csv",
+            "input": "data/processed/data.csv",
             "output": "models/model.pkl",
             "random_state": 42,
             "n_estimators": 100,

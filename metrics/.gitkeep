@@ -1,0 +1,2 @@
+# Metrics artifacts produced by the evaluate stage (e.g. metrics.json).
+# The metrics file is a DVC `cache: false` output and is tracked by git.

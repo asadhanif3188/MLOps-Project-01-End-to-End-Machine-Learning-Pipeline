@@ -11,9 +11,10 @@ means the three stages catch the *same* low-level errors and emit the *same*
 messages: exception handling is standardized in one place.
 """
 
+import json
 import os
 import pickle
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
@@ -144,6 +145,34 @@ def write_csv(
         df.to_csv(path, header=header, index=index)
     except OSError as exc:
         raise DataError(f"Could not write dataset to {path!r}: {exc}") from exc
+
+
+def write_json(data: Mapping[str, Any], path: str) -> None:
+    """Write a mapping to a JSON file, creating parent directories.
+
+    Used to persist the evaluation stage's metrics as a first-class, DVC-tracked
+    artifact (rather than logging them only to MLflow / the log stream).
+
+    Args:
+        data: The mapping to serialize (e.g. ``{"accuracy": 0.78}``).
+        path: Destination path for the JSON file.
+
+    Raises:
+        DataError: If the destination cannot be created/written, or ``data`` is
+            not JSON-serializable.
+    """
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+    except OSError as exc:
+        raise DataError(f"Could not write JSON to {path!r}: {exc}") from exc
+    except TypeError as exc:
+        raise DataError(
+            f"Metrics for {path!r} are not JSON-serializable: {exc}"
+        ) from exc
 
 
 def ensure_columns(df: pd.DataFrame, required: Sequence[str], source: str) -> None:

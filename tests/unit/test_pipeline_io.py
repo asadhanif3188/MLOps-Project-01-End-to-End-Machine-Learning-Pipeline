@@ -27,6 +27,7 @@ from pipeline_io import (
     require_env,
     save_pickle,
     write_csv,
+    write_json,
 )
 
 # --------------------------------------------------------------------------- #
@@ -157,12 +158,37 @@ def test_write_csv_creates_parent_dirs_and_round_trips(
 def test_write_csv_honors_header_and_index_flags(
     tmp_path: Path, sample_dataframe: pd.DataFrame
 ) -> None:
-    """The preprocess stage writes headerless, index-less CSV; verify the flags
-    actually suppress both."""
+    """``write_csv`` must honor the ``header``/``index`` flags: with both off, the
+    first field of the first line is a data value, not the column name."""
     dest = tmp_path / "no_header.csv"
     write_csv(sample_dataframe, str(dest), header=False, index=False)
     first_field = dest.read_text(encoding="utf-8").splitlines()[0].split(",")[0]
     assert first_field == "85"  # a data value, not the "Glucose" header
+
+
+# --------------------------------------------------------------------------- #
+# write_json
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_write_json_creates_parent_dirs_and_round_trips(tmp_path: Path) -> None:
+    """``write_json`` must create missing parents and write readable JSON."""
+    import json
+
+    dest = tmp_path / "metrics" / "metrics.json"
+    write_json({"accuracy": 0.75}, str(dest))
+    assert dest.exists()
+    assert json.loads(dest.read_text(encoding="utf-8")) == {"accuracy": 0.75}
+
+
+@pytest.mark.unit
+def test_write_json_non_serializable_raises_data_error(tmp_path: Path) -> None:
+    """A value the JSON encoder cannot handle surfaces as a typed ``DataError``,
+    not a raw ``TypeError``."""
+    dest = tmp_path / "metrics.json"
+    with pytest.raises(DataError):
+        write_json({"bad": {1, 2, 3}}, str(dest))  # a set is not JSON-serializable
 
 
 # --------------------------------------------------------------------------- #
