@@ -51,21 +51,33 @@ def hyperparameter_tuning(
 def train(
     data_path: str,
     model_path: str,
+    target: str,
     random_state: int,
     n_estimators: int,
     max_depth: int | None,
 ) -> None:
     """Train a Random Forest model, tune hyperparameters, log to MLflow.
 
+    Stage contract:
+        * Input:  the processed dataset (``data_path``) — the ``preprocess``
+          output — which must contain the ``target`` column plus feature columns.
+        * Output: the pickled model artifact at ``model_path`` (owned by this
+          stage).
+        * Configuration: ``target`` and the training hyperparameters, all read
+          from the ``train`` section of ``params.yaml``.
+
     Args:
-        data_path: Path to raw CSV dataset.
-        model_path: Path to save pickled model.
+        data_path: Path to the processed CSV dataset (the ``preprocess`` output).
+        model_path: Path to save the pickled model.
+        target: Name of the label column to predict; every other column is a
+            feature. Kept in ``params.yaml`` rather than hardcoded so the
+            train/evaluate column contract has a single, explicit source.
         random_state: Random seed for reproducibility.
         n_estimators: Baseline number of estimators (used in grid search).
         max_depth: Baseline max depth (used in grid search).
 
     Raises:
-        DataError: If the dataset cannot be read or lacks the ``Outcome`` column.
+        DataError: If the dataset cannot be read or lacks the ``target`` column.
         ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
         TrackingError: If MLflow tracking fails.
         ModelError: If the trained model cannot be serialized.
@@ -73,9 +85,9 @@ def train(
     logger.info("Train stage started (data=%s, model=%s)", data_path, model_path)
 
     data = read_csv(data_path)
-    ensure_columns(data, ["Outcome"], data_path)
-    X = data.drop(columns=["Outcome"])
-    y = data["Outcome"]
+    ensure_columns(data, [target], data_path)
+    X = data.drop(columns=[target])
+    y = data[target]
 
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
@@ -158,12 +170,20 @@ def main() -> None:
     params = load_params(
         "params.yaml",
         "train",
-        required=("input", "output", "random_state", "n_estimators", "max_depth"),
+        required=(
+            "input",
+            "output",
+            "target",
+            "random_state",
+            "n_estimators",
+            "max_depth",
+        ),
     )
 
     train(
         params["input"],
         params["output"],
+        params["target"],
         params["random_state"],
         params["n_estimators"],
         params["max_depth"],

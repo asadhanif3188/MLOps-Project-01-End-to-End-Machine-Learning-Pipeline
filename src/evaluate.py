@@ -20,16 +20,28 @@ from stage_runner import run_stage
 logger = get_logger("evaluate")
 
 
-def evaluate(data_path: str, model_path: str, metrics_path: str) -> None:
+def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) -> None:
     """Load trained model and evaluate accuracy on dataset.
 
+    Stage contract:
+        * Inputs: the trained model artifact (``model_path``, the ``train``
+          output) and the evaluation dataset (``data_path``), which must contain
+          the ``target`` column plus the same feature columns the model expects.
+        * Output: the metrics artifact at ``metrics_path`` (owned by this stage),
+          written as JSON before the MLflow boundary.
+        * Configuration: ``target`` and the input/output paths, all read from the
+          ``evaluate`` section of ``params.yaml``.
+
     Args:
-        data_path: Path to CSV dataset.
-        model_path: Path to pickled model file.
+        data_path: Path to the evaluation CSV dataset.
+        model_path: Path to the pickled model file.
+        target: Name of the label column; must match the column ``train`` fit on.
+            Read from ``params.yaml`` so train and evaluate share one explicit
+            column contract rather than each hardcoding the name.
         metrics_path: Path to write the metrics artifact (JSON).
 
     Raises:
-        DataError: If the dataset cannot be read or lacks the ``Outcome`` column,
+        DataError: If the dataset cannot be read or lacks the ``target`` column,
             or if the metrics artifact cannot be written.
         ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
         ModelError: If the model cannot be loaded or fails to predict.
@@ -38,9 +50,9 @@ def evaluate(data_path: str, model_path: str, metrics_path: str) -> None:
     logger.info("Evaluate stage started (data=%s, model=%s)", data_path, model_path)
 
     data = read_csv(data_path)
-    ensure_columns(data, ["Outcome"], data_path)
-    X = data.drop(columns=["Outcome"])
-    y = data["Outcome"]
+    ensure_columns(data, [target], data_path)
+    X = data.drop(columns=[target])
+    y = data[target]
 
     tracking_uri = require_env("MLFLOW_TRACKING_URI")
 
@@ -79,11 +91,14 @@ def main() -> None:
     load_dotenv()
     configure_logging()
 
-    params = load_params("params.yaml", "test", required=("data", "model", "metrics"))
+    params = load_params(
+        "params.yaml", "evaluate", required=("data", "model", "target", "metrics")
+    )
 
     evaluate(
         params["data"],
         params["model"],
+        params["target"],
         params["metrics"],
     )
 

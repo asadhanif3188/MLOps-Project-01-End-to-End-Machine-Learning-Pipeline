@@ -12,6 +12,14 @@ logger = get_logger("preprocess")
 def preprocess(input_path: str, output_path: str) -> None:
     """Read raw dataset and write processed CSV.
 
+    Stage contract:
+        * Input:  the raw dataset (``input_path``).
+        * Output: the processed dataset (``output_path``) — owned by this stage
+          and consumed by ``train``. The header row is preserved so downstream
+          stages can select the target/feature columns by name.
+        * Configuration: the ``preprocess`` input/output paths from
+          ``params.yaml``.
+
     Args:
         input_path: Path to raw CSV file.
         output_path: Path to write processed CSV.
