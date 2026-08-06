@@ -10,11 +10,13 @@ Two tiers of module live here:
 
 * **Core modules** depend only on the test environment's own libraries
   (stdlib, pandas, yaml, dotenv), so they must *always* import.
-* **Stage modules** additionally pull in the pipeline's heavy runtime stack
-  (mlflow, scikit-learn). Those are declared in ``requirements.txt`` and present
-  in CI, but a lean dev environment may omit them — so their import test
-  *skips* (rather than fails) when the stack is absent. The check still runs
-  wherever the full runtime is installed.
+* **Stage modules** additionally pull in scikit-learn to import (MLflow is now
+  reached lazily, through the :mod:`tracking` boundary, so it is *not* needed to
+  import a stage — only to run one). scikit-learn is declared in
+  ``requirements.txt`` and present in CI, but a lean dev environment may omit it,
+  so the import test *skips* rather than fails when it is absent.
+* **The tracking module** is the one module that imports MLflow at load, so its
+  import check is gated on MLflow being installed.
 """
 
 import importlib
@@ -32,12 +34,12 @@ CORE_MODULES = [
 ]
 
 # The three DVC stages, each expected to expose a zero-argument ``main`` that
-# ``stage_runner.run_stage`` can call. ``train`` and ``evaluate`` also need the
-# heavy ML runtime; ``requires`` names a module that must be importable first.
+# ``stage_runner.run_stage`` can call. ``train`` and ``evaluate`` import
+# scikit-learn at load; ``requires`` names a module that must be importable first.
 STAGES = [
     pytest.param("preprocess", None, id="preprocess"),
-    pytest.param("train", "mlflow", id="train"),
-    pytest.param("evaluate", "mlflow", id="evaluate"),
+    pytest.param("train", "sklearn", id="train"),
+    pytest.param("evaluate", "sklearn", id="evaluate"),
 ]
 
 
@@ -61,3 +63,10 @@ def test_stage_exposes_main(module_name: str, requires: str | None) -> None:
     _skip_if_runtime_missing(requires)
     module = importlib.import_module(module_name)
     assert callable(getattr(module, "main", None))
+
+
+@pytest.mark.smoke
+def test_tracking_module_imports() -> None:
+    """The MLflow boundary module imports wherever MLflow is installed."""
+    _skip_if_runtime_missing("mlflow")
+    assert importlib.import_module("tracking") is not None
