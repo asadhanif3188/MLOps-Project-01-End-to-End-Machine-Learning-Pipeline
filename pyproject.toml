@@ -20,6 +20,7 @@ markers = [
     "smoke: fast checks that the pipeline is importable and wired together",
     "unit: isolated tests of a single component with no external services",
     "integration: multi-stage tests that run stages together through real files (still no network; MLflow is stubbed)",
+    "contract: static checks that dvc.yaml/params.yaml/src wiring obey the pipeline contract (pure parsing, no data/network)",
 ]
 
 [tool.ruff]

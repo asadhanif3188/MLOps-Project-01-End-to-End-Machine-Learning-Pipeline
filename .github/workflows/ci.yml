@@ -71,9 +71,53 @@ jobs:
 
       # Stage 5 — Pytest. Configuration (pythonpath=src, testpaths=tests, strict
       # markers) lives in pyproject.toml, so a bare `pytest` runs exactly what a
-      # developer runs locally via `make test`.
+      # developer runs locally via `make test`. This suite includes the
+      # `contract`-marked tests (tests/contract/) that assert dvc.yaml <-> params.yaml
+      # consistency, artifact ownership, and the declared lineage — the failing
+      # gates for a broken stage contract or inconsistent configuration. They parse
+      # files only: no data, no network, no credentials.
       - name: Pytest
         run: pytest
+
+      # Stage 6 — DVC pipeline integrity. Validates the pipeline *definition* in
+      # dvc.yaml WITHOUT running it: no stage executes, no dataset is pulled, and
+      # the DagsHub remote is never contacted. `dvc` is already installed (it is a
+      # runtime dependency in requirements.txt, pulled in via requirements-dev.txt
+      # above), so this adds no extra install.
+      #
+      #   * `dvc dag`    — proves DVC parses every stage and builds an acyclic
+      #                    graph; a malformed dvc.yaml or a cyclic graph fails here.
+      #   * `dvc status` — LOCAL status only (never `--cloud`); proves the stage and
+      #                    `.dvc` definitions parse coherently. It reports "changed"
+      #                    because no dvc.lock is committed and the data lives on the
+      #                    remote — that is expected and exits 0; a non-zero here
+      #                    means a genuinely broken definition.
+      #
+      # `dvc repro --dry` is deliberately NOT used: it accesses the first stage's
+      # data dependency (data/raw/data.csv), which is remote-only in CI, so it would
+      # require `dvc pull` + DagsHub credentials or fail nondeterministically. The
+      # structural guarantees it would give are instead enforced offline by the
+      # `contract` tests above.
+      #
+      # DVC's anonymous usage analytics is disabled so this step makes NO network
+      # call, keeping CI deterministic and offline (pipeline contract §9).
+      - name: DVC pipeline integrity (graph + status, offline)
+        env:
+          DVC_NO_ANALYTICS: "true"
+        run: |
+          set -euo pipefail
+
+          echo "::group::Graph is parseable and acyclic (dvc dag)"
+          dvc dag
+          echo "::endgroup::"
+
+          # Render the DAG into the job summary for at-a-glance review (cosmetic).
+          { echo "### DVC pipeline graph"; echo; dvc dag --md; } \
+            >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          echo "::group::Pipeline definition is coherent (dvc status, no remote)"
+          dvc status
+          echo "::endgroup::"
 
   # ---------------------------------------------------------------------------
   # docker — build the production image and prove it runs. Gated on `quality`
@@ -93,7 +137,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Stage 6 — Docker Build. Builds the `runtime` (production) target only.
+      # Stage 7 — Docker Build. Builds the `runtime` (production) target only.
       #   push: false  — never publish (no registry, no credentials in this job).
       #   load: true   — load the built image into the local daemon so the
       #                  validation step below can actually run it.
@@ -112,7 +156,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Stage 7 — Build validation. A build that produces an unusable image is a
+      # Stage 8 — Build validation. A build that produces an unusable image is a
       # failure, so assert the security and runtime contract of the shipped image:
       #   * it runs as the intended non-root user (UID 10001),
       #   * the core scientific/ML stack imports cleanly, and
