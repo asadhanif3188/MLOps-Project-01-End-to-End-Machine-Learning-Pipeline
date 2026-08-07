@@ -68,16 +68,23 @@ professional, maintainable codebase.
   ([Developer Guide](developer-guide.md),
   [ADR-004](decisions/ADR-004-python-quality-toolchain.md)).
 
-**Remaining:**
+**Delivered in Sprint 4 (`v1.3.0` — Pipeline Correctness & Reproducibility):**
 
-- ⬜ Correctness fixes surfaced during documentation: reconcile
-  `dvc.yaml`/`params.yaml` parameter names, feed the `preprocess` output into
-  downstream stages, and evaluate on a held-out split.
-- ⬜ Decouple stage bodies from MLflow/network so `train` and `evaluate` logic
-  becomes unit-testable (see the
-  [testing roadmap](testing-strategy.md#4-future-testing-roadmap)).
-- ⬜ Rewrite the root `README.md` to match the professional `docs/` set; it is
-  still the original baseline README.
+- ✅ Correctness fixes surfaced during documentation: reconciled
+  `dvc.yaml`/`params.yaml` parameter names and fed the `preprocess` output into
+  `train` (and evaluation source). Now enforced by the `contract` tests and CI
+  (see the [Pipeline Contract](pipeline-contract.md)).
+- ✅ Decoupled the stage bodies from MLflow/network via the `tracking` boundary,
+  so `train` and `evaluate` logic is now unit-tested
+  ([Testing Strategy](testing-strategy.md)).
+- ✅ Corrected the stale root `README.md` claims (training input, hyperparameter
+  tuning, evaluation output, DVC-stage snippets) to match the as-built pipeline.
+
+**Still remaining:**
+
+- ⬜ Evaluate on a genuine **held-out split**. Evaluation is currently in-sample;
+  moving to a held-out set is a configuration change tracked as deviation **D5**
+  in the [pipeline contract](pipeline-contract.md#8-evaluation-boundary).
 
 **Expected outcome:** A repository that reads as an actively maintained,
 professionally engineered project and is safe to change with confidence.
@@ -94,7 +101,11 @@ professionally engineered project and is safe to change with confidence.
   (GitHub Actions — see [CI/CD](ci-cd.md) and
   [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)).
 - ✅ Build and validate the container image in CI (build only — **not** pushed).
-- 🚧 Automated pipeline validation (e.g., `dvc repro` / `dvc status`) in CI.
+- ✅ Automated pipeline validation in CI — **delivered offline in Sprint 4**:
+  `dvc dag` + local `dvc status` (analytics disabled) plus the `contract` tests
+  validate the pipeline *definition* on every PR without contacting the DagsHub
+  remote. 🚧 A full `dvc repro` **execution** check (against a committed fixture
+  dataset + `dvc.lock`) remains future — the raw dataset is remote-only today.
 - 🚧 Basic security/supply-chain scanning (image scan, SBOM, signing).
 - 🚧 Publish the container image on release
   ([Containerization Strategy](containerization.md), [ADR-005](decisions/ADR-005-containerization-strategy.md)).
@@ -103,11 +114,13 @@ professionally engineered project and is safe to change with confidence.
 **Expected outcome:** Every change is automatically validated before merge,
 reducing regressions and manual effort.
 
-> **Status:** CI (checkout → setup Python → install → Ruff → pytest → Docker build
-> → build validation) is implemented on **GitHub Actions**. It validates only —
-> no deploy, no image push, no Kubernetes. The remaining items above (publish,
-> scan, branch protection, in-CI pipeline validation) are the path to continuous
-> *delivery*; see [CI/CD § Future CD roadmap](ci-cd.md#future-cd-roadmap).
+> **Status:** CI (checkout → setup Python → install → Ruff → pytest → DVC
+> pipeline integrity → Docker build → build validation) is implemented on
+> **GitHub Actions**. It validates only — no deploy, no image push, no
+> Kubernetes. Offline pipeline-definition validation landed in Sprint 4; the
+> remaining items above (publish, scan, branch protection, and a full `dvc repro`
+> execution check) are the path to continuous *delivery*; see
+> [CI/CD § Future CD roadmap](ci-cd.md#future-cd-roadmap).
 >
 > **TODO:** Ratify the CD approach (registry, signing, deploy target) as an ADR.
 

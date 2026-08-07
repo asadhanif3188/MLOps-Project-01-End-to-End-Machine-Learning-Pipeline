@@ -24,8 +24,14 @@ or via `dvc repro`) and produces:
 
 - a preprocessed dataset (`data/processed/data.csv`),
 - a serialized model (`models/model.pkl`),
+- a metrics artifact (`metrics/metrics.json`, DVC-tracked),
 - experiment metadata (parameters, metrics, artifacts) logged to a remote
   MLflow tracking server on DagsHub.
+
+The stage inputs, outputs, artifact ownership, evaluation boundary, and
+reproducibility expectations are specified in the
+[Pipeline Contract](pipeline-contract.md) and enforced by the `contract` test
+suite and CI (see [§3](#3-pipeline-flow) and [CI/CD](ci-cd.md)).
 
 The dataset is the **Pima Indians Diabetes** dataset; the task is binary
 classification of the `Outcome` column.
@@ -56,30 +62,38 @@ classification of the `Outcome` column.
 The major components and their relationships:
 
 ```text
-            params.yaml ─────────────┐ (parameters)
-                                      ▼
-data/raw/data.csv ──▶ [ preprocess ] ──▶ data/processed/data.csv
-                                      │
-                                      ▼
-                        [ train ] ──▶ models/model.pkl ──▶ [ evaluate ]
-                                      │                          │
-                                      ▼                          ▼
-                              MLflow (DagsHub) ◀── metrics, params, artifacts
+        params.yaml ───────────────────────────┐ (parameters)
+                                                ▼
+data/raw/data.csv ─▶ [ preprocess ] ─▶ data/processed/data.csv
+                                                │
+                            ┌───────────────────┴───────────────┐
+                            ▼                                    ▼
+                       [ train ] ─▶ models/model.pkl ─▶ [ evaluate ] ─▶ metrics/metrics.json
+                            │                                    │
+                            ▼                                    ▼
+                     MLflow (DagsHub) ◀── metrics, params, artifacts
 ```
 
 **Components:**
 
-- **`src/preprocess.py`** — reads the raw dataset and writes a processed CSV.
-- **`src/train.py`** — trains a Random Forest with `GridSearchCV`, logs to
-  MLflow, and serializes the best estimator to `models/model.pkl`.
-- **`src/evaluate.py`** — loads the serialized model and logs an accuracy metric
-  to MLflow.
+- **`src/preprocess.py`** — reads the raw dataset and writes the processed CSV
+  (with header) that `train` consumes.
+- **`src/train.py`** — trains a seeded Random Forest on the processed dataset
+  (`GridSearchCV` tunes leaf/split regularization; `n_estimators`/`max_depth`/
+  `random_state` come from `params.yaml`), serializes the best estimator to
+  `models/model.pkl`, and logs the run to MLflow.
+- **`src/evaluate.py`** — loads the model, scores it, writes
+  `metrics/metrics.json`, and logs the accuracy to MLflow.
+- **`src/tracking.py`** — the single MLflow boundary: every experiment-tracking
+  call goes through it, and the stages import it lazily so their ML computation
+  stays free of MLflow and unit-testable without it.
 - **DVC** — defines stage dependencies and outputs (`dvc.yaml`) and versions
   data/model artifacts to the remote.
 - **MLflow / DagsHub** — remote experiment tracking and (optionally) model
   registry.
 
-The stages share a small infrastructure layer (introduced in Sprint 2):
+The stages share a small infrastructure layer (introduced in Sprint 2, extended
+in Sprint 4 with the tracking boundary):
 
 - **`src/logging_config.py`** — centralized logging configuration (console +
   rotating file); see [§7](#7-observability--logging).
@@ -104,40 +118,41 @@ dependency order.
 - **Command:** `python src/preprocess.py`
 - **Inputs:** `data/raw/data.csv`, `src/preprocess.py`,
   params `preprocess.input`, `preprocess.output`
-- **Output:** `data/processed/data.csv`
-- **Behavior:** reads the raw CSV and re-writes it (without header/index).
+- **Output:** `data/processed/data.csv` (written **with** its header row).
 
 ### Stage 2 — `train`
 
 - **Command:** `python src/train.py`
-- **Inputs:** `data/raw/data.csv`, `src/train.py`, and params
-  `train.data`, `train.model`, `train.random_state`, `train.n_estimators`,
-  `train.max_depth`
+- **Inputs:** `data/processed/data.csv`, `src/train.py`, and params
+  `train.input`, `train.output`, `train.target`, `train.random_state`,
+  `train.n_estimators`, `train.max_depth`
 - **Output:** `models/model.pkl`
-- **Behavior:** splits data (`train_test_split`, 20% test), runs `GridSearchCV`
-  (3-fold) over a hyperparameter grid, logs parameters/metrics/artifacts to
-  MLflow, optionally registers the model, and pickles the best estimator.
+- **Behavior:** consumes the **processed** dataset, splits it
+  (`train_test_split`, 20% test, seeded by `train.random_state`), fits a
+  `RandomForestClassifier` whose `n_estimators`/`max_depth`/`random_state` come
+  from config, runs a small `GridSearchCV` (3-fold) tuning leaf/split
+  regularization, logs parameters/metrics/artifacts to MLflow, conditionally
+  registers the model, and pickles the best estimator. Seeded → deterministic
+  given the same inputs and parameters.
 
 ### Stage 3 — `evaluate`
 
 - **Command:** `python src/evaluate.py`
-- **Inputs:** `data/raw/data.csv`, `models/model.pkl`, `src/evaluate.py`
-- **Output:** none tracked by DVC; logs an `accuracy` metric to MLflow.
+- **Inputs:** `data/processed/data.csv`, `models/model.pkl`, `src/evaluate.py`,
+  and params `evaluate.data`, `evaluate.model`, `evaluate.target`,
+  `evaluate.metrics`
+- **Output:** `metrics/metrics.json` (DVC-tracked metrics artifact, `cache:
+  false`); also logs the `accuracy` metric to MLflow.
 
-> ⚠️ **TODO / known gaps to resolve later (documented, not fixed here):**
->
-> 1. **Preprocess output is unused downstream.** The `train` and `evaluate`
->    stages both depend on `data/raw/data.csv`, and `train.py` reads
->    `params['train']['input']` (the raw file). The `data/processed/data.csv`
->    produced by `preprocess` is therefore not consumed.
-> 2. **Param name mismatch.** `dvc.yaml` references `train.data` and
->    `train.model`, but `params.yaml` defines `train.input` and `train.output`.
->    `train.py` reads `input`/`output`.
-> 3. **Evaluation on training data.** `evaluate.py` computes accuracy over the
->    full dataset rather than a held-out split.
->
-> These are engineering concerns for a future sprint and are recorded here only
-> to keep the architecture description faithful.
+> ℹ️ **Known limitation — in-sample evaluation.** `evaluate` currently scores the
+> model over the **full** processed dataset — the same data `train` fits on — so
+> the reported `accuracy` is an **in-sample** figure and must not be cited as a
+> generalization estimate. Because the evaluation dataset is already an explicit,
+> configured input, introducing a genuine held-out split is a
+> configuration/graph change rather than a code change. This is deviation **D5**
+> in the [Pipeline Contract](pipeline-contract.md#8-evaluation-boundary); it and
+> the absence of a committed `dvc.lock` (D7) are the pipeline's remaining
+> reproducibility limitations after Sprint 4.
 
 ---
 
@@ -172,12 +187,14 @@ Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
    via `dvc pull`.
 2. **Preprocessing.** `preprocess` reads the raw CSV and writes
    `data/processed/data.csv` (a DVC-tracked output).
-3. **Training.** `train` reads the dataset, tunes and fits the model, and writes
-   `models/model.pkl` (DVC-tracked, git-ignored on disk).
+3. **Training.** `train` reads the **processed** dataset, tunes and fits the
+   model, and writes `models/model.pkl` (DVC-tracked, git-ignored on disk).
 4. **Tracking.** During training and evaluation, parameters, metrics
    (`accuracy`), and artifacts (confusion matrix, classification report, model)
-   are pushed to the remote MLflow server on DagsHub.
-5. **Evaluation.** `evaluate` loads the pickled model and logs an accuracy
+   are pushed to the remote MLflow server on DagsHub through the `tracking`
+   boundary.
+5. **Evaluation.** `evaluate` loads the pickled model, scores it on the
+   processed dataset, writes `metrics/metrics.json`, and logs the accuracy
    metric.
 
 **Data classification & storage:**
@@ -219,10 +236,13 @@ quality gates. Both are **implemented and in the repository today**.
 
 - A [GitHub Actions workflow](../.github/workflows/ci.yml) validates every push to
   `main` and every pull request: checkout → Python 3.12 → install dependencies →
-  Ruff (lint + format check) → pytest → Docker build of the `runtime` image →
-  build validation (non-root UID, core imports, `dvc` entrypoint). It is
-  validation-only — it does not deploy, push images, or use Kubernetes. See
-  [CI/CD](ci-cd.md).
+  Ruff (lint + format check) → pytest (including the `contract` tests) → **DVC
+  pipeline integrity** (`dvc dag` + `dvc status`, offline, analytics disabled) →
+  Docker build of the `runtime` image → build validation (non-root UID, core
+  imports, `dvc` entrypoint). The DVC and contract checks (added in Sprint 4)
+  fail a PR when the graph, parameter contract, or artifact lineage is broken —
+  without contacting the DagsHub remote. It is validation-only — it does not
+  deploy, push images, or use Kubernetes. See [CI/CD](ci-cd.md).
 
 > 📌 **Diagram placeholders:**
 > [`diagrams/cicd-flow/`](diagrams/cicd-flow/),
