@@ -56,10 +56,12 @@ The suite is built on a few explicit choices. Each one trades breadth for signal
 | Stage *bodies* (`preprocess`, `split`, `train`, `evaluate` compute logic) | ✅ Unit (Sprint 4; `split` added later) | The ML compute (`split_dataset`, `run_training`, `compute_metrics`) was separated from IO + MLflow (review finding H-6), so it is now unit-tested offline. |
 | Stage composition (`preprocess → split → train → evaluate`) | ✅ Integration (Sprint 4) | One end-to-end run through real temp files with MLflow stubbed; proves each stage's output is consumable by the next, and that `train`/`evaluate` receive disjoint (held-out) data. |
 | Pipeline definition (`dvc.yaml`/`params.yaml`/`src` consistency) | ✅ Contract (Sprint 4) | Static checks of lineage, parameter consistency, and single-owner artifacts — the CI-enforceable half of the pipeline contract. |
-| End-to-end `dvc repro` execution | ⬜ Deferred | Needs a committed fixture dataset + `dvc.lock`; the raw dataset is remote-only. See §4. |
+| End-to-end `dvc repro` execution | ✅ CI (fixture) | A committed **fixture** pipeline (`tests/fixtures/pipeline/`) with its own `dvc.lock` is reproduced by a real `dvc repro` in CI — same `src/` code, small committed dataset, no remote/MLflow/credentials. A `contract` test guards the lock against structural drift and an `integration` test proves the seeded compute reproduces equivalent outputs. See §4 and [ADR-008](decisions/ADR-008-fixture-reproducibility.md). |
+| End-to-end **production** `dvc repro` | ⬜ Out of scope | Needs the remote-only raw dataset, live MLflow, and digest-pinned deps — a documented level-4 limitation, not a gap ([pipeline-contract §7](pipeline-contract.md#7-reproducibility-expectations)). |
 
 > This is now a four-tier suite (smoke · unit · integration · contract), not just
-> a foundation. The one remaining gap above is intentional and tracked.
+> a foundation. Reproducibility is proven by execution against a fixture pipeline;
+> only the *production* end-to-end run stays out of CI, by design.
 
 ---
 
@@ -84,9 +86,13 @@ tests/
 │   ├── test_train.py        # run_training: seeded, deterministic, params applied
 │   └── test_evaluate.py     # compute_metrics: accuracy in [0, 1], schema errors
 ├── integration/
-│   └── test_pipeline.py     # preprocess → split → train → evaluate through real files (MLflow stubbed)
-└── contract/
-    └── test_pipeline_contract.py # dvc.yaml/params.yaml/src agree with the pipeline contract
+│   ├── test_pipeline.py     # preprocess → split → train → evaluate through real files (MLflow stubbed)
+│   └── test_fixture_reproducibility.py # seeded stages reproduce equivalent outputs on the committed fixture
+├── contract/
+│   ├── test_pipeline_contract.py    # dvc.yaml/params.yaml/src agree with the pipeline contract
+│   └── test_fixture_lock_contract.py # the committed fixture dvc.lock is not structurally stale
+└── fixtures/
+    └── pipeline/            # self-contained fixture DVC pipeline: data + params.yaml + dvc.yaml + dvc.lock
 ```
 
 | Location | Contains | Marker |
@@ -191,14 +197,17 @@ Testing grows with the pipeline. The stages below align with the project
 - ✅ **Tiered markers + CI.** `smoke`/`unit`/`integration`/`contract` markers; the
   full suite (plus Ruff and offline DVC integrity) runs on every push and pull
   request (see [CI/CD](ci-cd.md)).
+- ✅ **End-to-end `dvc repro` execution (fixture).** A real `dvc repro` over the
+  committed fixture pipeline with a committed `dvc.lock` runs in CI, so validation
+  now covers *execution*, not just the definition — with determinism enforced by a
+  forced re-run ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The
+  production raw dataset stays remote-only, so the *production* end-to-end run
+  remains out of CI by design.
 
 ### Still ahead
 
 - **`logging_config` behaviour.** Idempotent handler attachment, `LOG_LEVEL` /
   `LOG_DIR` resolution, and the noisy-logger caps.
-- **End-to-end `dvc repro` execution test.** A real `dvc repro` over a committed
-  fixture dataset with a committed `dvc.lock`, so CI validates *execution*, not
-  just the definition. Blocked today by the remote-only raw dataset.
 - **mypy as a CI gate** and **branch protection** requiring green checks (carried
   from Sprint 3).
 - **Longer term (Roadmap v4+):** property-based tests (e.g. Hypothesis) for the IO

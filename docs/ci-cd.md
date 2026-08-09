@@ -43,7 +43,8 @@ already fails lint or tests.
 | 3 | Install dependencies | `pip install -r requirements-dev.txt` | `requirements-dev.txt` begins with `-r requirements.txt`, so one install pulls both the runtime stack and the toolchain (Ruff, pytest). |
 | 4 | Ruff | `ruff check --output-format=github .` then `ruff format --check .` | Lint with inline PR annotations, then verify formatting **without** rewriting files (CI reports drift; it never mutates the tree). |
 | 5 | Pytest | `pytest` | Runs the suite using the `pyproject.toml` config (`pythonpath=src`, `testpaths=tests`, strict markers) — identical to a local `make test`. Includes the `contract`-marked tests (`tests/contract/`) that statically enforce the [pipeline contract](pipeline-contract.md): `dvc.yaml`↔`params.yaml` parameter consistency, single-owner artifacts, and the declared lineage `raw → preprocess → processed → train → model → evaluate → metrics`. They parse files only — no data, no network, no credentials. |
-| 6 | **DVC pipeline integrity** | `dvc dag` then `dvc status` (`DVC_NO_ANALYTICS=true`) | Validates the pipeline **definition** without running it: no stage executes, no dataset is pulled, and the DagsHub remote is never contacted. `dvc dag` proves DVC parses every stage and builds an **acyclic** graph (a malformed `dvc.yaml` or a cycle fails here); local `dvc status` (never `--cloud`) proves the stage/`.dvc` definitions parse coherently. `dvc repro --dry` is intentionally **not** used — it accesses the remote-only raw dataset and would need credentials or fail nondeterministically; the guarantees it would give are enforced offline by the contract tests in Stage 5. |
+| 6 | **DVC pipeline integrity** | `dvc dag` then `dvc status` (`DVC_NO_ANALYTICS=true`) | Validates the pipeline **definition** without running it: no stage executes, no dataset is pulled, and the DagsHub remote is never contacted. `dvc dag` proves DVC parses every stage and builds an **acyclic** graph (a malformed `dvc.yaml` or a cycle fails here); local `dvc status` (never `--cloud`) proves the stage/`.dvc` definitions parse coherently. `dvc repro --dry` is intentionally **not** used on the production pipeline — it accesses the remote-only raw dataset and would need credentials or fail nondeterministically; the guarantees it would give are enforced offline by the contract tests in Stage 5 and by the fixture reproduction in Stage 7. |
+| 7 | **Fixture pipeline reproduction** | `dvc repro tests/fixtures/pipeline/dvc.yaml` then `dvc status` + forced re-run (`DVC_NO_ANALYTICS=true`) | The one step that actually **runs** the pipeline. The production pipeline cannot run in CI (its raw data is remote-only and its stages log to networked MLflow), so a self-contained **fixture** pipeline reproduces the *same four stages* and the *same `src/` code* against a small committed fixture dataset — with **no remote, no MLflow, no credentials** (the fixture wrapper stubs the tracking boundary). Proves `declared pipeline + params + inputs + code = reproducible execution`: `dvc repro` runs all four stages, `dvc status` must report "up to date" against the committed `dvc.lock`, and a forced re-run must produce **byte-identical** model/metrics (determinism). See [pipeline-contract §7](pipeline-contract.md#7-reproducibility-expectations) and [ADR-008](decisions/ADR-008-fixture-reproducibility.md). |
 
 ### Job 2 — `docker` (Docker Build & Validate)
 
@@ -51,8 +52,8 @@ already fails lint or tests.
 |---|-------|---------|
 | 1 | Checkout | Fresh runner needs its own checkout. |
 | — | Set up Buildx | Enables BuildKit (Dockerfile cache mounts) and the GitHub Actions layer cache. |
-| 7 | **Docker Build** | Builds the `runtime` (production) target with `docker/build-push-action@v6`, **`push: false`** and **`load: true`** (image loaded locally for validation, never published). Stamps `VCS_REF`/`BUILD_VERSION` build args; caches layers via `type=gha`. |
-| 8 | **Build validation** | Runs the freshly built image and asserts its contract: it runs as the **non-root** user (UID `10001`), the core stack (`sklearn`, `mlflow`, `dvc`, `pandas`) imports cleanly, and the `dvc` entrypoint CLI is present. A build that produces an unusable image fails here. |
+| 8 | **Docker Build** | Builds the `runtime` (production) target with `docker/build-push-action@v6`, **`push: false`** and **`load: true`** (image loaded locally for validation, never published). Stamps `VCS_REF`/`BUILD_VERSION` build args; caches layers via `type=gha`. |
+| 9 | **Build validation** | Runs the freshly built image and asserts its contract: it runs as the **non-root** user (UID `10001`), the core stack (`sklearn`, `mlflow`, `dvc`, `pandas`) imports cleanly, and the `dvc` entrypoint CLI is present. A build that produces an unusable image fails here. |
 
 > Only the **runtime** target is built in CI (it is the shippable artifact and its
 > Dockerfile smoke-test already exercises the environment at build time). The
@@ -103,6 +104,12 @@ make test            # pytest
 pytest -m contract   # just the pipeline-definition contract checks (offline)
 dvc dag              # the graph DVC builds from dvc.yaml (offline, no remote)
 dvc status           # local workspace status (never --cloud)
+
+# Reproduce the self-contained fixture pipeline end to end (offline: no remote,
+# no MLflow, no credentials). Proves declared pipeline + params + inputs + code
+# = reproducible execution; re-running is a no-op (deterministic).
+dvc repro tests/fixtures/pipeline/dvc.yaml
+dvc status tests/fixtures/pipeline/dvc.yaml     # -> "up to date"
 ```
 
 `make check` is a **superset** of the `quality` job — it additionally runs mypy.
@@ -135,13 +142,16 @@ project roadmap ([roadmap.md](roadmap.md)):
    `packages: write` permission and registry login — deliberately absent today.
 2. **Supply-chain hardening (v3).** Vulnerability scanning (e.g. Trivy/Grype),
    SBOM generation, and image signing (cosign) as release gates.
-3. **Automated pipeline validation.** *Partially delivered (Sprint 4).* CI now
-   validates the pipeline **definition** offline — `dvc dag` + local `dvc status`
-   plus the `contract` tests (see Job 1, stages 5–6). Still future: an
-   **execution** check that runs a scoped `dvc repro` against a small committed
-   **fixture dataset** (and a committed `dvc.lock`) so `dvc status` becomes a true
-   "up to date" drift gate — today the raw dataset is remote-only, so no stage is
-   run in CI.
+3. **Automated pipeline validation.** *Delivered.* CI validates the pipeline
+   **definition** offline — `dvc dag` + local `dvc status` plus the `contract`
+   tests (Job 1, stages 5–6) — **and** now runs a real **execution** check: a
+   scoped `dvc repro` against a small committed **fixture dataset** with a
+   committed `dvc.lock` (Job 1, stage 7), so `dvc status` is a true "up to date"
+   drift gate and a forced re-run proves determinism. The **production** raw
+   dataset remains remote-only, so the production run itself is still not executed
+   in CI — a documented level-4 limitation
+   ([pipeline-contract §7](pipeline-contract.md#7-reproducibility-expectations),
+   [ADR-008](decisions/ADR-008-fixture-reproducibility.md)).
 4. **Pin for reproducibility (v3).** Pin runtime dependencies and the base image
    by digest (per [ADR-005](decisions/ADR-005-containerization-strategy.md)) so
    CI builds are byte-for-byte repeatable.

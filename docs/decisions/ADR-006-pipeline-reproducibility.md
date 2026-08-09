@@ -2,8 +2,10 @@
 
 - **Status:** Accepted — implemented in Sprint 4 (v1.3.0). The held-out evaluation
   split it anticipated has since landed via
-  [ADR-007](ADR-007-held-out-evaluation.md) (deviation D5 resolved); a committed
-  `dvc.lock` remains the one open item (part of D7) in the
+  [ADR-007](ADR-007-held-out-evaluation.md) (deviation D5 resolved), and the
+  committed `dvc.lock` + in-CI execution it called for landed via
+  [ADR-008](ADR-008-fixture-reproducibility.md) (the `dvc.lock`/execution portion
+  of D7 resolved through a fixture pipeline). See the
   [pipeline contract](../pipeline-contract.md#11-deviation-status-sprint-4)
 - **Date:** 2026-08-05 (design ratified); implementation landed 2026-08-06
 - **Deciders:** Asad Hanif
@@ -26,11 +28,14 @@
 > **Implementation status (updated 2026-08-09).** The Sprint 4 implementation PRs
 > have since landed, and the held-out evaluation split anticipated by decision (5)
 > was subsequently delivered by a dedicated `split` stage
-> ([ADR-007](ADR-007-held-out-evaluation.md), deviation D5 resolved). The "Context"
-> below describes the repository *before* those PRs and is retained as the
-> historical record that motivated this decision; the current state and the one
-> remaining open item (no committed `dvc.lock`) are recorded in
-> [pipeline-contract.md §11](../pipeline-contract.md#11-deviation-status-sprint-4).
+> ([ADR-007](ADR-007-held-out-evaluation.md), deviation D5 resolved), and the
+> committed `dvc.lock` + in-CI execution called for by decision (1)/(6) were
+> delivered by a fixture reproducibility pipeline
+> ([ADR-008](ADR-008-fixture-reproducibility.md), the `dvc.lock`/execution portion
+> of D7 resolved). The "Context" below describes the repository *before* those PRs
+> and is retained as the historical record that motivated this decision; the
+> current state is recorded in
+> [pipeline-contract.md §7 / §11](../pipeline-contract.md#7-reproducibility-expectations).
 
 ## Context
 

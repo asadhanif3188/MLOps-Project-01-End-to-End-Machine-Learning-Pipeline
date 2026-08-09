@@ -29,11 +29,18 @@ wiring and configuration assertions below are **enforced automatically** by the
 and by CI (`dvc dag` + `dvc status`), so this is not a claim on trust — a broken
 contract fails a pull request.
 
-One deviation from the original target **remains open and is documented
-honestly** rather than hidden: no `dvc.lock` is committed (part of D7). The former
-in-sample-evaluation gap (D5) is now **resolved** — `train` and `evaluate` consume
-**disjoint** datasets produced by an explicit `split` stage. See
-[§8](#8-evaluation-boundary) and [§11](#11-deviation-status-sprint-4).
+Every deviation from the original design target is now resolved to the extent the
+repository can honestly prove in CI. The former in-sample-evaluation gap (D5) is
+**resolved** — `train` and `evaluate` consume **disjoint** datasets produced by an
+explicit `split` stage ([§8](#8-evaluation-boundary)). The former "no committed
+`dvc.lock`, no in-CI execution" gap (D7) is **resolved via a fixture pipeline**: a
+committed `dvc.lock` is reproduced by a real `dvc repro` in CI against a small
+committed fixture dataset ([§7](#7-reproducibility-expectations),
+[ADR-008](decisions/ADR-008-fixture-reproducibility.md)). What remains is a stated
+*limitation*, not a deviation: reproducing the **production** run end to end needs
+the remote dataset, live MLflow, and digest-pinned dependencies, so it stays
+outside ordinary CI by design (§7, level 4). See
+[§11](#11-deviation-status-sprint-4).
 
 ---
 
@@ -350,39 +357,57 @@ reported accuracy is out-of-sample — see [§8](#8-evaluation-boundary).
 ## 7. Reproducibility Expectations
 
 Reproducibility is an **engineering requirement**, not a nicety (rationale in
-[ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
+[ADR-006](decisions/ADR-006-pipeline-reproducibility.md)). It is not one claim but
+**four distinct levels**, proven by different mechanisms and claimed with different
+confidence. Stating them separately is deliberate — it prevents the common
+overclaim where "the graph is valid" is passed off as "the run reproduces."
 
-**Achieved:**
+| # | Level | What it proves | How it is proven | Status |
+|---|-------|----------------|------------------|--------|
+| 1 | **DVC graph correctness** | `dvc.yaml` is a valid, acyclic DAG that models the real lineage; params/paths are consistent across `dvc.yaml`↔`params.yaml`↔code. | `dvc dag` + local `dvc status` + the `contract` tests, offline on every PR. | ✅ Proven |
+| 2 | **Lock-state reproducibility** | A committed `dvc.lock` pins the resolved pipeline: declared inputs, parameter values, **code** hashes, and output hashes. | The fixture pipeline commits a `dvc.lock`; a `contract` test fails if it drifts structurally from the fixture `dvc.yaml`. | ✅ Proven (fixture) |
+| 3 | **Fixture execution** | The chain `declared pipeline + declared parameters + declared inputs + code = reproducible outputs` actually **executes**, deterministically. | CI runs a real `dvc repro` over the committed fixture dataset; asserts `dvc status` "up to date" and byte-identical model/metrics on a forced re-run. A portable `pytest` check re-runs the seeded stage compute and asserts equal outputs. | ✅ Proven (fixture, offline) |
+| 4 | **Production-data reproducibility** | The *production* run reproduces end to end, bit-for-bit, from the real dataset. | Would require the remote dataset (`dvc pull` + DagsHub creds), a live MLflow server, and digest-pinned deps/base image. **Deliberately out of CI.** | ⚠️ Not claimed |
 
-1. **Declared lineage.** The pipeline is reconstructable from declared inputs,
-   parameters, and dependencies. `dvc.yaml` accurately models the real DAG
+**Levels 1–3 in detail:**
+
+1. **Declared lineage (level 1).** The pipeline is reconstructable from declared
+   inputs, parameters, and dependencies. `dvc.yaml` models the real DAG
    `raw → preprocess → processed → split → {train → model, held-out} → evaluate →
    metrics`, confirmed by `dvc dag` and the `contract` lineage tests.
-2. **Deterministic given fixed inputs + params + seed.** The train/held-out
-   partition is seeded from `split.random_state`, and the estimator (plus train's
-   internal validation split) from `train.random_state`; repeated runs on the same
-   inputs and params yield the same partitions, model, and metrics — so the exact
-   rows held out for evaluation do not drift between runs.
-3. **CI enforcement.** Pipeline integrity (valid DAG, consistent params, buildable
-   graph, correct lineage) is validated automatically on every push and pull
-   request, without production credentials or live external services (see
-   [CI/CD](ci-cd.md)).
+2. **Determinism (level 2/3).** The train/held-out partition is seeded from
+   `split.random_state`, and the estimator (plus train's internal validation
+   split) from `train.random_state`; repeated runs on the same inputs and params
+   yield the same partitions, model, and metrics — so the rows held out for
+   evaluation do not drift between runs. This is enforced, not asserted: CI forces
+   a second `dvc repro` of the fixture and requires **byte-identical** model and
+   metrics.
+3. **Executed, locked evidence (level 2/3).** The fixture pipeline
+   ([`tests/fixtures/pipeline/`](../tests/fixtures/pipeline/)) reproduces the
+   *same four stages* and the *same `src/` code* against a small committed fixture
+   dataset, commits its `dvc.lock`, and is run by a real `dvc repro` in CI — with
+   **no remote, no MLflow, no credentials** (the fixture wrapper stubs the tracking
+   boundary, which produces no artifact). This is what upgrades the reproducibility
+   claim from *"the definition is valid"* to *"the pipeline demonstrably runs and
+   reproduces."* Design and rationale:
+   [ADR-008](decisions/ADR-008-fixture-reproducibility.md).
 
-**Remaining reproducibility limitations (documented, not fixed):**
+**Level 4 — the honest limitation (documented, not fixed):**
 
-4. **No committed `dvc.lock`.** The resolved dependency hashes for a run are not
-   pinned, so `dvc status` cannot serve as a true "up to date" drift gate and CI
-   validates the pipeline **definition**, not a locked **execution**. Committing a
-   `dvc.lock` requires a runnable dataset in CI (the raw dataset is remote-only
-   today).
-5. **No in-CI execution.** CI does not run `dvc repro` — the first stage's data
-   dependency lives only on the DagsHub remote. A future execution check would use
-   a small committed fixture dataset plus a committed `dvc.lock`.
-6. **Dependencies/base image are name-pinned, not digest-pinned** (carried from
-   Sprint 3). Byte-for-byte repeatable rebuilds need hash/digest pinning
-   ([ADR-005](decisions/ADR-005-containerization-strategy.md)). Until then,
-   "reproducible" means *logically* reproducible (same declared inputs, params,
-   and seed), not bit-for-bit.
+4. **Production-data reproducibility is out of CI scope, by design.** Three things
+   keep it there, and none is a defect this milestone hides:
+   - The production first input `data/raw/data.csv` is **remote-only** (DagsHub S3);
+     reproducing it in CI needs `dvc pull` + credentials.
+   - `train`/`evaluate` log to a **networked MLflow** server; running them for real
+     needs that service (ADR-006 forbids coupling automated validation to it).
+   - Dependencies and the base image are **name-pinned, not digest-pinned** (carried
+     from Sprint 3; [ADR-005](decisions/ADR-005-containerization-strategy.md)), so
+     even the production run is *logically* reproducible, not bit-for-bit, until
+     pinning lands.
+
+   The fixture (levels 2–3) proves the pipeline *mechanics* reproduce; it does
+   **not** claim the production model or its accuracy — the fixture uses synthetic
+   data and a smaller model. No level-4 claim is made anywhere in this repository.
 
 ---
 
@@ -506,8 +531,11 @@ A pipeline execution is **valid** when all of the following hold.
    **The evaluation is now held-out (§8): `evaluate` scores the model on a disjoint
    partition `train` never saw, so the accuracy is a legitimate out-of-sample
    estimate — bounded by the single-split, small-test-set caveats in §8/§11.**
-10. *(Not yet achievable)* `dvc status` reports "up to date" for an unchanged,
-    committed pipeline — this needs a committed `dvc.lock`, which is absent (§7).
+10. For the **fixture** pipeline, `dvc status` reports "up to date" against its
+    committed `dvc.lock`, and a real `dvc repro` reproduces it deterministically in
+    CI (§7, levels 2–3). For the **production** pipeline this remains a level-4
+    limitation — its raw data is remote-only, so CI validates the definition, not a
+    locked production execution (§7, level 4).
 
 An execution that logs an `accuracy` number but violates the evaluation boundary
 (§8) — for example by repointing `evaluate.data` at the training partition — is
@@ -519,7 +547,8 @@ The `contract` disjointness test exists precisely to make that regression fail C
 ## 11. Deviation Status (Sprint 4)
 
 The eight deviations the design contract enumerated, with their status after the
-Sprint 4 implementation PRs and the subsequent held-out evaluation milestone:
+Sprint 4 implementation PRs and the subsequent proof-hardening milestones
+(held-out evaluation, then reproducibility):
 
 | ID | Deviation (original) | Status |
 |----|----------------------|--------|
@@ -529,13 +558,15 @@ Sprint 4 implementation PRs and the subsequent held-out evaluation milestone:
 | D4 | No metrics artifact (MLflow/log only). | ✅ **Resolved** — DVC-tracked `metrics/metrics.json`. |
 | D5 | `evaluate` scores on the full training data (in-sample). | ✅ **Resolved** — a dedicated `split` stage holds out `data/processed/test.csv`; `train` fits on `train.csv`, `evaluate` scores on the disjoint `test.csv`. Enforced by the DAG, the `contract` disjointness test, and `split`'s runtime assertions (§8). Remaining refinements (cross-validation, larger/CI-visible held-out set) are quality caveats, not correctness gaps. |
 | D6 | ML logic coupled to MLflow, blocking isolated tests. | ✅ **Resolved** — MLflow isolated behind `tracking.py` (lazy import); ML compute is unit-tested without the service. Stage orchestration still requires the URI to *run* end-to-end (by design; §9). |
-| D7 | Non-deterministic training; `random_state` unused; no `dvc.lock`. | 🟡 **Partially resolved** — seeded and deterministic (`split.random_state` + `train.random_state` applied). **`dvc.lock` still absent** (§7). |
+| D7 | Non-deterministic training; `random_state` unused; no `dvc.lock`. | ✅ **Resolved** — seeded and deterministic (`split.random_state` + `train.random_state` applied); a committed `dvc.lock` is now reproduced by a real `dvc repro` in CI against a committed fixture dataset, with byte-identical outputs across runs ([§7](#7-reproducibility-expectations), [ADR-008](decisions/ADR-008-fixture-reproducibility.md)). Reproducing the *production* run end-to-end (remote data + live MLflow + digest pinning) is a documented level-4 limitation, not a deviation (§7). |
 | D8 | Processed CSV written headerless, incompatible with the `Outcome` column contract. | ✅ **Resolved** — every stage writes `header=True`; partitions are consumable by column name. |
 
-**Summary:** seven of eight deviations fully resolved; D7 partially resolved
-(determinism yes, `dvc.lock` no). The `dvc.lock`/execution-check portion of D7 is
-now the pipeline's single remaining known limitation after this milestone. The
-former highest-priority gap — in-sample evaluation (D5) — is closed.
+**Summary:** all eight deviations are now resolved to the extent the repository can
+honestly prove — D5 (in-sample evaluation) closed by the `split` stage, and D7
+(determinism + `dvc.lock` + in-CI execution) closed by the fixture reproducibility
+pipeline. What remains is a stated **limitation**, not an open deviation:
+end-to-end reproduction of the *production* run stays outside ordinary CI by design
+(§7, level 4).
 
 ---
 
