@@ -1,11 +1,14 @@
 # ADR-006: Pipeline Reproducibility as an Engineering Requirement
 
-- **Status:** Accepted — implemented in Sprint 4 (v1.3.0), except a held-out
-  evaluation split and a committed `dvc.lock` (tracked as open deviations D5 / D7
-  in the [pipeline contract](../pipeline-contract.md#11-deviation-status-sprint-4))
+- **Status:** Accepted — implemented in Sprint 4 (v1.3.0). The held-out evaluation
+  split it anticipated has since landed via
+  [ADR-007](ADR-007-held-out-evaluation.md) (deviation D5 resolved); a committed
+  `dvc.lock` remains the one open item (part of D7) in the
+  [pipeline contract](../pipeline-contract.md#11-deviation-status-sprint-4)
 - **Date:** 2026-08-05 (design ratified); implementation landed 2026-08-06
 - **Deciders:** Asad Hanif
 - **Related:** [Pipeline Contract](../pipeline-contract.md),
+  [ADR-007 (Held-Out Evaluation)](ADR-007-held-out-evaluation.md),
   [ADR-003 (Why DVC)](ADR-003-why-dvc.md),
   [ADR-002 (Why MLflow)](ADR-002-why-mlflow.md),
   [ADR-001 (Repository Structure)](ADR-001-repository-structure.md),
@@ -20,11 +23,13 @@
 > repository as it exists today; statements about required behavior describe the
 > target the following PRs must meet.
 
-> **Implementation status (updated 2026-08-06).** The Sprint 4 implementation PRs
-> have since landed. The "Context" below describes the repository *before* those
-> PRs and is retained as the historical record that motivated this decision; the
-> decisions have been implemented, with the current state and the two remaining
-> open items (in-sample evaluation, no `dvc.lock`) recorded in
+> **Implementation status (updated 2026-08-09).** The Sprint 4 implementation PRs
+> have since landed, and the held-out evaluation split anticipated by decision (5)
+> was subsequently delivered by a dedicated `split` stage
+> ([ADR-007](ADR-007-held-out-evaluation.md), deviation D5 resolved). The "Context"
+> below describes the repository *before* those PRs and is retained as the
+> historical record that motivated this decision; the current state and the one
+> remaining open item (no committed `dvc.lock`) are recorded in
 > [pipeline-contract.md §11](../pipeline-contract.md#11-deviation-status-sprint-4).
 
 ## Context

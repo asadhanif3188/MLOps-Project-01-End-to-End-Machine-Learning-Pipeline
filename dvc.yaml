@@ -10,10 +10,26 @@ stages:
     outs:
     - data/processed/data.csv
 
+  split:
+    cmd: python src/split.py
+    deps:
+    - data/processed/data.csv
+    - src/split.py
+    params:
+    - split.input
+    - split.train_output
+    - split.test_output
+    - split.target
+    - split.test_size
+    - split.random_state
+    outs:
+    - data/processed/train.csv
+    - data/processed/test.csv
+
   train:
     cmd: python src/train.py
     deps:
-    - data/processed/data.csv
+    - data/processed/train.csv
     - src/train.py
     params:
     - train.input
@@ -28,7 +44,7 @@ stages:
   evaluate:
     cmd: python src/evaluate.py
     deps:
-    - data/processed/data.csv
+    - data/processed/test.csv
     - models/model.pkl
     - src/evaluate.py
     params:

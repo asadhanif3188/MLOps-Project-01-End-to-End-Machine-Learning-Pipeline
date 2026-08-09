@@ -5,7 +5,18 @@
 - **Related:** [Sprint 4 Final Review](../reviews/sprint-04-final-review.md),
   [Sprint 4 Retrospective](../retrospectives/sprint-04-retrospective.md),
   [Pipeline Contract](../pipeline-contract.md),
-  [ADR-006](../decisions/ADR-006-pipeline-reproducibility.md)
+  [ADR-006](../decisions/ADR-006-pipeline-reproducibility.md),
+  [ADR-007](../decisions/ADR-007-held-out-evaluation.md)
+
+> **Superseding update (2026-08-09).** This document is a snapshot as of the
+> `v1.3.0` release. Its **#1 remaining limitation — in-sample evaluation (D5)** has
+> since been **resolved** by a proof-hardening milestone that added a dedicated
+> `split` stage, so `train` and `evaluate` now consume disjoint data and the
+> reported accuracy is out-of-sample (see
+> [ADR-007](../decisions/ADR-007-held-out-evaluation.md) and
+> [contract §8](../pipeline-contract.md#8-evaluation-boundary)). The in-sample
+> statements in §4 and §5 below are retained as the historical `v1.3.0` record;
+> a committed `dvc.lock` (part of D7) is now the single remaining item.
 
 ## Purpose
 
@@ -165,8 +176,12 @@ and each is documented as a known limitation so it is not accidentally implied.
 
 In priority order — closing these is what would license the next round of claims:
 
-1. **Held-out evaluation (D5).** Turn the in-sample metric into a defensible
-   generalization estimate. This is a configuration/graph change, not a rewrite.
+1. ~~**Held-out evaluation (D5).** Turn the in-sample metric into a defensible
+   generalization estimate. This is a configuration/graph change, not a rewrite.~~
+   **✅ Resolved (2026-08-09)** by a dedicated `split` stage — `train` and
+   `evaluate` now consume disjoint partitions, so the metric is out-of-sample
+   ([ADR-007](../decisions/ADR-007-held-out-evaluation.md)). As predicted, it was a
+   graph/config change, not a rewrite of the training logic.
 2. **Committed `dvc.lock` + in-CI `dvc repro` against a fixture dataset (D7).**
    Upgrades the claim from "logically reproducible" to "reproduced and drift-gated
    in CI."

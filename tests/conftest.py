@@ -55,8 +55,16 @@ def params_file(tmp_path: Path) -> Path:
             "input": "data/raw/data.csv",
             "output": "data/processed/data.csv",
         },
-        "train": {
+        "split": {
             "input": "data/processed/data.csv",
+            "train_output": "data/processed/train.csv",
+            "test_output": "data/processed/test.csv",
+            "target": "Outcome",
+            "test_size": 0.2,
+            "random_state": 42,
+        },
+        "train": {
+            "input": "data/processed/train.csv",
             "output": "models/model.pkl",
             "target": "Outcome",
             "random_state": 42,
@@ -64,7 +72,7 @@ def params_file(tmp_path: Path) -> Path:
             "max_depth": 5,
         },
         "evaluate": {
-            "data": "data/processed/data.csv",
+            "data": "data/processed/test.csv",
             "model": "models/model.pkl",
             "target": "Outcome",
             "metrics": "metrics/metrics.json",

@@ -53,8 +53,8 @@ The suite is built on a few explicit choices. Each one trades breadth for signal
 | IO / config / serialization ([`pipeline_io.py`](../src/pipeline_io.py)) | ✅ Unit (deep) | The critical component: pure logic, typed error boundaries. |
 | Stage entry-point handling ([`stage_runner.py`](../src/stage_runner.py)) | ✅ Unit | Exit codes and non-swallowing are core operational guarantees. |
 | Module import / wiring (all of `src/`) | ✅ Smoke | Catches syntax/import breakage in milliseconds. |
-| Stage *bodies* (`preprocess`, `train`, `evaluate` compute logic) | ✅ Unit (Sprint 4) | The ML compute (`run_training`, `compute_metrics`) was separated from IO + MLflow (review finding H-6), so it is now unit-tested offline. |
-| Stage composition (`preprocess → train → evaluate`) | ✅ Integration (Sprint 4) | One end-to-end run through real temp files with MLflow stubbed; proves each stage's output is consumable by the next. |
+| Stage *bodies* (`preprocess`, `split`, `train`, `evaluate` compute logic) | ✅ Unit (Sprint 4; `split` added later) | The ML compute (`split_dataset`, `run_training`, `compute_metrics`) was separated from IO + MLflow (review finding H-6), so it is now unit-tested offline. |
+| Stage composition (`preprocess → split → train → evaluate`) | ✅ Integration (Sprint 4) | One end-to-end run through real temp files with MLflow stubbed; proves each stage's output is consumable by the next, and that `train`/`evaluate` receive disjoint (held-out) data. |
 | Pipeline definition (`dvc.yaml`/`params.yaml`/`src` consistency) | ✅ Contract (Sprint 4) | Static checks of lineage, parameter consistency, and single-owner artifacts — the CI-enforceable half of the pipeline contract. |
 | End-to-end `dvc repro` execution | ⬜ Deferred | Needs a committed fixture dataset + `dvc.lock`; the raw dataset is remote-only. See §4. |
 
@@ -80,10 +80,11 @@ tests/
 │   ├── test_pipeline_io.py  # the critical component — happy + error paths
 │   ├── test_stage_runner.py # exit codes, logging, non-swallowing at the boundary
 │   ├── test_preprocess.py   # preprocess produces a headed, consumable CSV
+│   ├── test_split.py        # split_dataset: disjoint, exhaustive, seeded, stratified
 │   ├── test_train.py        # run_training: seeded, deterministic, params applied
 │   └── test_evaluate.py     # compute_metrics: accuracy in [0, 1], schema errors
 ├── integration/
-│   └── test_pipeline.py     # preprocess → train → evaluate through real files (MLflow stubbed)
+│   └── test_pipeline.py     # preprocess → split → train → evaluate through real files (MLflow stubbed)
 └── contract/
     └── test_pipeline_contract.py # dvc.yaml/params.yaml/src agree with the pipeline contract
 ```
@@ -92,7 +93,7 @@ tests/
 |----------|----------|--------|
 | `tests/smoke/` | Import-and-wiring checks — the cheapest signal that nothing is fundamentally broken. | `smoke` |
 | `tests/unit/` | Isolated tests of one component or one stage's pure compute, no external services. | `unit` |
-| `tests/integration/` | The three stages run together through real temp files, MLflow stubbed. | `integration` |
+| `tests/integration/` | The four stages run together through real temp files, MLflow stubbed. | `integration` |
 | `tests/contract/` | Static `dvc.yaml`/`params.yaml`/`src` consistency checks (pure parsing). | `contract` |
 | `tests/conftest.py` | Fixtures shared across the suite. | — |
 
@@ -181,8 +182,9 @@ Testing grows with the pipeline. The stages below align with the project
 - ✅ **Stage-body unit tests.** `preprocess` output shape, `train` producing a
   deterministic fitted estimator on the `training_frame` fixture, and `evaluate`
   returning an accuracy in `[0, 1]` (plus a schema-mismatch `ModelError`).
-- ✅ **End-to-end integration test.** `preprocess → train → evaluate` through real
-  temp files with MLflow stubbed (`integration` marker).
+- ✅ **End-to-end integration test.** `preprocess → split → train → evaluate` through
+  real temp files with MLflow stubbed (`integration` marker), asserting `train` and
+  `evaluate` receive disjoint (held-out) data.
 - ✅ **Contract tests.** Static `dvc.yaml`/`params.yaml`/`src` consistency checks
   (`contract` marker) — moved earlier than originally planned because they are the
   offline, CI-safe way to enforce the pipeline contract.

@@ -12,11 +12,13 @@ Separates its concerns like the train stage:
   dataset and model, compute metrics, persist them, then log to MLflow.
 
 Evaluation methodology: the model is scored over the *entire* dataset at
-``evaluate.data``. Today that path is the same processed dataset ``train`` fits
-on, so the reported accuracy is **in-sample**. Pointing ``evaluate.data`` at a
-held-out split — a configuration/graph change, not a code change, since the
-dataset input is already explicit — is what turns it into a generalization
-estimate. See pipeline-contract.md §8.
+``evaluate.data``. That path is ``data/processed/test.csv`` — the **held-out**
+partition carved off by the ``split`` stage and never seen by ``train`` — so the
+reported accuracy is a genuine out-of-sample generalization estimate, not an
+in-sample figure. The held-out boundary is explicit in the DVC graph (``split``
+owns the train/test files; ``train`` depends only on the train file and
+``evaluate`` only on the test file) and enforced by the ``contract`` tests. See
+pipeline-contract.md §8.
 """
 
 from typing import Any
@@ -77,9 +79,11 @@ def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) ->
 
     Stage contract:
         * Inputs: the model artifact (``model_path``, the ``train`` output) and
-          the evaluation dataset (``data_path``), which must contain ``target``
-          plus the features the model expects. Both are explicit paths — there is
-          no hidden dataset loading and no dependency on train's in-memory state.
+          the held-out evaluation dataset (``data_path``, the ``split`` stage's
+          ``test_output``), which must contain ``target`` plus the features the
+          model expects. Both are explicit paths — there is no hidden dataset
+          loading and no dependency on train's in-memory state — and the dataset
+          is the held-out partition ``train`` never fitted on.
         * Output: the metrics artifact at ``metrics_path`` (owned here), written
           as JSON before the MLflow boundary.
         * Configuration: ``target`` and the paths from the ``evaluate`` section

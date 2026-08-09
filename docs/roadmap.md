@@ -82,9 +82,14 @@ professional, maintainable codebase.
 
 **Still remaining:**
 
-- ⬜ Evaluate on a genuine **held-out split**. Evaluation is currently in-sample;
-  moving to a held-out set is a configuration change tracked as deviation **D5**
-  in the [pipeline contract](pipeline-contract.md#8-evaluation-boundary).
+- ✅ Evaluate on a genuine **held-out split** — done. A dedicated `split` stage now
+  partitions the processed dataset so `train` and `evaluate` consume disjoint data
+  and the reported accuracy is out-of-sample (deviation **D5** resolved;
+  [ADR-007](decisions/ADR-007-held-out-evaluation.md),
+  [pipeline contract §8](pipeline-contract.md#8-evaluation-boundary)).
+- ⬜ Commit a `dvc.lock` (and run `dvc repro` in CI against a fixture dataset) to
+  upgrade reproducibility from *logical* to *drift-gated* — the one remaining part
+  of deviation **D7**.
 
 **Expected outcome:** A repository that reads as an actively maintained,
 professionally engineered project and is safe to change with confidence.

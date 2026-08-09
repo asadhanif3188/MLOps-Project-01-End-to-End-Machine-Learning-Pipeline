@@ -14,6 +14,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-004](ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) | Accepted | 2026-08-02 |
 | [ADR-005](ADR-005-containerization-strategy.md) | Containerization Strategy | Accepted (design) | 2026-08-02 |
 | [ADR-006](ADR-006-pipeline-reproducibility.md) | Pipeline Reproducibility as an Engineering Requirement | Accepted (design) | 2026-08-05 |
+| [ADR-007](ADR-007-held-out-evaluation.md) | Held-Out Evaluation via a Dedicated `split` Stage | Accepted | 2026-08-09 |
 
 ## Template
 
