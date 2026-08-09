@@ -15,8 +15,9 @@ For the reasoning behind this layout, see
 .
 ├── src/                  # Pipeline code
 │   ├── preprocess.py     #   stage: raw CSV → processed CSV (headered)
+│   ├── split.py          #   stage: processed CSV → train.csv + held-out test.csv
 │   ├── train.py          #   stage: seeded train + tune, persist model, track
-│   ├── evaluate.py       #   stage: score model → metrics.json, track
+│   ├── evaluate.py       #   stage: score model on held-out test.csv → metrics.json, track
 │   ├── tracking.py       #   MLflow experiment-tracking boundary (lazy-imported)
 │   ├── logging_config.py #   centralized logging configuration
 │   ├── exceptions.py     #   typed exception hierarchy (PipelineError, …)
@@ -97,14 +98,20 @@ DVC stage:
 
 - **`preprocess.py`** — reads the raw dataset and writes the processed CSV (with
   header). Reads its paths from the `preprocess` section of `params.yaml`.
-- **`train.py`** — consumes the **processed** dataset and trains a seeded
-  `RandomForestClassifier` (configured `n_estimators`/`max_depth`/`random_state`
-  plus a small `GridSearchCV`), serializes the best model to `models/model.pkl`,
-  and logs the run to MLflow. Its ML computation (`run_training`) is separated
-  from IO and tracking so it is unit-testable without a tracking server.
-- **`evaluate.py`** — loads the model, scores it, writes the metrics artifact
-  `metrics/metrics.json`, and logs the accuracy to MLflow. Its scoring
-  (`compute_metrics`) is likewise MLflow-free.
+- **`split.py`** — partitions the processed dataset into `data/processed/train.csv`
+  and a **held-out** `data/processed/test.csv` with a stratified, seeded
+  `train_test_split`, asserting the two are disjoint and exhaustive. Its pure
+  computation (`split_dataset`) is IO-free and unit-testable. Reads its paths and
+  seed from the `split` section of `params.yaml`.
+- **`train.py`** — consumes the **training** partition (`train.csv`, never the
+  held-out set) and trains a seeded `RandomForestClassifier` (configured
+  `n_estimators`/`max_depth`/`random_state` plus a small `GridSearchCV`),
+  serializes the best model to `models/model.pkl`, and logs the run to MLflow. Its
+  ML computation (`run_training`) is separated from IO and tracking so it is
+  unit-testable without a tracking server.
+- **`evaluate.py`** — loads the model, scores it on the **held-out** partition
+  (`test.csv`), writes the metrics artifact `metrics/metrics.json`, and logs the
+  accuracy to MLflow. Its scoring (`compute_metrics`) is likewise MLflow-free.
 - **`tracking.py`** — the single MLflow experiment-tracking boundary. The stages
   import it lazily, so importing (or unit-testing) a stage needs neither MLflow
   nor credentials.
@@ -130,10 +137,12 @@ configuration (see [Type Safety](type-safety.md)).
 
 > The pipeline-correctness gaps this section previously flagged (raw data
 > consumed instead of the `preprocess` output, `dvc.yaml`/`params.yaml` parameter
-> mismatch) were resolved in Sprint 4; the wiring is now enforced by the
-> `contract` tests below and by CI. The one remaining, documented limitation is
-> **in-sample evaluation** — see
-> [pipeline-contract §8](pipeline-contract.md#8-evaluation-boundary).
+> mismatch, and in-sample evaluation) were resolved in Sprint 4 and the subsequent
+> held-out evaluation milestone — a dedicated `split` stage now feeds `train` and
+> `evaluate` disjoint partitions (see
+> [pipeline-contract §8](pipeline-contract.md#8-evaluation-boundary)). The wiring is
+> enforced by the `contract` tests below and by CI. The one remaining, documented
+> limitation is the absence of a committed `dvc.lock`.
 
 ### `tests/` — Automated tests
 A `pytest` suite in four tiers (see [Testing Strategy](testing-strategy.md)):
@@ -144,9 +153,9 @@ A `pytest` suite in four tiers (see [Testing Strategy](testing-strategy.md)):
 - **`smoke/`** — fast import/wiring checks across all of `src/`.
 - **`unit/`** — isolated tests of the infrastructure modules (`exceptions.py`,
   `pipeline_io.py`, `stage_runner.py`) **and** the stages' pure ML-compute
-  functions (`preprocess`, `train`, `evaluate`), with no network or external
-  services.
-- **`integration/`** — an end-to-end `preprocess → train → evaluate` run through
+  functions (`preprocess`, `split`, `train`, `evaluate`), with no network or
+  external services.
+- **`integration/`** — an end-to-end `preprocess → split → train → evaluate` run through
   real temp files with MLflow stubbed, proving each stage's output is consumable
   by the next.
 - **`contract/`** — static checks that `dvc.yaml`, `params.yaml`, and `src/`

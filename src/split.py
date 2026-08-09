@@ -66,9 +66,11 @@ def split_dataset(
 
     The returned partitions are **disjoint and exhaustive**: every row of ``df``
     lands in exactly one of ``train``/``test`` and no row appears in both. This
-    invariant — the whole point of a held-out split — is asserted before the
-    frames are returned, so a future change that broke it would fail loudly rather
-    than silently leak evaluation rows into training.
+    invariant — the whole point of a held-out split — is checked before the frames
+    are returned and raises :class:`~exceptions.DataError` if violated, so a future
+    change that broke it fails loudly rather than silently leaking evaluation rows
+    into training. (A raised error, not an ``assert``: the guard must survive
+    ``python -O``, which strips ``assert`` statements.)
 
     Args:
         df: The processed dataset to partition (must contain ``target``).
@@ -101,14 +103,19 @@ def split_dataset(
     # The held-out guarantee, enforced rather than merely documented: the two
     # partitions must be disjoint (no shared row index) and exhaustive (together
     # they are the whole dataset). train_test_split satisfies this by
-    # construction; asserting it here makes any future regression that leaked rows
-    # into both sides fail immediately.
-    assert train_df.index.intersection(test_df.index).empty, (
-        "train/held-out partitions overlap — evaluation data leaked into training"
-    )
-    assert len(train_df) + len(test_df) == len(df), (
-        "train/held-out partitions do not cover the dataset exactly"
-    )
+    # construction; checking it here makes any future regression that leaked rows
+    # into both sides fail immediately, as a typed error the pipeline handles like
+    # any other data failure (and one that -O cannot strip, unlike an assert).
+    if not train_df.index.intersection(test_df.index).empty:
+        raise DataError(
+            "train/held-out partitions overlap — evaluation data leaked into "
+            "training; the split is not disjoint"
+        )
+    if len(train_df) + len(test_df) != len(df):
+        raise DataError(
+            "train/held-out partitions do not cover the dataset exactly — "
+            f"{len(train_df)} + {len(test_df)} != {len(df)} rows"
+        )
     return DatasetSplit(train=train_df, test=test_df)
 
 

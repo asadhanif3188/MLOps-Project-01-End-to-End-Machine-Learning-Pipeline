@@ -206,6 +206,43 @@ def test_declared_outputs_match_params(
         )
 
 
+@pytest.mark.contract
+def test_stage_input_datasets_match_params(
+    dvc_pipeline: dict[str, Any], params: dict[str, Any]
+) -> None:
+    """Each stage's *input dataset* in ``params.yaml`` equals its ``dvc.yaml`` dep.
+
+    This closes the loop the graph-shape tests leave open. The stage code reads
+    the dataset path it actually loads from ``params.yaml`` (``split.input``,
+    ``train.input``, ``evaluate.data``) — **not** from ``dvc.yaml``, whose
+    ``deps:`` only drive DVC's change-detection. Every other test in this file
+    (lineage, disjointness) inspects ``dvc.yaml`` deps, so a ``params.yaml``-only
+    edit could diverge from them undetected: point ``train.input`` back at the full
+    ``data/processed/data.csv`` while ``dvc.yaml`` still lists the training split,
+    and ``dvc repro`` would silently train **in-sample** (the exact D5 regression
+    this milestone closes) with every graph test still green.
+
+    Pin the value the code reads to both (a) the expected held-out dataset and
+    (b) the stage's declared ``dvc.yaml`` dep, so the boundary cannot regress via
+    a params-only change.
+    """
+    expected = [
+        ("split", "split.input", _PROCESSED_DATA),
+        ("train", "train.input", _TRAIN_DATA),
+        ("evaluate", "evaluate.data", _TEST_DATA),
+    ]
+    for stage_name, param_key, dataset in expected:
+        resolved = _resolve(params, param_key)
+        assert _normalise_path(str(resolved)) == dataset, (
+            f"params.yaml {param_key}={resolved!r} != expected input {dataset} — "
+            "the dataset the code actually reads has drifted from the contract"
+        )
+        assert dataset in _deps(dvc_pipeline[stage_name]), (
+            f"{stage_name} reads {dataset} (params {param_key}) but does not declare "
+            f"it as a dvc.yaml dep — DVC change-detection and the code disagree"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Graph shape & lineage (contract §2, §5, §11 D1).
 # ---------------------------------------------------------------------------

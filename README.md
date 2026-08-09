@@ -28,18 +28,23 @@ Following tools have been used to complete the project.
 ### Preprocessing:
 
 - `src/preprocess.py` reads the raw dataset (`data/raw/data.csv`) and writes the processed dataset to `data/processed/data.csv`, preserving the header row so downstream stages can select the target and feature columns by name.
-- It is the single owner of the processed dataset; `train` consumes that output directly (`preprocess` is the only stage that reads the raw file).
+- It is the single owner of the processed dataset; `split` consumes that output directly (`preprocess` is the only stage that reads the raw file).
+
+### Splitting:
+
+- `src/split.py` partitions the processed dataset into a training set (`data/processed/train.csv`) and a **held-out** evaluation set (`data/processed/test.csv`) with a stratified, seeded `train_test_split`.
+- It is the single owner of both partitions and asserts they are **disjoint** (no row is used for both training and evaluation) and **exhaustive** (no row is lost). `split.random_state` makes the exact held-out rows reproducible. This is what makes evaluation genuinely out-of-sample (see [ADR-007](docs/decisions/ADR-007-held-out-evaluation.md)).
 
 ### Training:
 
-- `src/train.py` trains a Random Forest Classifier on the **processed** dataset (`data/processed/data.csv`).
-- `n_estimators`, `max_depth`, and `random_state` are read from `params.yaml` and applied to the estimator; a small `GridSearchCV` then tunes the leaf/split regularization. The train/test split and the estimator are seeded, so training is deterministic given the same inputs and parameters.
+- `src/train.py` trains a Random Forest Classifier on the **training** partition (`data/processed/train.csv`), never the held-out set.
+- `n_estimators`, `max_depth`, and `random_state` are read from `params.yaml` and applied to the estimator; a small `GridSearchCV` then tunes the leaf/split regularization. Its internal validation split (taken within the training set) and the estimator are seeded, so training is deterministic given the same inputs and parameters.
 - The best model is saved to `models/model.pkl`, and hyperparameters, metrics, and artifacts are logged to MLflow.
 
 ### Evaluation:
 
-- `src/evaluate.py` loads the trained model, scores it, writes the accuracy to the DVC-tracked metrics artifact `metrics/metrics.json`, and logs the metric to MLflow.
-- **Evaluation boundary:** the model is currently scored over the full processed dataset — the same data `train` fits on — so the reported accuracy is **in-sample**, not a generalization estimate. Moving to a held-out split is a configuration change tracked in the [pipeline contract](docs/pipeline-contract.md#8-evaluation-boundary).
+- `src/evaluate.py` loads the trained model, scores it on the **held-out** partition (`data/processed/test.csv`), writes the accuracy to the DVC-tracked metrics artifact `metrics/metrics.json`, and logs the metric to MLflow.
+- **Evaluation boundary:** because `train` fits on `train.csv` and `evaluate` scores on the disjoint `test.csv`, the reported accuracy is a genuine **out-of-sample** figure (deviation D5 resolved). The remaining caveats are quality refinements — a single split rather than cross-validation, and a small held-out set — documented in the [pipeline contract](docs/pipeline-contract.md#8-evaluation-boundary).
 
 
 
@@ -117,9 +122,10 @@ reproduce each gate locally.
 
 The pipeline graph lives in [`dvc.yaml`](dvc.yaml); the commands below reproduce
 it from scratch and match the corrected lineage
-`raw → preprocess → processed → train → model → evaluate → metrics`. Note that
-`train` and `evaluate` depend on the **processed** dataset (not the raw file),
-and `evaluate` declares `metrics/metrics.json` as an uncached metrics output.
+`raw → preprocess → processed → split → {train.csv → train → model, test.csv} → evaluate → metrics`.
+Note that `split` owns the two partitions, `train` depends on the **training**
+partition and `evaluate` on the disjoint **held-out** partition (never the raw
+file), and `evaluate` declares `metrics/metrics.json` as an uncached metrics output.
 
 ### Bash Commands
 ```
@@ -131,9 +137,17 @@ dvc stage add -n preprocess \
 ```	
 	
 ```
+dvc stage add -n split \
+    -p split.input,split.train_output,split.test_output,split.target,split.test_size,split.random_state \
+    -d src/split.py -d data/processed/data.csv \
+    -o data/processed/train.csv -o data/processed/test.csv \
+    python src/split.py
+```	
+
+```
 dvc stage add -n train \
     -p train.input,train.output,train.target,train.random_state,train.n_estimators,train.max_depth \
-    -d src/train.py -d data/processed/data.csv \
+    -d src/train.py -d data/processed/train.csv \
     -o models/model.pkl \
     python src/train.py
 ```	
@@ -141,7 +155,7 @@ dvc stage add -n train \
 ```
 dvc stage add -n evaluate \
     -p evaluate.data,evaluate.model,evaluate.target,evaluate.metrics \
-    -d src/evaluate.py -d models/model.pkl -d data/processed/data.csv \
+    -d src/evaluate.py -d models/model.pkl -d data/processed/test.csv \
     -M metrics/metrics.json \
     python src/evaluate.py
 ```
@@ -152,9 +166,13 @@ dvc stage add -n preprocess -p preprocess.input,preprocess.output -d src/preproc
 ```	
 	
 ```
-dvc stage add -n train -p train.input,train.output,train.target,train.random_state,train.n_estimators,train.max_depth -d src/train.py -d data/processed/data.csv -o models/model.pkl python src/train.py
+dvc stage add -n split -p split.input,split.train_output,split.test_output,split.target,split.test_size,split.random_state -d src/split.py -d data/processed/data.csv -o data/processed/train.csv -o data/processed/test.csv python src/split.py
 ```	
 
 ```
-dvc stage add -n evaluate -p evaluate.data,evaluate.model,evaluate.target,evaluate.metrics -d src/evaluate.py -d models/model.pkl -d data/processed/data.csv -M metrics/metrics.json python src/evaluate.py
+dvc stage add -n train -p train.input,train.output,train.target,train.random_state,train.n_estimators,train.max_depth -d src/train.py -d data/processed/train.csv -o models/model.pkl python src/train.py
+```	
+
+```
+dvc stage add -n evaluate -p evaluate.data,evaluate.model,evaluate.target,evaluate.metrics -d src/evaluate.py -d models/model.pkl -d data/processed/test.csv -M metrics/metrics.json python src/evaluate.py
 ```
