@@ -22,8 +22,11 @@ Why this is a pure, offline test with **no external dependency**:
 
 Each failure below maps to a "CI must fail when …" clause: a broken stage
 contract, an inconsistent configuration, a mis-owned artifact, or a graph that no
-longer matches the declared lineage ``raw -> preprocess -> processed -> train ->
-model -> evaluate -> metrics``.
+longer matches the declared lineage ``raw -> preprocess -> processed -> split ->
+{train data, held-out data} -> train -> model -> evaluate -> metrics``. In
+particular, the held-out boundary — ``train`` consuming only the training split
+and ``evaluate`` only the disjoint held-out split — is enforced here so it cannot
+silently regress to in-sample evaluation.
 """
 
 from pathlib import Path
@@ -43,8 +46,14 @@ _MISSING = object()
 # (producing stage, the artifact it owns).
 _RAW_DATA = "data/raw/data.csv"
 _PROCESSED_DATA = "data/processed/data.csv"
+_TRAIN_DATA = "data/processed/train.csv"
+_TEST_DATA = "data/processed/test.csv"
 _MODEL = "models/model.pkl"
 _METRICS = "metrics/metrics.json"
+
+# The dataset files a stage could consume. Used to assert train and evaluate read
+# *disjoint* datasets — the held-out guarantee.
+_DATASET_FILES = {_PROCESSED_DATA, _TRAIN_DATA, _TEST_DATA}
 
 
 def _load_yaml(name: str) -> dict[str, Any]:
@@ -175,16 +184,19 @@ def test_declared_outputs_match_params(
 ) -> None:
     """Each stage's artifact path in ``dvc.yaml`` equals its ``params.yaml`` value.
 
-    ``preprocess.output``, ``train.output`` and ``evaluate.metrics`` are declared
-    in *both* files; if they disagree, the DVC graph and the code's own config
-    have silently diverged. Pin them equal.
+    ``preprocess.output``, ``split.train_output``/``split.test_output``,
+    ``train.output`` and ``evaluate.metrics`` are declared in *both* files; if
+    they disagree, the DVC graph and the code's own config have silently diverged.
+    Pin them equal.
     """
-    expected = {
-        "preprocess": ("preprocess.output", _PROCESSED_DATA),
-        "train": ("train.output", _MODEL),
-        "evaluate": ("evaluate.metrics", _METRICS),
-    }
-    for stage_name, (param_key, artifact) in expected.items():
+    expected = [
+        ("preprocess", "preprocess.output", _PROCESSED_DATA),
+        ("split", "split.train_output", _TRAIN_DATA),
+        ("split", "split.test_output", _TEST_DATA),
+        ("train", "train.output", _MODEL),
+        ("evaluate", "evaluate.metrics", _METRICS),
+    ]
+    for stage_name, param_key, artifact in expected:
         assert artifact in _outputs(dvc_pipeline[stage_name]), (
             f"{stage_name} does not declare output {artifact} in dvc.yaml"
         )
@@ -232,15 +244,18 @@ def test_pipeline_graph_is_acyclic(dvc_pipeline: dict[str, Any]) -> None:
 
 @pytest.mark.contract
 def test_lineage_matches_contract(dvc_pipeline: dict[str, Any]) -> None:
-    """The wired graph is the contract's linear chain, not the old raw-fed wiring.
+    """The wired graph is the contract's linear chain with an explicit split.
 
-    Pins the TARGET lineage (contract §2 / deviation D1):
-    ``raw -> preprocess -> processed -> train -> model -> evaluate -> metrics``.
-    In particular ``train`` must consume the *processed* dataset, never the raw
-    file — the specific regression D1 was raised to prevent.
+    Pins the TARGET lineage (contract §2 / deviations D1, D5):
+    ``raw -> preprocess -> processed -> split -> {train data, held-out data} ->
+    train -> model -> evaluate -> metrics``. In particular ``train`` must consume
+    the *training split*, never the raw file (D1) nor the full processed dataset
+    or the held-out split (D5) — so the model is not fitted on its evaluation
+    data.
     """
-    preprocess, train, evaluate = (
+    preprocess, split, train, evaluate = (
         dvc_pipeline["preprocess"],
+        dvc_pipeline["split"],
         dvc_pipeline["train"],
         dvc_pipeline["evaluate"],
     )
@@ -250,13 +265,26 @@ def test_lineage_matches_contract(dvc_pipeline: dict[str, Any]) -> None:
         "preprocess must produce the processed dataset"
     )
 
-    assert _PROCESSED_DATA in _deps(train), "train must consume the processed dataset"
+    assert _PROCESSED_DATA in _deps(split), "split must consume the processed dataset"
+    assert _TRAIN_DATA in _outputs(split), "split must produce the training dataset"
+    assert _TEST_DATA in _outputs(split), "split must produce the held-out dataset"
+
+    assert _TRAIN_DATA in _deps(train), "train must consume the training split"
     assert _RAW_DATA not in _deps(train), (
         "train must NOT read raw data directly (contract deviation D1)"
+    )
+    assert _PROCESSED_DATA not in _deps(train), (
+        "train must NOT read the full processed dataset (in-sample, deviation D5)"
+    )
+    assert _TEST_DATA not in _deps(train), (
+        "train must NOT read the held-out dataset (would leak evaluation data)"
     )
     assert _MODEL in _outputs(train), "train must produce the model artifact"
 
     assert _MODEL in _deps(evaluate), "evaluate must consume the model"
+    assert _TEST_DATA in _deps(evaluate), (
+        "evaluate must consume the held-out dataset (contract deviation D5)"
+    )
     assert _METRICS in _outputs(evaluate), (
         "evaluate must produce the metrics artifact (contract deviation D4)"
     )
@@ -293,6 +321,49 @@ def test_processed_data_is_consumed_not_orphaned(
         name for name, stage in dvc_pipeline.items() if _PROCESSED_DATA in _deps(stage)
     ]
     assert consumers, f"{_PROCESSED_DATA} is produced but consumed by no stage"
+
+
+@pytest.mark.contract
+def test_split_outputs_are_consumed_not_orphaned(
+    dvc_pipeline: dict[str, Any],
+) -> None:
+    """Both halves of the split are consumed downstream — neither is orphaned.
+
+    The training split must feed *some* stage and the held-out split must feed
+    *some* stage; otherwise the split does no work and the boundary is cosmetic.
+    """
+    for dataset in (_TRAIN_DATA, _TEST_DATA):
+        consumers = [
+            name for name, stage in dvc_pipeline.items() if dataset in _deps(stage)
+        ]
+        assert consumers, f"{dataset} is produced by split but consumed by no stage"
+
+
+@pytest.mark.contract
+def test_train_and_evaluate_consume_disjoint_datasets(
+    dvc_pipeline: dict[str, Any],
+) -> None:
+    """The held-out guarantee, enforced on the graph: ``train`` and ``evaluate``
+    read **different** dataset files, so no row can be both fitted on and scored.
+
+    This is the machine-checkable core of the evaluation boundary (contract §8 /
+    deviation D5). ``train`` must consume exactly the training split and
+    ``evaluate`` exactly the held-out split; the two dataset dependencies must not
+    intersect. A regression that pointed either stage back at the shared processed
+    dataset — reintroducing in-sample evaluation — fails here.
+    """
+    train_datasets = set(_deps(dvc_pipeline["train"])) & _DATASET_FILES
+    evaluate_datasets = set(_deps(dvc_pipeline["evaluate"])) & _DATASET_FILES
+
+    assert train_datasets == {_TRAIN_DATA}, (
+        f"train must consume only the training split, got {train_datasets}"
+    )
+    assert evaluate_datasets == {_TEST_DATA}, (
+        f"evaluate must consume only the held-out split, got {evaluate_datasets}"
+    )
+    assert train_datasets.isdisjoint(evaluate_datasets), (
+        "train and evaluate share a dataset file — evaluation would be in-sample"
+    )
 
 
 # ---------------------------------------------------------------------------

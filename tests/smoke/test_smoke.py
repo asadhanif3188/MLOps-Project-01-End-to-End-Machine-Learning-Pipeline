@@ -33,11 +33,13 @@ CORE_MODULES = [
     "preprocess",
 ]
 
-# The three DVC stages, each expected to expose a zero-argument ``main`` that
-# ``stage_runner.run_stage`` can call. ``train`` and ``evaluate`` import
-# scikit-learn at load; ``requires`` names a module that must be importable first.
+# The four DVC stages, each expected to expose a zero-argument ``main`` that
+# ``stage_runner.run_stage`` can call. ``split``, ``train`` and ``evaluate``
+# import scikit-learn at load; ``requires`` names a module that must be
+# importable first.
 STAGES = [
     pytest.param("preprocess", None, id="preprocess"),
+    pytest.param("split", "sklearn", id="split"),
     pytest.param("train", "sklearn", id="train"),
     pytest.param("evaluate", "sklearn", id="evaluate"),
 ]

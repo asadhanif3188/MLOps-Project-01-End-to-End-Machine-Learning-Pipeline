@@ -23,6 +23,8 @@ There is no online serving component today; the pipeline runs on demand (locally
 or via `dvc repro`) and produces:
 
 - a preprocessed dataset (`data/processed/data.csv`),
+- a train/held-out split of that dataset (`data/processed/train.csv` and
+  `data/processed/test.csv`),
 - a serialized model (`models/model.pkl`),
 - a metrics artifact (`metrics/metrics.json`, DVC-tracked),
 - experiment metadata (parameters, metrics, artifacts) logged to a remote
@@ -62,28 +64,37 @@ classification of the `Outcome` column.
 The major components and their relationships:
 
 ```text
-        params.yaml ───────────────────────────┐ (parameters)
-                                                ▼
-data/raw/data.csv ─▶ [ preprocess ] ─▶ data/processed/data.csv
-                                                │
-                            ┌───────────────────┴───────────────┐
-                            ▼                                    ▼
-                       [ train ] ─▶ models/model.pkl ─▶ [ evaluate ] ─▶ metrics/metrics.json
-                            │                                    │
-                            ▼                                    ▼
-                     MLflow (DagsHub) ◀── metrics, params, artifacts
+        params.yaml ───────────────────────────────────────────┐ (parameters)
+                                                                ▼
+data/raw/data.csv ─▶ [ preprocess ] ─▶ data/processed/data.csv ─▶ [ split ]
+                                                                       │
+                              ┌────────────────────────────────────────┤
+                              ▼                                         ▼
+                   data/processed/train.csv               data/processed/test.csv
+                              │                                         │
+                              ▼                                         ▼
+                        [ train ] ─▶ models/model.pkl ─▶ [ evaluate ] ─▶ metrics/metrics.json
+                              │                               │
+                              ▼                               ▼
+                       MLflow (DagsHub) ◀── metrics, params, artifacts
 ```
 
 **Components:**
 
 - **`src/preprocess.py`** — reads the raw dataset and writes the processed CSV
-  (with header) that `train` consumes.
-- **`src/train.py`** — trains a seeded Random Forest on the processed dataset
+  (with header) that `split` consumes.
+- **`src/split.py`** — partitions the processed dataset into a training set
+  (`data/processed/train.csv`) and a **held-out** evaluation set
+  (`data/processed/test.csv`) with a stratified, seeded `train_test_split`, and
+  asserts the two partitions are disjoint and exhaustive. This stage is what makes
+  held-out evaluation a property of the DAG (see
+  [ADR-007](decisions/ADR-007-held-out-evaluation.md)).
+- **`src/train.py`** — trains a seeded Random Forest on the **training** partition
   (`GridSearchCV` tunes leaf/split regularization; `n_estimators`/`max_depth`/
   `random_state` come from `params.yaml`), serializes the best estimator to
-  `models/model.pkl`, and logs the run to MLflow.
-- **`src/evaluate.py`** — loads the model, scores it, writes
-  `metrics/metrics.json`, and logs the accuracy to MLflow.
+  `models/model.pkl`, and logs the run to MLflow. Never reads the held-out set.
+- **`src/evaluate.py`** — loads the model, scores it on the **held-out** partition,
+  writes `metrics/metrics.json`, and logs the accuracy to MLflow.
 - **`src/tracking.py`** — the single MLflow boundary: every experiment-tracking
   call goes through it, and the stages import it lazily so their ML computation
   stays free of MLflow and unit-testable without it.
@@ -108,8 +119,9 @@ in Sprint 4 with the tracking boundary):
 
 ## 3. Pipeline Flow
 
-The pipeline is defined in [`dvc.yaml`](../dvc.yaml) as three stages executed in
-dependency order.
+The pipeline is defined in [`dvc.yaml`](../dvc.yaml) as four stages executed in
+dependency order. The `split` stage forks the flow into a training path and a
+disjoint held-out evaluation path.
 
 > 📌 **Diagram placeholder:** [`diagrams/pipeline-flow/`](diagrams/pipeline-flow/)
 
@@ -120,39 +132,57 @@ dependency order.
   params `preprocess.input`, `preprocess.output`
 - **Output:** `data/processed/data.csv` (written **with** its header row).
 
-### Stage 2 — `train`
+### Stage 2 — `split`
+
+- **Command:** `python src/split.py`
+- **Inputs:** `data/processed/data.csv`, `src/split.py`, and params `split.input`,
+  `split.train_output`, `split.test_output`, `split.target`, `split.test_size`,
+  `split.random_state`
+- **Outputs:** `data/processed/train.csv` and `data/processed/test.csv` (both
+  written **with** headers).
+- **Behavior:** performs a **stratified** `train_test_split` seeded by
+  `split.random_state`, holding out `split.test_size` (0.2) of the rows for
+  evaluation. Asserts the two partitions are **disjoint** (no shared row → no
+  leakage into evaluation) and **exhaustive** (their union is the input). Seeded →
+  the exact held-out rows are reproducible. Crosses no MLflow boundary.
+
+### Stage 3 — `train`
 
 - **Command:** `python src/train.py`
-- **Inputs:** `data/processed/data.csv`, `src/train.py`, and params
+- **Inputs:** `data/processed/train.csv`, `src/train.py`, and params
   `train.input`, `train.output`, `train.target`, `train.random_state`,
   `train.n_estimators`, `train.max_depth`
 - **Output:** `models/model.pkl`
-- **Behavior:** consumes the **processed** dataset, splits it
-  (`train_test_split`, 20% test, seeded by `train.random_state`), fits a
+- **Behavior:** consumes **only** the training partition, takes an internal
+  validation `train_test_split` **within it** (20%, seeded by
+  `train.random_state`) for in-training reporting — never the held-out set — fits a
   `RandomForestClassifier` whose `n_estimators`/`max_depth`/`random_state` come
   from config, runs a small `GridSearchCV` (3-fold) tuning leaf/split
   regularization, logs parameters/metrics/artifacts to MLflow, conditionally
   registers the model, and pickles the best estimator. Seeded → deterministic
   given the same inputs and parameters.
 
-### Stage 3 — `evaluate`
+### Stage 4 — `evaluate`
 
 - **Command:** `python src/evaluate.py`
-- **Inputs:** `data/processed/data.csv`, `models/model.pkl`, `src/evaluate.py`,
+- **Inputs:** `data/processed/test.csv`, `models/model.pkl`, `src/evaluate.py`,
   and params `evaluate.data`, `evaluate.model`, `evaluate.target`,
   `evaluate.metrics`
 - **Output:** `metrics/metrics.json` (DVC-tracked metrics artifact, `cache:
   false`); also logs the `accuracy` metric to MLflow.
 
-> ℹ️ **Known limitation — in-sample evaluation.** `evaluate` currently scores the
-> model over the **full** processed dataset — the same data `train` fits on — so
-> the reported `accuracy` is an **in-sample** figure and must not be cited as a
-> generalization estimate. Because the evaluation dataset is already an explicit,
-> configured input, introducing a genuine held-out split is a
-> configuration/graph change rather than a code change. This is deviation **D5**
-> in the [Pipeline Contract](pipeline-contract.md#8-evaluation-boundary); it and
-> the absence of a committed `dvc.lock` (D7) are the pipeline's remaining
-> reproducibility limitations after Sprint 4.
+> ✅ **Held-out evaluation.** `evaluate` scores the model on
+> `data/processed/test.csv` — the partition `split` held out and `train` never
+> reads — so the reported `accuracy` is a genuine **out-of-sample** figure. The
+> disjointness is guaranteed on three independent layers: the DVC DAG topology, the
+> `contract` disjointness test
+> (`test_train_and_evaluate_consume_disjoint_datasets`), and `split`'s runtime
+> assertions. This closes deviation **D5** in the
+> [Pipeline Contract](pipeline-contract.md#8-evaluation-boundary); see
+> [ADR-007](decisions/ADR-007-held-out-evaluation.md). Remaining caveats are quality
+> refinements (single split, not cross-validated; small held-out set) rather than a
+> correctness gap. The absence of a committed `dvc.lock` (part of D7) is now the
+> pipeline's single remaining reproducibility limitation.
 
 ---
 
@@ -187,15 +217,19 @@ Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
    via `dvc pull`.
 2. **Preprocessing.** `preprocess` reads the raw CSV and writes
    `data/processed/data.csv` (a DVC-tracked output).
-3. **Training.** `train` reads the **processed** dataset, tunes and fits the
+3. **Splitting.** `split` partitions the processed dataset into
+   `data/processed/train.csv` (training) and `data/processed/test.csv` (held-out
+   evaluation) with a stratified, seeded split — both DVC-tracked outputs, disjoint
+   and exhaustive.
+4. **Training.** `train` reads **only** the training partition, tunes and fits the
    model, and writes `models/model.pkl` (DVC-tracked, git-ignored on disk).
-4. **Tracking.** During training and evaluation, parameters, metrics
+5. **Tracking.** During training and evaluation, parameters, metrics
    (`accuracy`), and artifacts (confusion matrix, classification report, model)
    are pushed to the remote MLflow server on DagsHub through the `tracking`
    boundary.
-5. **Evaluation.** `evaluate` loads the pickled model, scores it on the
-   processed dataset, writes `metrics/metrics.json`, and logs the accuracy
-   metric.
+6. **Evaluation.** `evaluate` loads the pickled model, scores it on the
+   **held-out** partition (`data/processed/test.csv`), writes
+   `metrics/metrics.json`, and logs the accuracy metric.
 
 **Data classification & storage:**
 

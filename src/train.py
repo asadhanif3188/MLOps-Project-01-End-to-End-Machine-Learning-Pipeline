@@ -32,8 +32,10 @@ from stage_runner import run_stage
 logger = get_logger("train")
 
 # Held-out fraction for the in-training accuracy estimate. Fixed here (not
-# configured) because it governs an internal reporting split, not the pipeline's
-# evaluation dataset.
+# configured) because it governs an internal validation split *within the
+# training set* for tuning/reporting — it is not the pipeline's held-out
+# evaluation dataset, which the ``split`` stage carves off before training and
+# ``evaluate`` consumes. Training therefore never sees the held-out rows.
 TEST_SIZE = 0.20
 
 # Registry name used when MLflow's artifact store is remote (see tracking).
@@ -172,14 +174,16 @@ def train(
     """Orchestrate the train stage: read → compute → persist → track.
 
     Stage contract:
-        * Input:  the processed dataset (``data_path``, the ``preprocess``
-          output), containing ``target`` plus feature columns.
+        * Input:  the training dataset (``data_path``, the ``split`` stage's
+          ``train_output``), containing ``target`` plus feature columns. This is
+          the training half of the held-out split, never the evaluation half, so
+          the model is not fitted on the rows it will be scored against.
         * Output: the pickled model artifact at ``model_path`` (owned here).
         * Configuration: ``target`` and the training hyperparameters from the
           ``train`` section of ``params.yaml``.
 
     Args:
-        data_path: Path to the processed CSV dataset.
+        data_path: Path to the training CSV dataset (the ``split`` train output).
         model_path: Path to save the pickled model.
         target: Name of the label column; every other column is a feature.
         random_state: Seed for the split and the estimator (reproducibility).
