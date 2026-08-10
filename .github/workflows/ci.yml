@@ -119,6 +119,54 @@ jobs:
           dvc status
           echo "::endgroup::"
 
+      # Stage 7 — Fixture pipeline reproduction. The step above validates the
+      # production pipeline's *definition* but cannot run it (its raw data is
+      # remote-only and its stages log to DagsHub MLflow). This step proves actual
+      # `declared pipeline + params + inputs + code = reproducible execution` by
+      # running a REAL `dvc repro` over the self-contained fixture pipeline
+      # (tests/fixtures/pipeline/): the SAME src/ stage code against a small
+      # committed fixture dataset, with the MLflow boundary stubbed offline by the
+      # fixture wrapper (_run_stage.py). No remote, no MLflow server, no
+      # credentials. See docs/pipeline-contract.md §7 and ADR-008.
+      - name: Fixture pipeline reproduction (real dvc repro, offline)
+        env:
+          DVC_NO_ANALYTICS: "true"
+        run: |
+          set -euo pipefail
+          FIXTURE=tests/fixtures/pipeline
+
+          echo "::group::Reproduce the fixture pipeline end to end (dvc repro)"
+          # Outputs are gitignored, so a fresh checkout runs all four stages for
+          # real. A non-zero exit means the declared pipeline no longer executes.
+          dvc repro "$FIXTURE/dvc.yaml"
+          echo "::endgroup::"
+
+          echo "::group::Reproduced workspace matches its lock (dvc status)"
+          # After reproducing, the workspace must be coherent with the lock DVC
+          # resolved for this run — the lock-state consistency guarantee.
+          status="$(dvc status "$FIXTURE/dvc.yaml")"
+          echo "$status"
+          echo "$status" | grep -q "up to date" \
+            || { echo "::error::fixture pipeline is not up to date after repro"; exit 1; }
+          echo "::endgroup::"
+
+          echo "::group::Reproduction is deterministic (force re-run, compare artifacts)"
+          # Equal inputs + params + seed + code must yield equal outputs. Capture
+          # the model and metrics hashes, force a full re-execution, and require
+          # byte-identical artifacts. A mismatch means training is non-deterministic.
+          model_1="$(md5sum "$FIXTURE/models/model.pkl" | awk '{print $1}')"
+          metrics_1="$(md5sum "$FIXTURE/metrics/metrics.json" | awk '{print $1}')"
+          dvc repro -f "$FIXTURE/dvc.yaml" >/dev/null
+          model_2="$(md5sum "$FIXTURE/models/model.pkl" | awk '{print $1}')"
+          metrics_2="$(md5sum "$FIXTURE/metrics/metrics.json" | awk '{print $1}')"
+          echo "model  md5: $model_1 -> $model_2"
+          echo "metrics md5: $metrics_1 -> $metrics_2"
+          test "$model_1" = "$model_2" \
+            || { echo "::error::model.pkl not reproducible across runs"; exit 1; }
+          test "$metrics_1" = "$metrics_2" \
+            || { echo "::error::metrics.json not reproducible across runs"; exit 1; }
+          echo "::endgroup::"
+
   # ---------------------------------------------------------------------------
   # docker — build the production image and prove it runs. Gated on `quality`
   # (needs:) so we never spend build minutes on a change that fails lint/tests.
@@ -137,7 +185,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Stage 7 — Docker Build. Builds the `runtime` (production) target only.
+      # Stage 8 — Docker Build. Builds the `runtime` (production) target only.
       #   push: false  — never publish (no registry, no credentials in this job).
       #   load: true   — load the built image into the local daemon so the
       #                  validation step below can actually run it.
@@ -156,7 +204,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Stage 8 — Build validation. A build that produces an unusable image is a
+      # Stage 9 — Build validation. A build that produces an unusable image is a
       # failure, so assert the security and runtime contract of the shipped image:
       #   * it runs as the intended non-root user (UID 10001),
       #   * the core scientific/ML stack imports cleanly, and

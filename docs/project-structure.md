@@ -141,8 +141,13 @@ configuration (see [Type Safety](type-safety.md)).
 > held-out evaluation milestone — a dedicated `split` stage now feeds `train` and
 > `evaluate` disjoint partitions (see
 > [pipeline-contract §8](pipeline-contract.md#8-evaluation-boundary)). The wiring is
-> enforced by the `contract` tests below and by CI. The one remaining, documented
-> limitation is the absence of a committed `dvc.lock`.
+> enforced by the `contract` tests below and by CI. A committed `dvc.lock` and a
+> real in-CI `dvc repro` now exist too — proven via a self-contained fixture
+> pipeline ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The remaining
+> limitation is documented, not a gap: reproducing the *production* run end to end
+> needs the remote-only dataset, live MLflow, and digest-pinned deps
+> ([pipeline-contract §7](pipeline-contract.md#7-reproducibility-expectations),
+> level 4).
 
 ### `tests/` — Automated tests
 A `pytest` suite in four tiers (see [Testing Strategy](testing-strategy.md)):
@@ -157,11 +162,17 @@ A `pytest` suite in four tiers (see [Testing Strategy](testing-strategy.md)):
   external services.
 - **`integration/`** — an end-to-end `preprocess → split → train → evaluate` run through
   real temp files with MLflow stubbed, proving each stage's output is consumable
-  by the next.
+  by the next, plus a reproducibility test proving the seeded stages reproduce
+  equivalent outputs on the committed fixture dataset.
 - **`contract/`** — static checks that `dvc.yaml`, `params.yaml`, and `src/`
   agree with the [Pipeline Contract](pipeline-contract.md) (parameter
-  consistency, single-owner artifacts, declared lineage, acyclic graph). Pure
-  parsing — no data, network, or credentials.
+  consistency, single-owner artifacts, declared lineage, acyclic graph), and that
+  the committed fixture `dvc.lock` is not structurally stale. Pure parsing — no
+  data, network, or credentials.
+- **`fixtures/pipeline/`** — a self-contained fixture DVC pipeline (committed
+  dataset + `params.yaml` + `dvc.yaml` + `dvc.lock`) that CI reproduces with a real
+  `dvc repro` to prove reproducible execution offline
+  ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)).
 
 Run with `make test` (or `python -m pytest`); markers `smoke`, `unit`,
 `integration`, and `contract` select slices of the suite.

@@ -1,0 +1,80 @@
+# Fixture reproducibility pipeline (NOT the production pipeline).
+#
+# A second, self-contained DVC pipeline that reproduces the SAME four stages as
+# the root dvc.yaml, using the SAME src/ code, but against the small committed
+# fixture dataset in this directory instead of the remote-only production data.
+# Its purpose is to let CI run a real, end-to-end `dvc repro` — proving
+# `declared pipeline + params + inputs + code = reproducible execution` — without
+# needing DagsHub credentials, the S3 remote, or a live MLflow server. See
+# docs/decisions/ADR-008-fixture-reproducibility.md and docs/pipeline-contract.md.
+#
+# How it stays self-contained:
+#   * wdir defaults to this directory, so each stage runs with CWD here and reads
+#     THIS params.yaml and these data/ paths (not the root ones).
+#   * cmd runs the real stage main() through the offline wrapper _run_stage.py,
+#     which puts src/ on sys.path and neutralizes the MLflow tracking boundary
+#     (a network side-effect that produces no artifact) so reproduction needs no
+#     MLflow, no network, and no credentials. See _run_stage.py and ADR-008.
+#   * both the wrapper AND the real stage script are `deps`, so a change to
+#     either re-triggers reproduction (code is a tracked input — the whole point
+#     of the reproducibility claim).
+stages:
+  preprocess:
+    cmd: python _run_stage.py preprocess
+    deps:
+    - _run_stage.py
+    - ../../../src/preprocess.py
+    - data/raw/data.csv
+    params:
+    - preprocess.input
+    - preprocess.output
+    outs:
+    - data/processed/data.csv
+
+  split:
+    cmd: python _run_stage.py split
+    deps:
+    - _run_stage.py
+    - ../../../src/split.py
+    - data/processed/data.csv
+    params:
+    - split.input
+    - split.train_output
+    - split.test_output
+    - split.target
+    - split.test_size
+    - split.random_state
+    outs:
+    - data/processed/train.csv
+    - data/processed/test.csv
+
+  train:
+    cmd: python _run_stage.py train
+    deps:
+    - _run_stage.py
+    - ../../../src/train.py
+    - data/processed/train.csv
+    params:
+    - train.input
+    - train.max_depth
+    - train.n_estimators
+    - train.output
+    - train.random_state
+    - train.target
+    outs:
+    - models/model.pkl
+
+  evaluate:
+    cmd: python _run_stage.py evaluate
+    deps:
+    - _run_stage.py
+    - ../../../src/evaluate.py
+    - data/processed/test.csv
+    - models/model.pkl
+    params:
+    - evaluate.data
+    - evaluate.metrics
+    - evaluate.model
+    - evaluate.target
+    outs:
+    - metrics/metrics.json

@@ -1,0 +1,5 @@
+# Pin every file in the fixture pipeline to LF, on every platform and in the
+# repository. The committed dvc.lock hashes these files (data, code, config);
+# forcing LF keeps those hashes stable across Windows/Linux/macOS so a fresh
+# clone reproduces the same lock state rather than differing by line endings.
+* text eol=lf

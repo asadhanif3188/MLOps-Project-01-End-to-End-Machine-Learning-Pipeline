@@ -181,8 +181,14 @@ disjoint held-out evaluation path.
 > [Pipeline Contract](pipeline-contract.md#8-evaluation-boundary); see
 > [ADR-007](decisions/ADR-007-held-out-evaluation.md). Remaining caveats are quality
 > refinements (single split, not cross-validated; small held-out set) rather than a
-> correctness gap. The absence of a committed `dvc.lock` (part of D7) is now the
-> pipeline's single remaining reproducibility limitation.
+> correctness gap. Reproducibility is likewise proven by execution: a committed
+> `dvc.lock` is reproduced by a real `dvc repro` in CI against a self-contained
+> fixture pipeline (closing the `dvc.lock`/execution portion of D7;
+> [ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The remaining
+> limitation is documented, not a gap — reproducing the *production* run end to end
+> needs the remote-only dataset, live MLflow, and digest-pinned deps
+> ([pipeline-contract §7](pipeline-contract.md#7-reproducibility-expectations),
+> level 4).
 
 ---
 

@@ -87,9 +87,16 @@ professional, maintainable codebase.
   and the reported accuracy is out-of-sample (deviation **D5** resolved;
   [ADR-007](decisions/ADR-007-held-out-evaluation.md),
   [pipeline contract §8](pipeline-contract.md#8-evaluation-boundary)).
-- ⬜ Commit a `dvc.lock` (and run `dvc repro` in CI against a fixture dataset) to
-  upgrade reproducibility from *logical* to *drift-gated* — the one remaining part
-  of deviation **D7**.
+- ✅ Commit a `dvc.lock` and run `dvc repro` in CI against a fixture dataset —
+  done. A self-contained fixture pipeline reproduces the same four stages and the
+  same `src/` code offline (no remote, no MLflow, no credentials); CI runs a real
+  `dvc repro`, asserts the committed lock is up to date, and requires byte-identical
+  outputs on a forced re-run. This upgrades reproducibility from *logical* to
+  *drift-gated* and closes the `dvc.lock`/execution portion of deviation **D7**
+  ([ADR-008](decisions/ADR-008-fixture-reproducibility.md),
+  [pipeline contract §7](pipeline-contract.md#7-reproducibility-expectations)).
+  End-to-end reproduction of the *production* run (remote data + live MLflow +
+  digest-pinned deps) remains a documented limitation, not a gap.
 
 **Expected outcome:** A repository that reads as an actively maintained,
 professionally engineered project and is safe to change with confidence.
@@ -106,11 +113,13 @@ professionally engineered project and is safe to change with confidence.
   (GitHub Actions — see [CI/CD](ci-cd.md) and
   [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)).
 - ✅ Build and validate the container image in CI (build only — **not** pushed).
-- ✅ Automated pipeline validation in CI — **delivered offline in Sprint 4**:
-  `dvc dag` + local `dvc status` (analytics disabled) plus the `contract` tests
-  validate the pipeline *definition* on every PR without contacting the DagsHub
-  remote. 🚧 A full `dvc repro` **execution** check (against a committed fixture
-  dataset + `dvc.lock`) remains future — the raw dataset is remote-only today.
+- ✅ Automated pipeline validation in CI — **definition** validated offline in
+  Sprint 4 (`dvc dag` + local `dvc status` + the `contract` tests), and a real
+  **execution** check now runs a scoped `dvc repro` against a committed fixture
+  dataset + `dvc.lock` (proof-hardening milestone;
+  [ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The production raw
+  dataset stays remote-only, so the production run itself is still not executed in
+  CI — a documented limitation, not a gap.
 - 🚧 Basic security/supply-chain scanning (image scan, SBOM, signing).
 - 🚧 Publish the container image on release
   ([Containerization Strategy](containerization.md), [ADR-005](decisions/ADR-005-containerization-strategy.md)).
@@ -120,11 +129,13 @@ professionally engineered project and is safe to change with confidence.
 reducing regressions and manual effort.
 
 > **Status:** CI (checkout → setup Python → install → Ruff → pytest → DVC
-> pipeline integrity → Docker build → build validation) is implemented on
-> **GitHub Actions**. It validates only — no deploy, no image push, no
-> Kubernetes. Offline pipeline-definition validation landed in Sprint 4; the
-> remaining items above (publish, scan, branch protection, and a full `dvc repro`
-> execution check) are the path to continuous *delivery*; see
+> pipeline integrity → fixture `dvc repro` → Docker build → build validation) is
+> implemented on **GitHub Actions**. It validates only — no deploy, no image push,
+> no Kubernetes. Offline pipeline-definition validation landed in Sprint 4, and a
+> real fixture-pipeline `dvc repro` execution check landed in the proof-hardening
+> milestone ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)); the
+> remaining items above (publish, scan, branch protection) are the path to
+> continuous *delivery*; see
 > [CI/CD § Future CD roadmap](ci-cd.md#future-cd-roadmap).
 >
 > **TODO:** Ratify the CD approach (registry, signing, deploy target) as an ADR.
