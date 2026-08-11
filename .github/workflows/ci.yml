@@ -69,7 +69,18 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
-      # Stage 5 — Pytest. Configuration (pythonpath=src, testpaths=tests, strict
+      # Stage 5 — mypy: static type checking. Runs the SAME `python -m mypy` a
+      # developer runs locally (via `make typecheck`) and pre-commit runs at commit
+      # time — all three read the single `[tool.mypy]` config in pyproject.toml
+      # (strict: disallow_untyped_defs, warn_return_any, warn_unused_ignores, …) and
+      # its `files = ["src"]`. This makes the type contract a binding server-side
+      # gate: a non-zero exit fails the job, so a type regression can no longer reach
+      # `main` on green pre-commit alone. mypy is already installed by Stage 3
+      # (requirements-dev.txt), so this adds no dependency install.
+      - name: mypy type check
+        run: python -m mypy
+
+      # Stage 6 — Pytest. Configuration (pythonpath=src, testpaths=tests, strict
       # markers) lives in pyproject.toml, so a bare `pytest` runs exactly what a
       # developer runs locally via `make test`. This suite includes the
       # `contract`-marked tests (tests/contract/) that assert dvc.yaml <-> params.yaml
@@ -79,7 +90,7 @@ jobs:
       - name: Pytest
         run: pytest
 
-      # Stage 6 — DVC pipeline integrity. Validates the pipeline *definition* in
+      # Stage 7 — DVC pipeline integrity. Validates the pipeline *definition* in
       # dvc.yaml WITHOUT running it: no stage executes, no dataset is pulled, and
       # the DagsHub remote is never contacted. `dvc` is already installed (it is a
       # runtime dependency in requirements.txt, pulled in via requirements-dev.txt
@@ -119,7 +130,7 @@ jobs:
           dvc status
           echo "::endgroup::"
 
-      # Stage 7 — Fixture pipeline reproduction. The step above validates the
+      # Stage 8 — Fixture pipeline reproduction. The step above validates the
       # production pipeline's *definition* but cannot run it (its raw data is
       # remote-only and its stages log to DagsHub MLflow). This step proves actual
       # `declared pipeline + params + inputs + code = reproducible execution` by
@@ -185,7 +196,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Stage 8 — Docker Build. Builds the `runtime` (production) target only.
+      # Stage 9 — Docker Build. Builds the `runtime` (production) target only.
       #   push: false  — never publish (no registry, no credentials in this job).
       #   load: true   — load the built image into the local daemon so the
       #                  validation step below can actually run it.
@@ -204,7 +215,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Stage 9 — Build validation. A build that produces an unusable image is a
+      # Stage 10 — Build validation. A build that produces an unusable image is a
       # failure, so assert the security and runtime contract of the shipped image:
       #   * it runs as the intended non-root user (UID 10001),
       #   * the core scientific/ML stack imports cleanly, and
