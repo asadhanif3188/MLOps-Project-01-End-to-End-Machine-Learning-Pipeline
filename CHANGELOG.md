@@ -9,6 +9,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes yet._
 
+## [1.3.1] - 2026-08-09
+
+Proof Hardening — close the three limitations 1.3.0 documented rather than hid,
+so the repository can *demonstrate* what it previously only *claimed*: evaluation
+that is genuinely out-of-sample, reproducible execution proven by a real
+`dvc repro`, and a type contract enforced on every pull request (not just
+locally). No new pipeline capability — the goal is to make the existing
+guarantees checkable.
+
+### Added
+
+- A dedicated **`split` stage** (`src/split.py`) that partitions the processed
+  dataset into a training set (`data/processed/train.csv`) and a **held-out**
+  evaluation set (`data/processed/test.csv`) with a stratified, seeded
+  `train_test_split`. It is the single owner of both partitions and asserts they
+  are **disjoint** (no row trains and evaluates) and **exhaustive** (no row is
+  lost); `split.random_state` makes the exact held-out rows reproducible
+  ([ADR-007](docs/decisions/ADR-007-held-out-evaluation.md)).
+- [ADR-007](docs/decisions/ADR-007-held-out-evaluation.md) recording held-out
+  evaluation as an engineering requirement.
+- A self-contained **fixture DVC pipeline** (`tests/fixtures/pipeline/`) — the
+  same `src/` stage code run against a small committed fixture dataset with the
+  MLflow boundary stubbed offline (`_run_stage.py`) — carrying a **committed
+  `dvc.lock`** so `declared pipeline + params + inputs + code = reproducible
+  execution` is a checkable artifact, not a claim (resolves deviation D7,
+  `dvc.lock`).
+- [ADR-008](docs/decisions/ADR-008-fixture-reproducibility.md) recording the
+  fixture-reproducibility strategy.
+- `tests/contract/test_fixture_lock_contract.py`: a contract test asserting the
+  committed fixture `dvc.lock` stays consistent with the fixture pipeline
+  definition.
+
+### Changed
+
+- **Evaluation is now out-of-sample.** `train` fits only on the training
+  partition (`data/processed/train.csv`) and `evaluate` scores the disjoint
+  held-out partition (`data/processed/test.csv`), so the reported accuracy is a
+  genuine generalization figure. The DVC lineage becomes
+  `raw → preprocess → processed → split → {train.csv → train → model, test.csv} → evaluate → metrics`.
+- The test suite grew from **84 to 101 tests** across the four tiers (smoke,
+  unit, integration, contract), adding coverage for the `split` stage, the
+  held-out boundary, and the fixture lock contract. All tiers remain
+  deterministic and offline.
+
+### Fixed
+
+- **In-sample evaluation eliminated (deviation D5).** Because `train` no longer
+  sees the held-out rows, evaluation accuracy is no longer measured on data the
+  model was fit on.
+
+### CI
+
+- New **mypy type-check gate** (`python -m mypy`) in the `quality` job. CI now
+  runs the same strict `[tool.mypy]` configuration a developer runs locally and
+  that pre-commit runs at commit time, making the type contract a binding
+  server-side gate: a type regression can no longer reach `main` on green
+  pre-commit alone. mypy was already installed (requirements-dev.txt), so this
+  adds no dependency install.
+- New **fixture pipeline reproduction** step: a real `dvc repro` over the
+  fixture pipeline runs all stages from a clean checkout, asserts the workspace
+  is up to date against its committed lock, then force-re-runs and requires
+  **byte-identical** `model.pkl` and `metrics.json` — a deterministic-artifact
+  check that proves reproducibility rather than asserting it
+  ([ADR-008](docs/decisions/ADR-008-fixture-reproducibility.md)).
+
 ## [1.3.0] - 2026-08-06
 
 Sprint 4 — Pipeline Correctness & Reproducibility: turn attention from the
@@ -284,7 +349,8 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.0.0...v1.1.0

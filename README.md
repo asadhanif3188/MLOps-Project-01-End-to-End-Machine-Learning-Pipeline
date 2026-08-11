@@ -64,7 +64,7 @@ they are mounted and injected at run time.
 ```bash
 docker build \
   --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
-  --build-arg BUILD_VERSION="1.3.0" \
+  --build-arg BUILD_VERSION="1.3.1" \
   -t ml-pipeline:local .
 ```
 
@@ -111,8 +111,11 @@ image:
 
 1. Checkout → set up Python 3.12 → install dependencies
 2. **Ruff** lint + format check
-3. **Pytest** suite
-4. **Docker build** of the production image (built and validated — never pushed)
+3. **mypy** strict type check (the same `[tool.mypy]` gate enforced locally and by pre-commit)
+4. **Pytest** suite (smoke, unit, integration, contract)
+5. **DVC pipeline integrity** — parse the graph and check status, offline
+6. **Fixture pipeline reproduction** — a real `dvc repro` with byte-identical artifact validation
+7. **Docker build** of the production image (built and validated — never pushed)
 
 CI is validation only — it does not deploy, publish images, or use Kubernetes.
 See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
