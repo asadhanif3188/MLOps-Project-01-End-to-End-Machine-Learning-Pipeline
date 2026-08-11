@@ -109,8 +109,8 @@ professionally engineered project and is safe to change with confidence.
 
 **Objectives:**
 
-- ✅ Continuous integration: run linting and tests on every pull request
-  (GitHub Actions — see [CI/CD](ci-cd.md) and
+- ✅ Continuous integration: run linting, strict type checking (mypy), and tests
+  on every pull request (GitHub Actions — see [CI/CD](ci-cd.md) and
   [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)).
 - ✅ Build and validate the container image in CI (build only — **not** pushed).
 - ✅ Automated pipeline validation in CI — **definition** validated offline in
@@ -128,7 +128,7 @@ professionally engineered project and is safe to change with confidence.
 **Expected outcome:** Every change is automatically validated before merge,
 reducing regressions and manual effort.
 
-> **Status:** CI (checkout → setup Python → install → Ruff → pytest → DVC
+> **Status:** CI (checkout → setup Python → install → Ruff → mypy → pytest → DVC
 > pipeline integrity → fixture `dvc repro` → Docker build → build validation) is
 > implemented on **GitHub Actions**. It validates only — no deploy, no image push,
 > no Kubernetes. Offline pipeline-definition validation landed in Sprint 4, and a

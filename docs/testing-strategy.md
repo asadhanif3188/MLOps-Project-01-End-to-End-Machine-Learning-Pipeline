@@ -203,13 +203,18 @@ Testing grows with the pipeline. The stages below align with the project
   forced re-run ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The
   production raw dataset stays remote-only, so the *production* end-to-end run
   remains out of CI by design.
+- ✅ **mypy as a CI gate.** The strict `[tool.mypy]` type check now runs as a
+  required step in the `quality` job (`python -m mypy`, the same command
+  `make typecheck` and pre-commit run), so a type regression fails CI instead of
+  relying on local/pre-commit runs alone (carried from Sprint 3).
 
 ### Still ahead
 
 - **`logging_config` behaviour.** Idempotent handler attachment, `LOG_LEVEL` /
   `LOG_DIR` resolution, and the noisy-logger caps.
-- **mypy as a CI gate** and **branch protection** requiring green checks (carried
-  from Sprint 3).
+- **Branch protection** requiring the green CI checks before merge to `main`
+  (a GitHub repository setting; CI now produces the mypy signal, branch protection
+  makes it binding).
 - **Longer term (Roadmap v4+):** property-based tests (e.g. Hypothesis) for the IO
   helpers, data-validation tests for input schema drift, and model-quality gates
   (accuracy regression thresholds before a model is promoted). A genuine held-out
