@@ -12,11 +12,12 @@ validatable today versus deferred to a production cluster.
 > the real `dvc repro` command, and a finite-run lifecycle — and render cleanly
 > through Kustomize. Configuration/secrets, security hardening, resource limits,
 > and CI validation are deferred to later PRs (see
-> [§7](#7-local-validation-vs-production-deferred)). No cluster run has been
-> demonstrated in this environment (no local cluster was available), and a
-> *green* end-to-end `dvc repro` additionally depends on the PR 3 data/credential
-> wiring. Nothing here has been deployed to a production cluster. Claims are kept
-> to what the repository can currently prove.
+> [§7](#7-local-validation-vs-production-deferred)). The Job was **executed on a
+> local Docker Desktop cluster** (2026-08-12) and its lifecycle verified end to
+> end, but the pipeline does **not** complete yet: `dvc repro` aborts because the
+> image has no SCM (`/app is not a git repository`), and a *green* run also needs
+> the PR 3 data/credential wiring. Nothing here has been deployed to a production
+> cluster. Claims are kept to what the repository can currently prove.
 
 Design of record: [ADR-009 — Kubernetes Workload Model](decisions/ADR-009-kubernetes-workload-model.md).
 Related: [Architecture](architecture.md), [Containerization](containerization.md),
@@ -222,19 +223,27 @@ A reviewer should be able to tell exactly what is proven today.
 - The workload model, boundaries, and trade-offs are documented and recorded in
   an ADR.
 
-**Not yet performed — a local cluster run:**
+**Performed — an executed local cluster run (2026-08-12, Docker Desktop Kubernetes
+v1.34.3):** the image was built and `kubectl apply -k k8s/overlays/local` was run
+against a live cluster. The **Job lifecycle was verified end to end**:
 
-- Building/side-loading the image, `kubectl apply -k k8s/overlays/local`, and
-  observing the Job run — the runbook for this is in
-  [`k8s/README.md`](../k8s/README.md). It was **not executed in this environment
-  because no local cluster (kind/minikube/k3d) or running Docker daemon was
-  available**, and this document does not claim it was. Note also that a *green*
-  `dvc repro` inside the pod depends on the PR 3 data/credential wiring: the
-  runtime image excludes data, so without a mounted dataset the Job fails fast at
-  the preprocess stage. Full OpenAPI schema validation (`kubectl --dry-run`,
-  `kubeconform`) likewise needs a cluster or that tool installed; neither was
-  present, so validation here is the offline render + parse + field assertions
-  above.
+- The `mlops` namespace and `mlops-pipeline` Job were created; the local image was
+  resolved (no registry pull) and the container started (`Pending →
+  ContainerCreating → Running`).
+- The Job ran its designed retry lifecycle: **3 attempts total** — the initial pod
+  plus `backoffLimit: 2` — each a *fresh* pod with `RESTARTS: 0` (confirming
+  `restartPolicy: Never`), followed by a `BackoffLimitExceeded` event and a
+  terminal **Job `Failed`** state.
+- The pipeline itself did **not** complete: every attempt failed immediately with
+  `ERROR: /app is not a git repository`. `dvc repro` requires an SCM, and the
+  runtime image neither runs `git init` nor sets `core.no_scm`, so DVC aborts
+  before evaluating any stage. This is an honest finding, not a success: the Job
+  *mechanism* is proven on a real cluster, but a **green** end-to-end run needs the
+  PR 3 "make it runnable" work — an SCM in the image (`git init` or
+  `core.no_scm=true`), a mounted dataset (the image ships none by design), and
+  MLflow/DagsHub credentials. Full OpenAPI schema validation via `kubectl apply`
+  succeeds against this live cluster (the offline `--dry-run=client` could not
+  reach an API server); `kubeconform` remains uninstalled.
 
 **Production-deferred (explicitly out of scope for Sprint 5):**
 
@@ -244,8 +253,9 @@ A reviewer should be able to tell exactly what is proven today.
   makes.
 
 ```text
-Local render (kustomize)  ─▶  Local cluster run (kind)  ─▶  Production deployment
-   ✅ PR 1 + PR 2          ⬜ runbook ready, not run         ⬜ future roadmap
+Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Production deployment
+   ✅ PR 1 + PR 2          ✅ executed — lifecycle verified,           ⬜ future roadmap
+                              pipeline not green (needs PR 3)
 ```
 
 ---

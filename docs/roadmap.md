@@ -162,9 +162,10 @@ reducing regressions and manual effort.
   `activeDeadlineSeconds: 1800`) — structured with Kustomize under
   [`k8s/`](../k8s/), with a local run runbook
   ([Kubernetes Architecture](kubernetes-architecture.md),
-  [ADR-009](decisions/ADR-009-kubernetes-workload-model.md)). Manifests render via
-  Kustomize and are validated offline; an executed cluster run awaits an
-  environment with a local cluster.
+  [ADR-009](decisions/ADR-009-kubernetes-workload-model.md)). Executed on a local
+  Docker Desktop cluster (2026-08-12): the Job lifecycle is verified end to end (3
+  attempts → terminal `Failed`), though the pipeline is not yet green in-cluster
+  (`dvc repro` needs an SCM + data + credentials — PR 3).
 - Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
 - Define resource requests/limits for reproducible scheduling.
 
@@ -174,8 +175,10 @@ independent of a developer's local machine.
 > **Status.** The workload model is ratified in
 > [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) and the `k8s/`
 > manifests define a **runnable** Job (namespace + Job + Kustomize + local
-> runbook), validated by offline rendering and field assertions. Still to come in
-> Sprint 5: an executed local cluster run, config/secrets + identity, security
+> runbook), validated by offline rendering and field assertions **and by an
+> executed run on a local Docker Desktop cluster** (2026-08-12) that verified the
+> Job lifecycle end to end. Still to come in Sprint 5: a green in-cluster
+> `dvc repro` (SCM + data + credentials), config/secrets + identity, security
 > hardening (ADR-010), resource management, and CI manifest validation.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).

@@ -49,10 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Validated offline: `kustomize build` renders base and overlay, manifests parse
     as YAML, and field/scope assertions confirm the rendered image, command, and
     lifecycle fields — and that **no** deferred fields (resources, securityContext,
-    env, volumes, ServiceAccount) leaked in. A cluster run was **not** demonstrated
-    (no local cluster or running Docker daemon was available in the dev
-    environment), and a *green* `dvc repro` still depends on the PR 3
-    data/credential wiring; neither is claimed here.
+    env, volumes, ServiceAccount) leaked in.
+  - **Executed on a local cluster** (2026-08-12, Docker Desktop Kubernetes
+    v1.34.3): `kubectl apply -k k8s/overlays/local` created the namespace + Job,
+    the local image resolved with no registry pull, and the Job ran its designed
+    lifecycle — 3 attempts (initial pod + `backoffLimit: 2`), each a fresh pod
+    (`restartPolicy: Never`), then `BackoffLimitExceeded` → terminal `Failed`. The
+    pipeline does **not** complete: `dvc repro` aborts with `/app is not a git
+    repository` (the image has no SCM). A *green* in-cluster run is PR 3 scope —
+    an SCM (`git init`/`core.no_scm`), a mounted dataset, and credentials. The Job
+    *mechanism* is proven; a *green pipeline run* is not claimed.
 
 ### Changed
 

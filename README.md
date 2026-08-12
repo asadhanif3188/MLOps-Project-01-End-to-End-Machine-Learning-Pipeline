@@ -139,13 +139,16 @@ A step-by-step local run (build → side-load → apply → inspect → logs →
 in [`k8s/README.md`](k8s/README.md).
 
 > **Status:** namespace, workload model, and the **runnable** Job + local runbook
-> are in place (Sprint 5 PR 1–2), validated offline (render + parse + field
-> assertions). A cluster run has **not** been demonstrated (no local cluster was
-> available), and configuration/secrets, security hardening, CPU/memory limits,
-> and CI validation are deferred to later PRs. A *green* `dvc repro` in-cluster
-> additionally needs the PR 3 data/credential wiring. Rationale:
+> are in place (Sprint 5 PR 1–2). The Job was **executed on a local Docker Desktop
+> cluster** (2026-08-12) and its lifecycle verified end to end (3 attempts →
+> terminal `Failed`); the pipeline does **not** complete yet — `dvc repro` aborts
+> with `/app is not a git repository`, so a *green* in-cluster run needs the PR 3
+> "make it runnable" work (SCM in the image + mounted data + credentials).
+> Configuration/secrets, security hardening, CPU/memory limits, and CI validation
+> are deferred to later PRs. Rationale:
 > [Kubernetes Architecture](docs/kubernetes-architecture.md) and
-> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md).
+> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md); run details:
+> [`k8s/README.md`](k8s/README.md).
 
 ### How the DVC Stages Are Defined
 

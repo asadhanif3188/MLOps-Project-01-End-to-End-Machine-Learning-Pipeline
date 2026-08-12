@@ -11,10 +11,11 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > `activeDeadlineSeconds: 1800`). It intentionally does **not** yet include
 > configuration/secrets, security hardening, or CPU/memory resource limits — those
 > land in later, focused PRs (see [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
-> A cluster run has **not** been demonstrated in this repo's dev environment (no
-> local cluster/Docker was available), and a *green* `dvc repro` additionally
-> needs the PR 3 data/credential wiring. Nothing here has been applied to a
-> production cluster.
+> The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
+> lifecycle verified end to end (see [§ Execution record](#execution-record-pr-2)),
+> but the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not
+> a git repository`, and a *green* run additionally needs the PR 3 data/credential
+> wiring. Nothing here has been applied to a production cluster.
 
 For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, the
 workload lifecycle, and the local-vs-production boundary — see
@@ -56,16 +57,17 @@ kustomize build k8s/overlays/local
 
 ## Run it locally (runbook)
 
-The steps below are the operational flow for a local cluster (kind or minikube).
+The steps below are the operational flow for a local cluster (kind, minikube, or
+Docker Desktop Kubernetes).
 
-> **Not yet demonstrated here.** This runbook was authored and its manifests were
-> validated offline (render + parse + field assertions), but it was **not
-> executed** in this repo's dev environment because no local cluster or running
-> Docker daemon was available. It is written to be run as-is. Also note a *green*
-> `dvc repro` needs the data/credential wiring from PR 3 (the runtime image ships
-> **no** data by design); until then the Job runs but fails fast at `preprocess`
-> for lack of a mounted dataset — which still exercises the Job lifecycle
-> (scheduling, retry, terminal state).
+> **Executed on 2026-08-12** against Docker Desktop Kubernetes (v1.34.3). The Job
+> lifecycle was verified end to end (see [§ Execution record](#execution-record-pr-2)):
+> namespace + Job created, image resolved with no registry pull, 3 attempts (the
+> initial pod + `backoffLimit: 2`), then a terminal `Failed`. The pipeline itself
+> does **not** complete yet — `dvc repro` aborts with `/app is not a git
+> repository`. A *green* run needs the PR 3 "make it runnable" work: an SCM in the
+> image (`git init` or `core.no_scm=true`), a mounted dataset (the runtime image
+> ships **no** data by design), and MLflow/DagsHub credentials.
 
 ### 1. Build the image locally
 
@@ -129,6 +131,48 @@ kubectl -n mlops delete job/mlops-pipeline
 kubectl apply -k k8s/overlays/local
 ```
 
+## Execution record (PR 2)
+
+Executed **2026-08-12** against **Docker Desktop Kubernetes v1.34.3**
+(`containerd://2.2.0`), image `ml-pipeline:local` built from this repo.
+
+**What was proven — the Job lifecycle on a real cluster:**
+
+- `kubectl apply -k k8s/overlays/local` created the `mlops` namespace and the
+  `mlops-pipeline` Job. The local image resolved with **no registry pull**.
+- The Job ran its designed retry lifecycle — **3 attempts** (initial pod +
+  `backoffLimit: 2`), each a *fresh* pod with `RESTARTS: 0` (confirming
+  `restartPolicy: Never`) — then emitted `BackoffLimitExceeded` and settled into a
+  terminal **`Failed`** state (`status.failed: 3`).
+
+```text
+SuccessfulCreate  pod: mlops-pipeline-z9tsv     (attempt 1)
+SuccessfulCreate  pod: mlops-pipeline-lxtq7     (attempt 2)
+SuccessfulCreate  pod: mlops-pipeline-d5szf     (attempt 3)
+BackoffLimitExceeded  Job has reached the specified backoff limit  ->  Job Failed
+```
+
+**What did NOT happen — a green pipeline run (honest result).** All three attempts
+failed identically:
+
+```text
+$ kubectl -n mlops logs job/mlops-pipeline
+ERROR: /app is not a git repository
+```
+
+`dvc repro` requires an SCM; the runtime image neither runs `git init` nor sets
+`core.no_scm`, so DVC aborts before evaluating any stage — earlier than the
+missing-data failure one might expect. Making the pipeline **green** in-cluster is
+the PR 3 "make it runnable" scope and needs three things, in order:
+
+1. an SCM in the image — `git init` at build time, or `core.no_scm = true` in
+   `.dvc/config`;
+2. a mounted dataset — the runtime image ships **no** data by design
+   (`.dockerignore`), and `data/raw/data.csv` is itself DVC-tracked;
+3. MLflow/DagsHub credentials for the tracking calls.
+
+The workload *mechanism* is validated here; its *green execution* is not claimed.
+
 ## What is deliberately absent (and where it lands)
 
 ### Roadmap within Sprint 5
@@ -139,7 +183,8 @@ kubectl apply -k k8s/overlays/local
 | Kustomize base/overlay structure | ✅ done | PR 1 |
 | Runnable workload (real image, command, lifecycle) | ✅ this PR | PR 2 |
 | Local run **runbook** (build/load/apply/inspect/logs/re-run) | ✅ this PR | PR 2 |
-| Demonstrated local cluster run (executed) | 🟡 runbook ready, not executed (no cluster in dev env) | PR 2 |
+| Demonstrated local cluster run (Job lifecycle) | ✅ executed 2026-08-12 (see [§ Execution record](#execution-record-pr-2)) | PR 2 |
+| Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3 |
 | ConfigMap / Secret / ServiceAccount | ⬜ deferred | PR 3 |
 | Security hardening (securityContext, seccomp, dropped caps) | ⬜ deferred | PR 4 |
 | CPU/memory resource requests/limits, lifecycle tuning | ⬜ deferred | PR 5 |
