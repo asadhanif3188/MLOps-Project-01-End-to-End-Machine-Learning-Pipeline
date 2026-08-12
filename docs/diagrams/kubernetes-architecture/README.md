@@ -4,9 +4,10 @@ Source for the Kubernetes batch-workload architecture. Rendered and discussed in
 [docs/kubernetes-architecture.md](../../kubernetes-architecture.md); the design of
 record is [ADR-009](../../decisions/ADR-009-kubernetes-workload-model.md).
 
-> **Status.** Reflects the Sprint 5 PR 1 foundation: the `mlops` namespace and the
-> `batch/v1` Job model. Objects marked *(deferred)* are design contracts
-> implemented in later PRs (config/secrets, security, resources).
+> **Status.** Reflects Sprint 5 through PR 2: the `mlops` namespace and the
+> **runnable** `batch/v1` Job (real image + `dvc repro` + finite-run lifecycle).
+> Objects marked *(deferred)* are design contracts implemented in later PRs
+> (config/secrets, security, resources).
 
 ## Workload flow
 
@@ -16,7 +17,7 @@ flowchart TD
 
     subgraph cluster["Kubernetes cluster (local: kind / minikube)"]
         subgraph ns["Namespace: mlops"]
-            job["Job: mlops-pipeline<br/><i>batch/v1 · restartPolicy: Never · backoffLimit: 2</i>"]
+            job["Job: mlops-pipeline<br/><i>batch/v1 · restartPolicy: Never · backoffLimit: 2 · activeDeadlineSeconds: 1800</i>"]
             pod["Pod (one attempt)"]
             container["ML container<br/><i>ml-pipeline:local · CMD: dvc repro</i>"]
 

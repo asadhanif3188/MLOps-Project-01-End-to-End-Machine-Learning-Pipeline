@@ -33,6 +33,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     [docs/diagrams/kubernetes-architecture/](docs/diagrams/kubernetes-architecture/).
   - [`k8s/README.md`](k8s/README.md) with render/apply instructions and a table of
     what is deliberately deferred to which PR.
+- **Runnable Kubernetes batch workload** (Sprint 5, PR 2) — the foundation Job is
+  promoted to the actual runnable workload:
+  - The base `Job` now references the **real image the project builds**
+    (`ml-pipeline`, name only) instead of a placeholder; the local overlay pins
+    the tag to `ml-pipeline:local` (produced by `docker build -t ml-pipeline:local`
+    and docker-compose). No registry path is invented — none exists yet.
+  - A finite-run lifecycle appropriate for a batch pipeline: `restartPolicy: Never`,
+    `backoffLimit: 2`, and a new `activeDeadlineSeconds: 1800` wall-clock safety
+    ceiling (a completion-semantics guard against a stuck run — **not** a
+    CPU/memory limit, which stays deferred to PR 5).
+  - A local **runbook** in [`k8s/README.md`](k8s/README.md): build the image,
+    side-load it (`kind load` / `minikube image load`), `kubectl apply -k`,
+    inspect (`get`/`describe`), fetch logs, and delete/re-run.
+  - Validated offline: `kustomize build` renders base and overlay, manifests parse
+    as YAML, and field/scope assertions confirm the rendered image, command, and
+    lifecycle fields — and that **no** deferred fields (resources, securityContext,
+    env, volumes, ServiceAccount) leaked in. A cluster run was **not** demonstrated
+    (no local cluster or running Docker daemon was available in the dev
+    environment), and a *green* `dvc repro` still depends on the PR 3
+    data/credential wiring; neither is claimed here.
 
 ### Changed
 

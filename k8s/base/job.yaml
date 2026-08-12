@@ -7,16 +7,19 @@
 # full rationale, completion/retry semantics, and the rejected alternatives are in
 # docs/decisions/ADR-009-kubernetes-workload-model.md.
 #
-# SCOPE OF THIS PR (foundation only). This manifest establishes the workload
-# MODEL. It deliberately does NOT yet include the following — each lands in a
-# later, focused PR so the reasoning stays reviewable:
+# SCOPE (Sprint 5, PR 2 — the runnable batch workload). This manifest is the
+# actual workload: the real, locally built image and the real container command
+# (`dvc repro`, the image's default CMD), with a lifecycle appropriate for a
+# finite ML run. It deliberately does NOT yet include the following — each lands
+# in a later, focused PR so the reasoning stays reviewable:
 #   * ConfigMap / Secret / env wiring for data + MLflow credentials  (PR 3)
 #   * securityContext hardening (runAsNonRoot, drop caps, seccomp, ...)  (PR 4)
-#   * resource requests/limits and activeDeadlineSeconds tuning         (PR 5)
-#   * a dedicated least-privilege ServiceAccount                        (PR 3)
-# As written it renders and is schema-valid; a real cluster run needs the PR 3
-# data/credential wiring. See docs/kubernetes-architecture.md § "Local validation
-# vs production-deferred".
+#   * CPU/memory resource requests & limits                            (PR 5)
+#   * a dedicated least-privilege ServiceAccount                       (PR 3)
+# Consequently a *green* end-to-end run needs PR 3's data/credential wiring: the
+# runtime image excludes data (.dockerignore) and expects it mounted, so without
+# it the pipeline fails fast at the preprocess stage. See
+# docs/kubernetes-architecture.md § "Local validation vs production-deferred".
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -31,9 +34,16 @@ spec:
   # Completion/retry semantics (ADR-009). A finite Job completes once its single
   # pod exits 0. backoffLimit caps retries so a deterministic failure (bad data,
   # config error) fails fast instead of looping — it is NOT a service that should
-  # be kept running. Tuning of activeDeadlineSeconds / ttlSecondsAfterFinished is
-  # deferred to the reliability PR (PR 5).
+  # be kept running.
   backoffLimit: 2
+  # A wall-clock ceiling for the whole Job (all retries included). This is a
+  # completion-semantics safety net, NOT a CPU/memory resource limit (those are
+  # deferred to PR 5): the pipeline is a small, deterministic batch that finishes
+  # in ~1–2 minutes locally, so a Job still running after 30 minutes is stuck
+  # (e.g. a stalled network call to MLflow/DagsHub) and should fail with
+  # DeadlineExceeded rather than occupy a pod indefinitely. Deliberately generous;
+  # PR 5 may tighten it alongside resource tuning.
+  activeDeadlineSeconds: 1800
   template:
     metadata:
       labels:
@@ -47,11 +57,14 @@ spec:
       restartPolicy: Never
       containers:
         - name: pipeline
-          # Registry-neutral base reference. Environment overlays pin it to a
-          # concrete build — see k8s/overlays/local, which maps this to the
-          # locally built `ml-pipeline:local` image (README § "Running with
-          # Docker"). Image publishing to a registry is a separate roadmap item.
-          image: mlops-pipeline:0.0.0-placeholder
+          # The actual image the project builds. Name only here — the tag is
+          # pinned per environment by an overlay (see overlays/local, which pins
+          # `:local`, the tag produced by `docker build -t ml-pipeline:local .`
+          # and by docker-compose). This repo has no image registry yet, so there
+          # is no registry path to invent; publishing a versioned tag is a future
+          # roadmap item and would be a new overlay, not a change to this base.
+          # Base is always rendered through an overlay, never applied directly.
+          image: ml-pipeline
           # Same entrypoint as the container image's default CMD; stated
           # explicitly so the workload's intent is legible in the manifest.
           command: ["dvc", "repro"]

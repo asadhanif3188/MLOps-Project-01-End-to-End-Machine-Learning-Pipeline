@@ -1,18 +1,22 @@
 # Kubernetes Architecture
 
-How the End-to-End ML Pipeline is designed to run as a **Kubernetes-native batch
-workload**. This document describes the architectural foundation established in
-Sprint 5, PR 1: the workload model, the namespace boundary, the configuration and
-security boundaries (as design contracts), and — critically — exactly which parts
-are locally validatable today versus deferred to a production cluster.
+How the End-to-End ML Pipeline runs as a **Kubernetes-native batch workload**.
+This document describes the architecture established across Sprint 5: the workload
+model and namespace boundary (PR 1), the **runnable batch Job** with its real
+image and lifecycle (PR 2), the configuration and security boundaries (as design
+contracts for PR 3–4), and — critically — exactly which parts are locally
+validatable today versus deferred to a production cluster.
 
-> **Scope note.** This is the *foundation* PR. The manifests in
-> [`k8s/`](../k8s/) define the namespace and the workload **model** and render
-> cleanly through Kustomize, but configuration/secrets, security hardening,
-> resource limits, CI validation, and a demonstrated cluster run are deferred to
-> later PRs (see [§7](#7-local-validation-vs-production-deferred)). Nothing
-> described here has been deployed to a production cluster. Claims are kept to
-> what the repository can currently prove.
+> **Scope note.** Through PR 2 the manifests in [`k8s/`](../k8s/) define the
+> namespace and a **runnable** batch `Job` — the real `ml-pipeline:local` image,
+> the real `dvc repro` command, and a finite-run lifecycle — and render cleanly
+> through Kustomize. Configuration/secrets, security hardening, resource limits,
+> and CI validation are deferred to later PRs (see
+> [§7](#7-local-validation-vs-production-deferred)). No cluster run has been
+> demonstrated in this environment (no local cluster was available), and a
+> *green* end-to-end `dvc repro` additionally depends on the PR 3 data/credential
+> wiring. Nothing here has been deployed to a production cluster. Claims are kept
+> to what the repository can currently prove.
 
 Design of record: [ADR-009 — Kubernetes Workload Model](decisions/ADR-009-kubernetes-workload-model.md).
 Related: [Architecture](architecture.md), [Containerization](containerization.md),
@@ -56,7 +60,7 @@ flowchart TD
     dev["Developer<br/><i>kubectl apply -k k8s/overlays/local</i>"]
     subgraph cluster["Kubernetes cluster (local: kind / minikube)"]
         subgraph ns["Namespace: mlops"]
-            job["Job: mlops-pipeline<br/><i>batch/v1 · restartPolicy: Never · backoffLimit: 2</i>"]
+            job["Job: mlops-pipeline<br/><i>batch/v1 · restartPolicy: Never · backoffLimit: 2 · activeDeadlineSeconds: 1800</i>"]
             pod["Pod (one attempt)"]
             container["ML container<br/><i>ml-pipeline:local · CMD: dvc repro</i>"]
             job --> pod --> container
@@ -103,7 +107,7 @@ The Kubernetes objects and their responsibilities:
 | Object | Kind | Responsibility | This PR |
 |---|---|---|---|
 | `mlops` | `Namespace` | Environment / RBAC / quota / Pod Security boundary | ✅ |
-| `mlops-pipeline` | `Job` (`batch/v1`) | Run the pipeline once to completion, with bounded retries | ✅ (model only) |
+| `mlops-pipeline` | `Job` (`batch/v1`) | Run the pipeline once to completion, with bounded retries | ✅ (runnable, PR 2) |
 | ConfigMap | `ConfigMap` | Non-secret runtime config (params, flags) | ⬜ PR 3 |
 | Secret | `Secret` | MLflow/DagsHub credentials — template only, never real values | ⬜ PR 3 |
 | ServiceAccount | `ServiceAccount` | Least-privilege identity (likely no API access) | ⬜ PR 3 |
@@ -149,9 +153,15 @@ Pending ─▶ Running ─▶ (pipeline executes) ─▶ Succeeded  ─▶ Job: 
   Job controller schedules a fresh pod for each retry, so every attempt is a
   clean run of the deterministic pipeline.
 - **backoffLimit: `2`** — a deterministic failure (bad input, config error) fails
-  fast after bounded retries instead of looping. This is a workload-model choice,
-  not tuned reliability engineering; `activeDeadlineSeconds` and
-  `ttlSecondsAfterFinished` are deferred to the reliability PR (PR 5).
+  fast after bounded retries instead of looping.
+- **activeDeadlineSeconds: `1800`** — a wall-clock ceiling for the whole Job (all
+  retries). This is a completion-semantics safety net, **not** a CPU/memory
+  resource limit: the pipeline finishes in ~1–2 minutes locally, so a Job still
+  running after 30 minutes is stuck (e.g. a stalled MLflow/DagsHub call) and
+  should fail with `DeadlineExceeded` rather than hold a pod indefinitely. It is
+  deliberately generous; CPU/memory requests & limits and any tightening of this
+  ceiling are deferred to the reliability PR (PR 5), as is
+  `ttlSecondsAfterFinished` (finished-Job cleanup).
 - **No liveness/readiness probes** — there is no live endpoint or long-running
   process to probe. This mirrors the container image, which ships **no
   `HEALTHCHECK`** by the same reasoning (see the `Dockerfile` and
@@ -199,19 +209,32 @@ against the real image rather than asserted blindly.
 
 A reviewer should be able to tell exactly what is proven today.
 
-**Validatable now (this PR), no cluster required:**
+**Validated now (no cluster required) — actually performed in PR 2:**
 
-- The manifests parse as YAML.
+- The manifests parse as YAML (round-tripped through PyYAML).
 - `kustomize build k8s/base` and `kustomize build k8s/overlays/local` render
-  successfully; the local overlay maps the image to the locally built
-  `ml-pipeline:local`.
+  successfully; the rendered container image is `ml-pipeline:local`, the command
+  is `["dvc","repro"]`, and the Job carries `backoffLimit: 2`,
+  `activeDeadlineSeconds: 1800`, `restartPolicy: Never`, and `namespace: mlops`.
+- Scope discipline is asserted: the rendered manifest contains **no** deferred
+  fields (no `resources`, `securityContext`, `env`/`envFrom`, `volumes`, or
+  `serviceAccountName`).
 - The workload model, boundaries, and trade-offs are documented and recorded in
   an ADR.
 
-**Local validation, next (PR 2), requires a local cluster (kind/minikube):**
+**Not yet performed — a local cluster run:**
 
 - Building/side-loading the image, `kubectl apply -k k8s/overlays/local`, and
-  observing the Job run to completion. See [`k8s/README.md`](../k8s/README.md).
+  observing the Job run — the runbook for this is in
+  [`k8s/README.md`](../k8s/README.md). It was **not executed in this environment
+  because no local cluster (kind/minikube/k3d) or running Docker daemon was
+  available**, and this document does not claim it was. Note also that a *green*
+  `dvc repro` inside the pod depends on the PR 3 data/credential wiring: the
+  runtime image excludes data, so without a mounted dataset the Job fails fast at
+  the preprocess stage. Full OpenAPI schema validation (`kubectl --dry-run`,
+  `kubeconform`) likewise needs a cluster or that tool installed; neither was
+  present, so validation here is the offline render + parse + field assertions
+  above.
 
 **Production-deferred (explicitly out of scope for Sprint 5):**
 
@@ -222,15 +245,16 @@ A reviewer should be able to tell exactly what is proven today.
 
 ```text
 Local render (kustomize)  ─▶  Local cluster run (kind)  ─▶  Production deployment
-      ✅ this PR                    ⬜ PR 2                     ⬜ future roadmap
+   ✅ PR 1 + PR 2          ⬜ runbook ready, not run         ⬜ future roadmap
 ```
 
 ---
 
-## 8. What This Foundation Does *Not* Claim
+## 8. What This Does *Not* Claim
 
-- It does not claim a running Kubernetes deployment — only rendered, schema-valid
-  manifests and a documented model.
+- It does not claim a demonstrated cluster run — only rendered, structurally
+  validated manifests (offline render + YAML parse + field assertions) and a
+  documented, runnable model.
 - It does not claim production readiness, security hardening, or resource tuning —
   those are explicitly later PRs.
 - It does not introduce an HTTP API, `Service`, or `Ingress`; the workload is

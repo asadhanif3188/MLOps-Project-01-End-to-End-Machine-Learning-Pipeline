@@ -121,24 +121,31 @@ CI is validation only — it does not deploy, publish images, or use Kubernetes.
 See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
 reproduce each gate locally.
 
-## Kubernetes (foundation)
+## Kubernetes
 
 The pipeline is a **finite batch workload**, so its Kubernetes model is a
 run-to-completion **`Job`** (in a dedicated `mlops` namespace) — not a
 `Deployment`, and with no fake HTTP API invented to justify a `Service`. The
 manifests live under [`k8s/`](k8s/) as a Kustomize `base/` + `overlays/local/`
-layout and render with:
+layout. The `Job` runs the real `dvc repro` command on the locally built
+`ml-pipeline:local` image with a finite-run lifecycle (`restartPolicy: Never`,
+`backoffLimit: 2`, `activeDeadlineSeconds: 1800`). Render with:
 
 ```bash
 kustomize build k8s/overlays/local   # or: kubectl kustomize k8s/overlays/local
 ```
 
-> **Status:** architectural **foundation** only — namespace, workload model, and
-> structure. Configuration/secrets, security hardening, resource limits, CI
-> validation, and a demonstrated cluster run are deferred to later PRs and are
-> **not** claimed yet. Rationale: [Kubernetes Architecture](docs/kubernetes-architecture.md)
-> and [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md); usage:
-> [`k8s/README.md`](k8s/README.md).
+A step-by-step local run (build → side-load → apply → inspect → logs → re-run) is
+in [`k8s/README.md`](k8s/README.md).
+
+> **Status:** namespace, workload model, and the **runnable** Job + local runbook
+> are in place (Sprint 5 PR 1–2), validated offline (render + parse + field
+> assertions). A cluster run has **not** been demonstrated (no local cluster was
+> available), and configuration/secrets, security hardening, CPU/memory limits,
+> and CI validation are deferred to later PRs. A *green* `dvc repro` in-cluster
+> additionally needs the PR 3 data/credential wiring. Rationale:
+> [Kubernetes Architecture](docs/kubernetes-architecture.md) and
+> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md).
 
 ### How the DVC Stages Are Defined
 

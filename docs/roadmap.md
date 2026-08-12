@@ -154,12 +154,17 @@ reducing regressions and manual effort.
   local dev workflow ([Containerization Strategy](containerization.md),
   [Docker Development](docker-development.md),
   [ADR-005](decisions/ADR-005-containerization-strategy.md)).
-- 🚧 Run pipeline stages as an orchestrated Kubernetes workload — **foundation
-  landed** (Sprint 5, PR 1): an `mlops` namespace and the pipeline modelled as a
-  `batch/v1` **Job** (not a Deployment), structured with Kustomize under
-  [`k8s/`](../k8s/) ([Kubernetes Architecture](kubernetes-architecture.md),
+- 🚧 Run pipeline stages as an orchestrated Kubernetes workload — **runnable
+  workload landed** (Sprint 5, PR 1–2): an `mlops` namespace and the pipeline
+  modelled as a **runnable** `batch/v1` **Job** (not a Deployment) — the real
+  `ml-pipeline:local` image, the real `dvc repro` command, and a finite-run
+  lifecycle (`restartPolicy: Never`, `backoffLimit: 2`,
+  `activeDeadlineSeconds: 1800`) — structured with Kustomize under
+  [`k8s/`](../k8s/), with a local run runbook
+  ([Kubernetes Architecture](kubernetes-architecture.md),
   [ADR-009](decisions/ADR-009-kubernetes-workload-model.md)). Manifests render via
-  Kustomize; a demonstrated local cluster run is the next PR.
+  Kustomize and are validated offline; an executed cluster run awaits an
+  environment with a local cluster.
 - Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
 - Define resource requests/limits for reproducible scheduling.
 
@@ -168,9 +173,10 @@ independent of a developer's local machine.
 
 > **Status.** The workload model is ratified in
 > [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) and the `k8s/`
-> foundation exists (namespace + Job + Kustomize), validated by local rendering.
-> Still to come in Sprint 5: local cluster run, config/secrets + identity,
-> security hardening (ADR-010), resource management, and CI manifest validation.
+> manifests define a **runnable** Job (namespace + Job + Kustomize + local
+> runbook), validated by offline rendering and field assertions. Still to come in
+> Sprint 5: an executed local cluster run, config/secrets + identity, security
+> hardening (ADR-010), resource management, and CI manifest validation.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
