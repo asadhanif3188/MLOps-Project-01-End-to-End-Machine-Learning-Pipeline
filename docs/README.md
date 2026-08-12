@@ -31,6 +31,9 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Containerization Strategy](containerization.md) | Design and build of the container image (dev/prod stages, security, K8s/CI readiness) |
 | [Docker Development Workflow](docker-development.md) | Running the local dev environment with Docker Compose (startup, logs, rebuild, troubleshooting) |
 | [CI/CD](ci-cd.md) | Continuous integration pipeline (stages, failure strategy, local validation) and the future CD roadmap |
+| [Kubernetes Architecture](kubernetes-architecture.md) | The pipeline as a Kubernetes batch `Job`: workload model, boundaries, and the local-vs-production split |
+| [Kubernetes Operations](kubernetes-operations.md) | Day-2 operations runbook: deploy/observe/logs/re-run/cleanup, a troubleshooting matrix, and the honest observability posture (local only) |
+| [Kubernetes Security](kubernetes-security.md) | Identity, `securityContext`, secret handling, controls→evidence checklist, and what is explicitly not claimed |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
@@ -48,6 +51,12 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) | Python Quality Toolchain (Ruff, mypy, pytest, pre-commit) |
 | [ADR-005](decisions/ADR-005-containerization-strategy.md) | Containerization Strategy |
 | [ADR-006](decisions/ADR-006-pipeline-reproducibility.md) | Pipeline Reproducibility as an Engineering Requirement |
+| [ADR-007](decisions/ADR-007-held-out-evaluation.md) | Held-Out Evaluation via a Dedicated `split` Stage |
+| [ADR-008](decisions/ADR-008-fixture-reproducibility.md) | Fixture-Based Pipeline Reproducibility |
+| [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) | Kubernetes Workload Model — `Job`, not `Deployment` |
+| [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md) | Kubernetes Workload Security Hardening |
+| [ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md) | Kubernetes Resource & Lifecycle Management |
+| [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md) | Automated Kubernetes Manifest Validation in CI |
 
 ### Engineering Reviews
 
@@ -70,6 +79,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | Assessment | Description |
 |------------|-------------|
 | [Sprint 4 — Proof Impact](proof/sprint-04-proof-impact.md) | Evidence-based statement of what the project can credibly claim after Sprint 4 that it could not after Sprint 3, with remaining limitations |
+| [Sprint 5 — Proof Impact](proof/sprint-05-proof-impact.md) | Evidence-based statement of the Kubernetes platform-engineering claims after Sprint 5 (workload model, security, resources, validation, operations) with a conservative Before/After and explicit known limitations |
 
 ---
 
@@ -113,6 +123,9 @@ Planned documentation, to be added as the project matures (see the
 [roadmap](roadmap.md)):
 
 - **Pipeline Usage Guide** — running and reproducing stages with DVC. <!-- TODO -->
-- **Deployment Guide** — for cloud/Kubernetes deployment (Roadmap v4–v5).
-  <!-- TODO -->
-- **Monitoring & Operations** — for enterprise MLOps (Roadmap v6). <!-- TODO -->
+- **Deployment Guide** — *local* Kubernetes deployment now exists
+  ([`k8s/README.md`](../k8s/README.md), [Kubernetes Operations](kubernetes-operations.md));
+  **cloud/production** deployment remains future work (Roadmap v5). <!-- TODO -->
+- **Production Monitoring & Operations** — an observability stack (metrics, tracing,
+  alerting) for enterprise MLOps (Roadmap v6). The current local-cluster operations
+  posture is documented in [Kubernetes Operations](kubernetes-operations.md). <!-- TODO -->

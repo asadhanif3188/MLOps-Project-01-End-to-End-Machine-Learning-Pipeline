@@ -199,6 +199,13 @@ reducing regressions and manual effort.
   check), plus an opt-in ephemeral-kind **server-side dry-run** admission job.
   Static validation only — it does **not** deploy or run the workload
   ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)).
+- ✅ Document the operations & prove the platform work — **implemented** (Sprint 5,
+  PR 7): a complete deployment guide ([`k8s/README.md`](../k8s/README.md)), a
+  [Kubernetes Operations runbook](kubernetes-operations.md) with a troubleshooting
+  matrix, a [Kubernetes Security document](kubernetes-security.md), and an
+  evidence-based [Sprint 5 Proof-Impact Assessment](proof/sprint-05-proof-impact.md),
+  with the local deployment path re-executed from a clean state as proof. Local
+  cluster only; **no** production/GitOps/HA/serving/observability claims.
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
 independent of a developer's local machine.
@@ -219,9 +226,13 @@ independent of a developer's local machine.
 > ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)) — all verified on
 > the local cluster, and PR 6 added **automated CI manifest validation** (static
 > syntax/schema/Kustomize/security checks + an opt-in cluster admission dry-run —
-> [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)). Still to come in
-> Sprint 5: a green in-cluster `dvc repro` (SCM + data + credentials) and an
-> operations runbook & proof.
+> [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)), and PR 7 added the
+> **operations & proof** documentation ([operations runbook](kubernetes-operations.md),
+> [security document](kubernetes-security.md),
+> [Sprint 5 Proof-Impact](proof/sprint-05-proof-impact.md)) with the local deployment
+> path re-executed as evidence. Still open beyond Sprint 5's scope: a **green**
+> in-cluster `dvc repro` (SCM + data + credentials), which the sprint documents as a
+> known limitation rather than delivers.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
