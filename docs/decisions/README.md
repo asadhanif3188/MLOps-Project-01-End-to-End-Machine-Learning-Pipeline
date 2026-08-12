@@ -16,6 +16,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-006](ADR-006-pipeline-reproducibility.md) | Pipeline Reproducibility as an Engineering Requirement | Accepted (design) | 2026-08-05 |
 | [ADR-007](ADR-007-held-out-evaluation.md) | Held-Out Evaluation via a Dedicated `split` Stage | Accepted | 2026-08-09 |
 | [ADR-008](ADR-008-fixture-reproducibility.md) | Fixture-Based Pipeline Reproducibility (Committed `dvc.lock` + CI `dvc repro`) | Accepted | 2026-08-09 |
+| [ADR-009](ADR-009-kubernetes-workload-model.md) | Kubernetes Workload Model — `Job`, not `Deployment` | Accepted (design) | 2026-08-12 |
 
 ## Template
 

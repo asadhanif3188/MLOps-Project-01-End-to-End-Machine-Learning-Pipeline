@@ -9,4 +9,6 @@ placeholder for a specific diagram:
 - [`pipeline-flow/`](pipeline-flow/) — Pipeline Flow
 - [`deployment-architecture/`](deployment-architecture/) — Deployment Architecture
 - [`kubernetes-architecture/`](kubernetes-architecture/) — Kubernetes Architecture
+  (✅ available — batch-workload flow, Mermaid + ASCII;
+  see [kubernetes-architecture.md](../kubernetes-architecture.md))
 - [`cicd-flow/`](cicd-flow/) — CI/CD Flow

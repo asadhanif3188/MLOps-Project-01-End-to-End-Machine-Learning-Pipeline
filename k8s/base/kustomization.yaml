@@ -1,0 +1,27 @@
+# Base Kustomization — the environment-independent definition of the workload.
+#
+# Kustomize (not raw `kubectl apply -f`) is used because it earns its keep here:
+# a single base is specialized per environment through overlays (image tag today;
+# resources, config, and security in later PRs) with no copy-paste YAML. Render
+# and inspect with:  kustomize build k8s/base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Pin every namespaced resource to the mlops namespace. The Namespace object
+# itself is created by namespace.yaml (the namespace transformer does not nest a
+# Namespace inside itself), so both the boundary and its members stay consistent.
+namespace: mlops
+
+resources:
+  - namespace.yaml
+  - job.yaml
+
+# Common identifying metadata for every resource. includeSelectors is false on
+# purpose: a Job's spec.selector is auto-generated and immutable, so a label
+# transformer must not rewrite it — doing so would make the Job un-appliable.
+# These are metadata labels only.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: mlops-pipeline
+      app.kubernetes.io/managed-by: kustomize

@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Added
+
+- **Kubernetes architectural foundation** (Sprint 5, PR 1) — the containerized
+  pipeline is now expressed as a Kubernetes **batch workload**, without
+  manufacturing a fake online service. Foundation only: it establishes the
+  structure and workload model; configuration/secrets, security hardening,
+  resource limits, CI validation, and a demonstrated cluster run are deferred to
+  later Sprint 5 PRs.
+  - A [`k8s/`](k8s/) directory using a Kustomize `base/` + `overlays/local/`
+    layout: an `mlops` **Namespace** (the environment boundary) and the pipeline
+    modelled as a run-to-completion **`batch/v1` Job** (`restartPolicy: Never`,
+    bounded `backoffLimit`) that runs `dvc repro`. Both `kustomize build k8s/base`
+    and `kustomize build k8s/overlays/local` render successfully; the local
+    overlay maps the workload to the locally built `ml-pipeline:local` image.
+  - [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md) recording the
+    **Job-vs-Deployment** decision — batch vs service semantics, completion/retry
+    lifecycle, why a Deployment (and a fake HTTP API) were rejected, and what the
+    decision explicitly does *not* imply.
+  - [docs/kubernetes-architecture.md](docs/kubernetes-architecture.md) describing
+    why Kubernetes is introduced, the workload architecture, the configuration and
+    security boundaries (as design contracts for later PRs), and a clear
+    local-validation-vs-production-deferred split.
+  - A batch-workload architecture diagram (Mermaid + ASCII) under
+    [docs/diagrams/kubernetes-architecture/](docs/diagrams/kubernetes-architecture/).
+  - [`k8s/README.md`](k8s/README.md) with render/apply instructions and a table of
+    what is deliberately deferred to which PR.
+
+### Changed
+
+- Documentation updated to reflect the Kubernetes foundation: [roadmap](docs/roadmap.md)
+  v4 marked in progress, [architecture](docs/architecture.md) notes the workload
+  model, the [ADR index](docs/decisions/README.md) and
+  [diagrams index](docs/diagrams/README.md) list the new records. No application
+  logic changed; existing tests are unaffected.
 
 ## [1.3.1] - 2026-08-09
 

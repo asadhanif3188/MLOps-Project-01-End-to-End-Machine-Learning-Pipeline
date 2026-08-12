@@ -121,6 +121,25 @@ CI is validation only — it does not deploy, publish images, or use Kubernetes.
 See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
 reproduce each gate locally.
 
+## Kubernetes (foundation)
+
+The pipeline is a **finite batch workload**, so its Kubernetes model is a
+run-to-completion **`Job`** (in a dedicated `mlops` namespace) — not a
+`Deployment`, and with no fake HTTP API invented to justify a `Service`. The
+manifests live under [`k8s/`](k8s/) as a Kustomize `base/` + `overlays/local/`
+layout and render with:
+
+```bash
+kustomize build k8s/overlays/local   # or: kubectl kustomize k8s/overlays/local
+```
+
+> **Status:** architectural **foundation** only — namespace, workload model, and
+> structure. Configuration/secrets, security hardening, resource limits, CI
+> validation, and a demonstrated cluster run are deferred to later PRs and are
+> **not** claimed yet. Rationale: [Kubernetes Architecture](docs/kubernetes-architecture.md)
+> and [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md); usage:
+> [`k8s/README.md`](k8s/README.md).
+
 ### How the DVC Stages Are Defined
 
 The pipeline graph lives in [`dvc.yaml`](dvc.yaml); the commands below reproduce

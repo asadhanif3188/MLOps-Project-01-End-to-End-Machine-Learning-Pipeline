@@ -50,6 +50,7 @@ classification of the `Outcome` column.
 | Packaging | Multi-stage Docker image (non-root `runtime`) — [Containerization](containerization.md) |
 | Local dev environment | Docker Compose (`dev` service) — [Docker Development](docker-development.md) |
 | Continuous integration | GitHub Actions: lint, test, image build/validate — [CI/CD](ci-cd.md) |
+| Kubernetes orchestration | 🚧 Foundation only — `mlops` namespace + `batch/v1` **Job** (Kustomize, [`k8s/`](../k8s/)); renders locally, not yet cluster-run — [Kubernetes Architecture](kubernetes-architecture.md), [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
 | Serving | ❌ Not implemented — see [roadmap](roadmap.md) |
 
 ---
@@ -207,6 +208,7 @@ disjoint held-out evaluation path.
 | Lint/format/type/test toolchain | Ruff + mypy + pytest + pre-commit | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) |
 | Containerization | Multi-stage Docker (`python:3.12-slim`) | [ADR-005](decisions/ADR-005-containerization-strategy.md) |
 | Continuous integration | GitHub Actions | [CI/CD](ci-cd.md) |
+| Kubernetes workload model (🚧 foundation) | `batch/v1` Job + Kustomize | [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
 
 For the reasoning behind these choices, see [Design Principles](design-principles.md).
 Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
@@ -287,6 +289,19 @@ quality gates. Both are **implemented and in the repository today**.
 > 📌 **Diagram placeholders:**
 > [`diagrams/cicd-flow/`](diagrams/cicd-flow/),
 > [`diagrams/deployment-architecture/`](diagrams/deployment-architecture/)
+
+### Kubernetes orchestration (foundation)
+
+Sprint 5 begins expressing the containerized pipeline as a Kubernetes workload.
+The **foundation** exists today under [`k8s/`](../k8s/): an `mlops` namespace and
+the pipeline modelled as a run-to-completion **`batch/v1` Job** (not a
+Deployment — the workload is finite batch, so it has no service to keep alive),
+structured with Kustomize (`base/` + `overlays/local/`). The manifests render via
+`kustomize build`; a demonstrated local cluster run and the config/secrets,
+security, resource, and CI layers are deferred to later PRs. The rationale is in
+[Kubernetes Architecture](kubernetes-architecture.md) and
+[ADR-009](decisions/ADR-009-kubernetes-workload-model.md), with the batch-workload
+diagram under [`diagrams/kubernetes-architecture/`](diagrams/kubernetes-architecture/).
 
 ---
 
