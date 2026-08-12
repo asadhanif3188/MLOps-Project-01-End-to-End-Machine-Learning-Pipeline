@@ -12,7 +12,7 @@
 # default CMD), with a lifecycle appropriate for a finite ML run. PR 3 added
 # externalized configuration and a least-privilege identity (ConfigMap, an
 # out-of-band Secret, a dedicated ServiceAccount with the API token automount
-# off). PR 4 (this change) hardens the runtime with a securityContext:
+# off). PR 4 hardens the runtime with a securityContext:
 #   * pod level      — runAsNonRoot + explicit runAsUser/runAsGroup 10001 (the
 #     image's USER is the NAME `appuser`, which the kubelet cannot verify as
 #     non-root; a numeric UID is required for runAsNonRoot to admit), and
@@ -20,9 +20,16 @@
 #   * container level — allowPrivilegeEscalation: false and capabilities drop ALL
 #     (the pipeline needs no Linux capabilities), plus an EXPLICIT
 #     readOnlyRootFilesystem: false with the reason inline below.
-# It still deliberately does NOT include the following — it lands in a later,
+# PR 5 (this change) adds resource & lifecycle management: CPU/memory requests
+# and limits chosen from MEASURED usage of the real image (not guessed), plus
+# documentation of the already-present finite-run lifecycle (restartPolicy,
+# backoffLimit, activeDeadlineSeconds) and the deliberate absence of health
+# probes. Rationale and the measurements are in
+# docs/decisions/ADR-011-kubernetes-resource-lifecycle.md.
+# It still deliberately does NOT include the following — each lands in a later,
 # focused PR so the reasoning stays reviewable:
-#   * CPU/memory resource requests & limits                            (PR 5)
+#   * CI manifest validation                                           (PR 6)
+#   * operations runbook & proof                                       (PR 7)
 # A *green* end-to-end run still needs the remaining "make it runnable" work: an
 # SCM in the image (`dvc repro` aborts with "/app is not a git repository") and a
 # mounted dataset (the runtime image excludes data via .dockerignore and expects
@@ -41,18 +48,26 @@ metadata:
     app.kubernetes.io/component: batch-pipeline
     app.kubernetes.io/managed-by: kustomize
 spec:
-  # Completion/retry semantics (ADR-009). A finite Job completes once its single
-  # pod exits 0. backoffLimit caps retries so a deterministic failure (bad data,
-  # config error) fails fast instead of looping — it is NOT a service that should
-  # be kept running.
+  # Completion/retry semantics (ADR-009; reviewed in PR 5, ADR-011). A finite Job
+  # completes once its single pod exits 0. backoffLimit caps retries so a
+  # deterministic failure (bad data, config error) fails fast instead of looping
+  # — it is NOT a service that should be kept running. Kept at 2 deliberately:
+  # this pipeline is deterministic, so a genuine code/data/config error will fail
+  # identically on every attempt; the two retries exist only to absorb a
+  # *transient* fault (a blip reaching MLflow/DagsHub), not to paper over a real
+  # bug. Between attempts the Job controller applies an exponential back-off
+  # (~10s, 20s, …), so a fast-failing pod cannot hot-loop.
   backoffLimit: 2
   # A wall-clock ceiling for the whole Job (all retries included). This is a
-  # completion-semantics safety net, NOT a CPU/memory resource limit (those are
-  # deferred to PR 5): the pipeline is a small, deterministic batch that finishes
-  # in ~1–2 minutes locally, so a Job still running after 30 minutes is stuck
-  # (e.g. a stalled network call to MLflow/DagsHub) and should fail with
-  # DeadlineExceeded rather than occupy a pod indefinitely. Deliberately generous;
-  # PR 5 may tighten it alongside resource tuning.
+  # completion-semantics safety net, NOT a resource limit (CPU/memory limits are
+  # set per-container below): the pipeline is a small, deterministic batch that
+  # finishes in well under a minute of compute locally (train, the heaviest
+  # stage, measured at ~2.5 s under a 1-CPU limit — see ADR-011), so a Job still
+  # running after 30 minutes is stuck (e.g. a stalled network call to
+  # MLflow/DagsHub) and should fail with DeadlineExceeded rather than occupy a pod
+  # indefinitely. Deliberately generous — it is an outer stall-guard, not a
+  # performance SLO; tightening it toward the real runtime would risk killing a
+  # legitimately slow-but-progressing run on a constrained node.
   activeDeadlineSeconds: 1800
   template:
     metadata:
@@ -64,6 +79,22 @@ spec:
       # Never: a failed pod is not restarted in place; the Job controller creates
       # a fresh pod for each retry (up to backoffLimit). This keeps every attempt
       # a clean run of the deterministic pipeline rather than a mutated container.
+      # (For a Job, restartPolicy must be Never or OnFailure; Never is chosen so
+      # each retry is a brand-new pod whose logs/events are inspectable
+      # independently, rather than an in-place container restart that overwrites
+      # the previous attempt's state — see ADR-011.)
+      #
+      # No health probes (liveness/readiness/startup) are defined, by design.
+      # Probes model a long-running server: readiness gates traffic to a Service,
+      # liveness restarts a wedged daemon. This workload is a finite batch Job with
+      # no listening socket, no Service, and no request traffic — "healthy" is not a
+      # steady state to poll but a terminal one: exit 0 = success, non-zero =
+      # failure, which the Job controller already observes directly. A liveness
+      # probe here would either need an HTTP endpoint the app does not (and should
+      # not) expose, or would fire on the pipeline's normal quiet compute and kill a
+      # healthy run. The pipeline's true health signal is its exit status plus its
+      # structured logs; probes would add machinery without a health question to
+      # answer. Rationale recorded in ADR-011.
       restartPolicy: Never
       # Run under the workload's own least-privilege identity (serviceaccount.yaml)
       # instead of the namespace `default` account.
@@ -135,6 +166,51 @@ spec:
             # and SCM onto declared writable volumes), tracked in
             # ADR-010-kubernetes-security-hardening.md § "Read-only root filesystem".
             readOnlyRootFilesystem: false
+          # Resource requests & limits (PR 5). Chosen from MEASURED usage of the
+          # real ml-pipeline:local image, not guessed — see ADR-011 for the probe
+          # method and numbers. The heaviest stage is `train`
+          # (RandomForest + GridSearchCV); the trivial stages (preprocess/split/
+          # evaluate) sit far below these figures.
+          #
+          # Key measured fact: GridSearchCV runs with n_jobs=-1, and joblib/loky
+          # reads the cgroup CPU quota (i.e. the CPU *limit*), NOT the node's core
+          # count. So the CPU limit doubles as the memory-safety control: it caps
+          # how many worker processes joblib forks, and each fork copies the
+          # ~130 MiB interpreter. Measured peak (whole cgroup, incl. workers):
+          #   1 CPU  -> ~133 MiB, ~2.5 s   (chosen operating point: no fan-out)
+          #   2 CPU  -> ~419 MiB, ~5.4 s
+          #   unlim. -> ~1785 MiB, ~20 s   (20 host cores each fork a copy)
+          # More cores actively HURT at this data size (fork/dispatch overhead
+          # dwarfs the sub-second fits), so capping at 1 CPU is both leaner and
+          # faster here. Validated: at these exact limits the run completes with a
+          # ~133 MiB peak; at 64Mi it is OOMKilled (exit 137) — the limit is
+          # kernel-enforced.
+          resources:
+            requests:
+              # A scheduling reservation, not a hard need. 250m lets a short,
+              # deterministic batch make steady progress (each grid fit is ~1 s on
+              # one core); it is not so large that the Job is hard to schedule on a
+              # busy node.
+              cpu: 250m
+              # Comfortably above the measured ~133 MiB import+train floor, so the
+              # pod is guaranteed enough memory to run without relying on node
+              # headroom (memory requests are a genuine reservation — the kernel
+              # cannot reclaim an app's live pages).
+              memory: 256Mi
+            limits:
+              # 1 full core. Bounds joblib's worker fan-out to a single worker
+              # (loky reads this quota), which is what keeps memory ~133 MiB and
+              # predictable. A CPU limit on a batch Job is safe: CFS throttling only
+              # makes it marginally slower, and any slowdown is bounded by
+              # activeDeadlineSeconds — unlike a latency-sensitive service, extra
+              # wall-clock here is harmless.
+              cpu: "1"
+              # ~3.9x the measured 1-CPU peak (~133 MiB). Enough headroom for log
+              # buffers and minor future grid growth, but tight enough that a real
+              # runaway is OOMKilled instead of silently eating a node. (Requests
+              # and limits differ deliberately: Burstable QoS — reserve a modest
+              # floor, cap the ceiling.)
+              memory: 512Mi
           # Externalized configuration (PR 3). The image stays immutable; env-var
           # config is injected from the cluster:
           #   * configMapRef — non-secret config (LOG_LEVEL, MLFLOW_TRACKING_URI),

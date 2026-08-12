@@ -4,29 +4,32 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
-> **Status — security hardening (Sprint 5, PR 4).** PR 1 established the structure
-> and namespace; PR 2 made it a **runnable** workload (real `ml-pipeline:local`
-> image, real `dvc repro`, finite-run lifecycle — `restartPolicy: Never`,
-> `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3 externalized
-> **configuration** (a `ConfigMap`), a **Secret** template (created out-of-band,
-> never committed), and a least-privilege **ServiceAccount** with the API-token
-> automount off (see
+> **Status — resource & lifecycle management (Sprint 5, PR 5).** PR 1 established
+> the structure and namespace; PR 2 made it a **runnable** workload (real
+> `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —
+> `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3
+> externalized **configuration** (a `ConfigMap`), a **Secret** template (created
+> out-of-band, never committed), and a least-privilege **ServiceAccount** with the
+> API-token automount off (see
 > [§ Configuration, secrets & identity](#configuration-secrets--identity-pr-3));
-> PR 4 (this change) adds a **hardened `securityContext`** — non-root with an
-> explicit uid/gid `10001`, `allowPrivilegeEscalation: false`, all Linux
-> capabilities dropped, and seccomp `RuntimeDefault` (see
-> [§ Security hardening](#security-hardening-pr-4)). One control — **read-only root
-> filesystem — is deliberately deferred** (DVC writes state in-tree; see that
-> section and [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)).
-> It intentionally does **not** yet include CPU/memory resource limits — those land
-> in a later, focused PR (see [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
+> PR 4 added a **hardened `securityContext`** — non-root with an explicit uid/gid
+> `10001`, `allowPrivilegeEscalation: false`, all Linux capabilities dropped, and
+> seccomp `RuntimeDefault` (see [§ Security hardening](#security-hardening-pr-4);
+> read-only root is deliberately deferred —
+> [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)); PR 5
+> (this change) adds **resource requests/limits chosen from measured usage** and
+> documents the lifecycle, the **deliberate absence of health probes**, and the
+> **failure modes** (see [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)
+> and [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)).
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
-> lifecycle + hardened context verified end to end (see
-> [§ Execution record](#execution-record-pr-2) and
-> [§ Security hardening](#security-hardening-pr-4)), but the pipeline does **not**
-> complete yet: `dvc repro` aborts with `/app is not a git repository`, and a
-> *green* run additionally needs the PR 3 data/credential wiring. Nothing here has
-> been applied to a production cluster, and **restricted Pod Security Standard
+> lifecycle, hardened context, and resource enforcement verified end to end (see
+> [§ Execution record](#execution-record-pr-2),
+> [§ Security hardening](#security-hardening-pr-4), and
+> [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)), but
+> the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not a
+> git repository`, and a *green* run additionally needs the PR 3 data/credential
+> wiring. Nothing here has been applied to a production cluster; the resource
+> values are **not production-certified** and **restricted Pod Security Standard
 > compliance is not claimed**.
 
 For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, the
@@ -338,6 +341,92 @@ DVC cache/tmp/lock + SCM onto declared writable volumes), tracked in
 > Pod Security admission label or policy engine has validated it, and read-only
 > root is not met.
 
+## Resource & lifecycle management (PR 5)
+
+The Job declares **resource requests and limits chosen from measured usage of the
+real image**, and its finite-run lifecycle is documented and justified. Design of
+record: [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md).
+
+### Resources
+
+```yaml
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits:   { cpu: "1",  memory: 512Mi }
+```
+
+| Field | Value | Why (measured) |
+|---|---|---|
+| `requests.cpu` | `250m` | Scheduling reservation for a short deterministic batch; each grid fit ≈ 1 s on one core. |
+| `requests.memory` | `256Mi` | Above the measured **~133 MiB** import+train floor — a genuine reservation. |
+| `limits.cpu` | `"1"` | Caps joblib's `n_jobs=-1` worker fan-out to one worker → **bounds memory** (loky reads the cgroup quota, not the node's core count). |
+| `limits.memory` | `512Mi` | ~3.9× the measured 1-CPU peak; a runaway is `OOMKilled`, not left to eat the node. |
+
+Requests ≠ limits ⇒ **Burstable** QoS (confirmed on a live cluster).
+
+**Why the CPU limit is load-bearing here.** `train` runs
+`GridSearchCV(n_jobs=-1)`; joblib/loky sizes its pool from the **CPU limit**, and
+each worker forks the ~130 MiB interpreter. So the CPU limit is also the
+memory-safety control. Measured peak (whole cgroup, incl. workers) on the real
+image:
+
+| Granted CPU | Peak memory | `train` wall time |
+|---|---|---|
+| 1 CPU | ~133 MiB | ~2.5 s |
+| 2 CPU | ~419 MiB | ~5.4 s |
+| unlimited (20 cores) | ~1785 MiB | ~20 s |
+
+At this data size more cores *hurt* (fork/dispatch overhead dwarfs the sub-second
+fits), so capping at 1 CPU is leaner **and** faster.
+
+### Lifecycle
+
+- **`restartPolicy: Never`** — each retry is a fresh, independently-inspectable
+  pod (a Job requires `Never` or `OnFailure`).
+- **`backoffLimit: 2`** — the pipeline is deterministic, so retries only absorb a
+  *transient* MLflow/DagsHub blip; the controller back-offs exponentially between
+  attempts, so a fast-failing pod cannot hot-loop.
+- **`activeDeadlineSeconds: 1800`** — an outer stall-guard (e.g. a hung network
+  call), not a performance SLO; deliberately generous.
+
+### No health probes — by design
+
+No liveness/readiness/startup probes are defined. Probes model a long-running
+server (readiness gates Service traffic; liveness restarts a wedged daemon); this
+is a finite batch Job with **no socket, no Service, and no traffic**. Its health
+is *terminal* — exit `0` = success, non-zero = failure — which the Job controller
+already observes from the exit status. A liveness probe would need an HTTP endpoint
+the app should not expose, or would fire during normal quiet compute and kill a
+healthy run. The real health signal is the exit code plus the structured logs.
+
+### Failure modes
+
+| Failure | Surfaces as | Where to look |
+|---|---|---|
+| Image pull | `ErrImagePull` / `ImagePullBackOff` | `describe pod` events; image not side-loaded into the cluster. |
+| Configuration | early non-zero exit (`ConfigError`) | logs; ConfigMap absent/misnamed. |
+| Secret | starts (Secret is `optional`), then MLflow auth error | logs at the tracking boundary; Secret not created out-of-band. |
+| Application | non-zero exit (today: `/app is not a git repository`) | identical across all 3 attempts ⇒ deterministic, not transient. |
+| Resource exhaustion | `OOMKilled` (exit 137) over `limits.memory`; throttling over `limits.cpu` | pod `terminated.reason: OOMKilled` (validated at 64Mi). |
+
+### How this was validated
+
+- **Resource probe** on the real image (`run_training`, synthetic Pima-shaped
+  data): import floor ~132 MiB; peak-vs-CPU as tabled; `joblib.cpu_count()`
+  confirmed to track the cgroup quota, not `os.cpu_count()`.
+- **Success at the chosen limits** — `docker run --cpus=1 --memory=512m
+  --memory-swap=512m …` completes, ~133 MiB peak, exit 0.
+- **Resource-exhaustion failure** — the same run under `--memory=64m` is
+  `OOMKilled` (exit 137): the limit is kernel-enforced.
+- **Live cluster (Docker Desktop v1.34.3)** — enforced `resources` matched exactly,
+  **QoS `Burstable`**, **no probes**, `restartPolicy: Never`; the Job ran its 3-attempt
+  back-off lifecycle and every attempt hit the *same* pre-existing SCM blocker
+  (exit 255) — **none `OOMKilled`**, i.e. no new failure mode. Deleted afterward.
+
+> **Not claimed:** production-certified capacity. These values are tuned for a
+> *local* single-node run on the small bundled dataset; a larger dataset, wider
+> grid, or real cluster would require re-measuring.
+
 ## What is deliberately absent (and where it lands)
 
 ### Roadmap within Sprint 5
@@ -351,8 +440,8 @@ DVC cache/tmp/lock + SCM onto declared writable volumes), tracked in
 | Demonstrated local cluster run (Job lifecycle) | ✅ executed 2026-08-12 (see [§ Execution record](#execution-record-pr-2)) | PR 2 |
 | ConfigMap / Secret template / ServiceAccount + token automount off | ✅ this PR | PR 3 |
 | Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
-| Security hardening (securityContext, seccomp, dropped caps) | ✅ this PR (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
-| CPU/memory resource requests/limits, lifecycle tuning | ⬜ deferred | PR 5 |
+| Security hardening (securityContext, seccomp, dropped caps) | ✅ done (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
+| CPU/memory resource requests/limits, lifecycle & probe decision, failure modes | ✅ this PR (measured values, [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)) | PR 5 |
 | CI manifest validation | ⬜ deferred | PR 6 |
 | Operations runbook & proof | ⬜ deferred | PR 7 |
 

@@ -7,15 +7,16 @@ image and lifecycle (PR 2), the configuration boundary (PR 3), and the
 **enforced security context** (PR 4), and — critically — exactly which parts are
 locally validatable today versus deferred to a production cluster.
 
-> **Scope note.** Through PR 4 the manifests in [`k8s/`](../k8s/) define the
+> **Scope note.** Through PR 5 the manifests in [`k8s/`](../k8s/) define the
 > namespace, a **runnable** batch `Job` — the real `ml-pipeline:local` image, the
 > real `dvc repro` command, and a finite-run lifecycle — plus externalized
 > **configuration** (`ConfigMap`), a **Secret** template (created out-of-band,
 > never committed), a least-privilege **ServiceAccount** with the API-token
-> automount off, and a **hardened `securityContext`** (non-root with an explicit
+> automount off, a **hardened `securityContext`** (non-root with an explicit
 > uid/gid, no privilege escalation, all capabilities dropped, seccomp
-> `RuntimeDefault`); all render cleanly through Kustomize. Resource requests/limits
-> and CI validation are deferred to later PRs (see
+> `RuntimeDefault`), and **resource requests/limits chosen from measured usage**
+> (see [ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)); all render
+> cleanly through Kustomize. CI validation is deferred to a later PR (see
 > [§6](#6-identity--security-boundary) and
 > [§7](#7-local-validation-vs-production-deferred)). The Job was **executed on a
 > local Docker Desktop cluster** (2026-08-12) and its lifecycle verified end to
@@ -162,21 +163,34 @@ Pending ─▶ Running ─▶ (pipeline executes) ─▶ Succeeded  ─▶ Job: 
 - **restartPolicy: `Never`** — a failed attempt is not restarted in place; the
   Job controller schedules a fresh pod for each retry, so every attempt is a
   clean run of the deterministic pipeline.
-- **backoffLimit: `2`** — a deterministic failure (bad input, config error) fails
-  fast after bounded retries instead of looping.
+- **backoffLimit: `2`** — the pipeline is deterministic, so a genuine failure (bad
+  input, config error) fails identically on every attempt; the two retries exist
+  only to absorb a *transient* MLflow/DagsHub blip. The controller back-offs
+  exponentially between attempts (~10 s, 20 s, …), so a fast-failing pod cannot
+  hot-loop.
 - **activeDeadlineSeconds: `1800`** — a wall-clock ceiling for the whole Job (all
-  retries). This is a completion-semantics safety net, **not** a CPU/memory
-  resource limit: the pipeline finishes in ~1–2 minutes locally, so a Job still
-  running after 30 minutes is stuck (e.g. a stalled MLflow/DagsHub call) and
-  should fail with `DeadlineExceeded` rather than hold a pod indefinitely. It is
-  deliberately generous; CPU/memory requests & limits and any tightening of this
-  ceiling are deferred to the reliability PR (PR 5), as is
-  `ttlSecondsAfterFinished` (finished-Job cleanup).
+  retries). This is a completion-semantics stall-guard, **not** a performance SLO:
+  compute finishes in well under a minute locally (`train`, the heaviest stage,
+  measured at ~2.5 s under a 1-CPU limit), so a Job still running after 30 minutes
+  is stuck (e.g. a stalled MLflow/DagsHub call) and should fail with
+  `DeadlineExceeded` rather than hold a pod indefinitely. Deliberately generous;
+  `ttlSecondsAfterFinished` (finished-Job cleanup) remains a future item.
+- **Resource requests/limits (PR 5)** — `requests: {cpu: 250m, memory: 256Mi}`,
+  `limits: {cpu: "1", memory: 512Mi}`, giving **Burstable** QoS. Chosen from
+  measured usage of the real image, not guessed; the CPU limit doubles as the
+  memory-safety control because `GridSearchCV(n_jobs=-1)` sizes joblib's worker
+  fan-out from the cgroup CPU quota. Full method and numbers in
+  [ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md) and
+  [§7](#7-local-validation-vs-production-deferred).
 - **No liveness/readiness probes** — there is no live endpoint or long-running
-  process to probe. This mirrors the container image, which ships **no
-  `HEALTHCHECK`** by the same reasoning (see the `Dockerfile` and
-  [ADR-005](decisions/ADR-005-containerization-strategy.md)). The build-time
-  import smoke test plays the environment-validity role a probe otherwise would.
+  process to probe; a finite Job's health is *terminal* (exit `0` = success), which
+  the Job controller reads directly from the container's exit status. A liveness
+  probe would need an HTTP endpoint the app should not expose, or would fire during
+  normal quiet compute and kill a healthy run. This mirrors the container image,
+  which ships **no `HEALTHCHECK`** by the same reasoning (see the `Dockerfile` and
+  [ADR-005](decisions/ADR-005-containerization-strategy.md)); the build-time import
+  smoke test plays the environment-validity role a probe otherwise would. Decision
+  recorded in [ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md).
 
 ---
 
@@ -274,6 +288,9 @@ A reviewer should be able to tell exactly what is proven today.
   successfully; the rendered container image is `ml-pipeline:local`, the command
   is `["dvc","repro"]`, and the Job carries `backoffLimit: 2`,
   `activeDeadlineSeconds: 1800`, `restartPolicy: Never`, and `namespace: mlops`.
+  The rendered container also carries the PR 5 `resources` block —
+  `requests: {cpu: 250m, memory: 256Mi}`, `limits: {cpu: "1", memory: 512Mi}` —
+  and **no** health probes.
 - Config/identity wiring is asserted (PR 3): the rendered Job carries
   `serviceAccountName: mlops-pipeline`, `automountServiceAccountToken: false`, and
   an `envFrom` pulling the `mlops-pipeline-config` ConfigMap plus the optional
@@ -287,8 +304,11 @@ A reviewer should be able to tell exactly what is proven today.
   `readOnlyRootFilesystem: false`; container-only fields are not at the pod level
   (and vice-versa); and no privilege/escape footguns (`privileged`, `hostNetwork`,
   `hostPID`, `hostIPC`) are present.
-- Scope discipline is asserted: the rendered manifest still contains **no**
-  `resources` block — that is PR 5.
+- Resource & lifecycle are asserted (PR 5): the rendered container carries
+  `resources.requests {cpu: 250m, memory: 256Mi}` and `resources.limits
+  {cpu: "1", memory: 512Mi}`, and no `livenessProbe`/`readinessProbe`/
+  `startupProbe` is present. Scope discipline still holds — no CI-validation
+  wiring is present yet (that is PR 6).
 - The workload model, boundaries, and trade-offs are documented and recorded in
   an ADR.
 
@@ -351,6 +371,23 @@ The controls were validated empirically, not asserted:
   enforcement above served as the authoritative validation, and the manifest was
   **not** sent to any external scanning service.
 
+**PR 5 resource & lifecycle — measured on the real image and verified on the live
+cluster (Docker Desktop v1.34.3).** The resource values were derived from
+`docker run` probes of the real `ml-pipeline:local` image running the actual
+`run_training` computation, not guessed: the import floor is ~132 MiB and peak
+memory scales with granted CPU (1 CPU → ~133 MiB/~2.5 s; 2 → ~419 MiB; unlimited →
+~1785 MiB/~20 s) because `GridSearchCV(n_jobs=-1)` sizes joblib's worker pool from
+the cgroup CPU quota (confirmed: `joblib.cpu_count()` returns `2` under `--cpus=2`
+while `os.cpu_count()` returns `20`). The chosen limits were validated directly —
+`--cpus=1 --memory=512m` completes (exit 0, ~133 MiB peak) and `--memory=64m` is
+`OOMKilled` (exit 137), proving the memory limit is kernel-enforced. On the live
+cluster the applied pod reported the enforced `resources` exactly, **QoS
+`Burstable`**, **no** probes, and `restartPolicy: Never`; the Job ran its 3-attempt
+back-off lifecycle and every attempt terminated at the *same* pre-existing SCM
+blocker (exit 255) — **none `OOMKilled`**, i.e. the resource constraints added no
+new failure mode. Full method and the failure-mode table:
+[ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md).
+
 **Production-deferred (explicitly out of scope for Sprint 5):**
 
 - Any managed cluster (EKS/AKS/GKE), high availability, autoscaling, GitOps,
@@ -360,8 +397,9 @@ The controls were validated empirically, not asserted:
 
 ```text
 Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Production deployment
-   ✅ PR 1–4               ✅ executed — lifecycle + config/identity     ⬜ future roadmap
-                              + hardened securityContext verified;
+   ✅ PR 1–5               ✅ executed — lifecycle + config/identity     ⬜ future roadmap
+                              + hardened securityContext + measured
+                              resources verified;
                               pipeline not green yet (SCM + data)
 ```
 
@@ -379,8 +417,10 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
   names the one that is not (read-only root filesystem, deferred with evidence in
   [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)); no admission
   controller has validated the profile.
-- It does not claim production readiness or resource tuning — resource
-  requests/limits are explicitly PR 5.
+- It does not claim **production-certified capacity**. PR 5 sets resource
+  requests/limits from *measured* local usage on the small bundled dataset
+  ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)); a larger
+  dataset, wider grid, or real cluster would require re-measuring.
 - It does not introduce an HTTP API, `Service`, or `Ingress`; the workload is
   batch and is modelled as such.
 

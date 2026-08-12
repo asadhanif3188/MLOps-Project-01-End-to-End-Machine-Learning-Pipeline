@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kubernetes resource & lifecycle management** (Sprint 5, PR 5) — the pipeline
+  `Job` now declares CPU/memory requests and limits chosen from **measured** usage
+  of the real image, and its finite-run lifecycle and probe decision are documented.
+  - `resources.requests: {cpu: 250m, memory: 256Mi}` and
+    `resources.limits: {cpu: "1", memory: 512Mi}` → **Burstable** QoS. Values are
+    derived from `docker run` probes of the real `ml-pipeline:local` image, not
+    guessed: the import floor is ~132 MiB, and peak memory scales with granted CPU
+    (1 CPU → ~133 MiB/~2.5 s; 2 → ~419 MiB; unlimited → ~1785 MiB/~20 s) because
+    `GridSearchCV(n_jobs=-1)` sizes joblib's worker fan-out from the cgroup CPU
+    quota (`joblib.cpu_count()` returns `2` under `--cpus=2` while `os.cpu_count()`
+    returns `20`). The **CPU limit therefore doubles as the memory-safety control**.
+  - Lifecycle reviewed and documented: `restartPolicy: Never`, `backoffLimit: 2`
+    (deterministic-failure aware; exponential back-off absorbs only transient
+    faults), and `activeDeadlineSeconds: 1800` (an outer stall-guard, not an SLO).
+  - **No health probes**, by design — a finite batch Job has no socket/Service and
+    its health is terminal (exit code), which the Job controller reads directly; a
+    probe would need an endpoint the app should not expose or would kill a healthy
+    quiet run. Documented alongside the five failure modes (image pull, config,
+    secret, application, resource exhaustion).
+  - Validated: at the chosen limits the container completes (exit 0, ~133 MiB
+    peak); at `--memory=64m` it is `OOMKilled` (exit 137, limit kernel-enforced);
+    on a live Docker Desktop cluster (v1.34.3) the enforced `resources`, `Burstable`
+    QoS, absence of probes, and 3-attempt back-off lifecycle were confirmed, with
+    every attempt hitting the *same* pre-existing SCM blocker (exit 255) and **none
+    `OOMKilled`** — no new failure mode. Values are **not** production-certified.
+  - [ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md) records the
+    method, the measurements, the alternatives, and what the decision does not imply.
 - **Kubernetes architectural foundation** (Sprint 5, PR 1) — the containerized
   pipeline is now expressed as a Kubernetes **batch workload**, without
   manufacturing a fake online service. Foundation only: it establishes the

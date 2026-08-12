@@ -147,16 +147,22 @@ in [`k8s/README.md`](k8s/README.md).
 > non-root with an explicit uid/gid `10001`, `allowPrivilegeEscalation: false`, all
 > Linux capabilities dropped, and seccomp `RuntimeDefault` (read-only root
 > filesystem is deliberately deferred because DVC writes state in-tree —
-> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md)). The Job was
-> **executed on a local Docker Desktop cluster** (2026-08-12) and its lifecycle +
-> hardened context verified end to end; the pipeline does **not** complete yet —
-> `dvc repro` aborts with `/app is not a git repository`, so a *green* in-cluster
-> run still needs an SCM in the image + mounted data. CPU/memory limits and CI
-> validation are deferred to later PRs, and **restricted Pod Security Standard
-> compliance is not claimed**. Rationale:
+> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md)); PR 5 added
+> **resource requests/limits chosen from measured usage** (`requests: cpu 250m /
+> mem 256Mi`, `limits: cpu 1 / mem 512Mi` → Burstable QoS) and documented the
+> lifecycle, the **deliberate absence of health probes**, and the failure modes
+> ([ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)). The Job was
+> **executed on a local Docker Desktop cluster** (2026-08-12) and its lifecycle,
+> hardened context, and resource enforcement verified end to end; the pipeline does
+> **not** complete yet — `dvc repro` aborts with `/app is not a git repository`, so
+> a *green* in-cluster run still needs an SCM in the image + mounted data. CI
+> validation is deferred to a later PR; the resource values are **not
+> production-certified** and **restricted Pod Security Standard compliance is not
+> claimed**. Rationale:
 > [Kubernetes Architecture](docs/kubernetes-architecture.md),
-> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md), and
-> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md); run details:
+> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md),
+> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md), and
+> [ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md); run details:
 > [`k8s/README.md`](k8s/README.md).
 
 ### How the DVC Stages Are Defined
