@@ -7,11 +7,14 @@ image and lifecycle (PR 2), the configuration and security boundaries (as design
 contracts for PR 3–4), and — critically — exactly which parts are locally
 validatable today versus deferred to a production cluster.
 
-> **Scope note.** Through PR 2 the manifests in [`k8s/`](../k8s/) define the
-> namespace and a **runnable** batch `Job` — the real `ml-pipeline:local` image,
-> the real `dvc repro` command, and a finite-run lifecycle — and render cleanly
-> through Kustomize. Configuration/secrets, security hardening, resource limits,
-> and CI validation are deferred to later PRs (see
+> **Scope note.** Through PR 3 the manifests in [`k8s/`](../k8s/) define the
+> namespace, a **runnable** batch `Job` — the real `ml-pipeline:local` image, the
+> real `dvc repro` command, and a finite-run lifecycle — plus externalized
+> **configuration** (`ConfigMap`), a **Secret** template (created out-of-band,
+> never committed), and a least-privilege **ServiceAccount** with the API-token
+> automount off; all render cleanly through Kustomize. Security-context hardening,
+> resource limits, and CI validation are deferred to later PRs (see
+> [§6](#6-identity--security-boundary) and
 > [§7](#7-local-validation-vs-production-deferred)). The Job was **executed on a
 > local Docker Desktop cluster** (2026-08-12) and its lifecycle verified end to
 > end, but the pipeline does **not** complete yet: `dvc repro` aborts because the
@@ -109,9 +112,9 @@ The Kubernetes objects and their responsibilities:
 |---|---|---|---|
 | `mlops` | `Namespace` | Environment / RBAC / quota / Pod Security boundary | ✅ |
 | `mlops-pipeline` | `Job` (`batch/v1`) | Run the pipeline once to completion, with bounded retries | ✅ (runnable, PR 2) |
-| ConfigMap | `ConfigMap` | Non-secret runtime config (params, flags) | ⬜ PR 3 |
-| Secret | `Secret` | MLflow/DagsHub credentials — template only, never real values | ⬜ PR 3 |
-| ServiceAccount | `ServiceAccount` | Least-privilege identity (likely no API access) | ⬜ PR 3 |
+| `mlops-pipeline-config` | `ConfigMap` | Non-secret runtime config (`LOG_LEVEL`, `MLFLOW_TRACKING_URI`) | ✅ PR 3 |
+| `mlops-pipeline-secret` | `Secret` | MLflow/DagsHub credentials — template only, real Secret created out-of-band | ✅ PR 3 (template) |
+| `mlops-pipeline` | `ServiceAccount` | Least-privilege identity, **no API access** (`automountServiceAccountToken: false`) | ✅ PR 3 |
 
 Note the absence of a `Service`, `Ingress`, or `Deployment`. That absence is a
 design decision, not an omission: a batch Job exposes nothing and serves nothing,
@@ -171,38 +174,61 @@ Pending ─▶ Running ─▶ (pipeline executes) ─▶ Succeeded  ─▶ Job: 
 
 ---
 
-## 5. Configuration Boundary (design contract; implemented in PR 3)
+## 5. Configuration Boundary (implemented in PR 3)
 
 Configuration is layered so that the image stays immutable and environment-
 specific values live in the cluster, consistent with the twelve-factor approach
-already used for the container ([ADR-005](decisions/ADR-005-containerization-strategy.md)):
+already used for the container ([ADR-005](decisions/ADR-005-containerization-strategy.md)).
+Each variable below is one the code actually reads
+(`src/pipeline_io.py::require_env`, `src/logging_config.py`, the MLflow client) —
+classification is by sensitivity, not convenience:
 
 | Layer | Holds | Kubernetes carrier | Committed? |
 |---|---|---|---|
 | Image | Application code + dependencies | Container image | Code only |
-| Non-secret config | Pipeline params, runtime flags, `LOG_LEVEL` | `ConfigMap` | Yes (no secrets) |
-| Secrets | MLflow/DagsHub credentials, tokens | `Secret` | **Template only, never values** |
+| Non-secret config | `LOG_LEVEL`, `MLFLOW_TRACKING_URI` (an endpoint, not a credential) | `ConfigMap` `mlops-pipeline-config` | Yes (no secrets) |
+| Secrets | `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD` | `Secret` `mlops-pipeline-secret` | **Template only, never values** |
 
-Contract for this sprint: **no real credentials are ever committed**. The Secret
-strategy (PR 3) ships a template/example with placeholder values only. The
-current base `Job` carries none of this wiring yet — as written it renders and is
-schema-valid, but a real cluster run of `dvc repro` needs the PR 3
-data/credential wiring.
+Both are wired into the Job with `envFrom` — the ConfigMap unconditionally (it is
+in the Kustomize base) and the Secret with `optional: true`, so `kubectl apply -k`
+succeeds before the operator creates the real Secret out-of-band from a git-ignored
+`.env`. The classifying rule: `MLFLOW_TRACKING_URI` is a public endpoint (the same
+host already committed as the DVC S3 remote in `.dvc/config`) and carries no
+authority, so it is config; the username/token authenticate to it, so they are
+secret. `LOG_LEVEL` is the pipeline's own knob.
+
+Contract, held: **no real credentials are ever committed.** The repo ships only
+[`k8s/base/secret.example.yaml`](../k8s/base/secret.example.yaml) with placeholder
+values, and it is excluded from `base/kustomization.yaml` so no render or apply can
+emit it. A *green* run still needs the remaining "make it runnable" work (an SCM in
+the image + a mounted dataset); credentials are now injectable.
 
 ---
 
-## 6. Security Boundary (design contract; implemented in PR 4)
+## 6. Identity & Security Boundary
 
-The container image is already built to satisfy a restricted posture: a dedicated
-non-root UID/GID (`10001`), no baked-in secrets or data, and a minimal surface
+**Identity (implemented in PR 3).** The workload runs under a dedicated
+`ServiceAccount` (`mlops-pipeline`) rather than the namespace `default`, giving it
+a named identity to scope any future policy to. Because the pipeline never calls
+the Kubernetes API — it runs `dvc repro` and reaches only MLflow/DagsHub over
+HTTPS — the account sets **`automountServiceAccountToken: false`** (on both the
+ServiceAccount and the Job's pod template), so no API token is projected into the
+pod. Verified on a live cluster: the applied pod had an empty `spec.volumes` and
+empty container `volumeMounts` (no `kube-api-access-*` token volume, no
+`/var/run/secrets/kubernetes.io/serviceaccount` mount). For the same reason **no
+`Role`/`RoleBinding`** is defined — the workload needs no permissions, and granting
+unused ones would violate least privilege.
+
+**Security context (design contract; implemented in PR 4).** The container image
+is already built to satisfy a restricted posture: a dedicated non-root UID/GID
+(`10001`), no baked-in secrets or data, and a minimal surface
 ([ADR-005](decisions/ADR-005-containerization-strategy.md) §9). The Kubernetes
-security context that *enforces* this at the platform layer —
-`runAsNonRoot`, `allowPrivilegeEscalation: false`, dropped capabilities,
-`seccompProfile: RuntimeDefault`, read-only root filesystem where compatible —
-plus a least-privilege ServiceAccount with `automountServiceAccountToken: false`,
-is the subject of **ADR-010** and lands in **PR 4**. It is intentionally absent
-from the foundation manifest so that each control can be introduced and validated
-against the real image rather than asserted blindly.
+security context that *enforces* this at the platform layer — `runAsNonRoot`,
+`allowPrivilegeEscalation: false`, dropped capabilities,
+`seccompProfile: RuntimeDefault`, read-only root filesystem where compatible — is
+the subject of **ADR-010** and lands in **PR 4**. It is intentionally still absent
+so that each control can be introduced and validated against the real image rather
+than asserted blindly.
 
 ---
 
@@ -217,9 +243,14 @@ A reviewer should be able to tell exactly what is proven today.
   successfully; the rendered container image is `ml-pipeline:local`, the command
   is `["dvc","repro"]`, and the Job carries `backoffLimit: 2`,
   `activeDeadlineSeconds: 1800`, `restartPolicy: Never`, and `namespace: mlops`.
-- Scope discipline is asserted: the rendered manifest contains **no** deferred
-  fields (no `resources`, `securityContext`, `env`/`envFrom`, `volumes`, or
-  `serviceAccountName`).
+- Config/identity wiring is asserted (PR 3): the rendered Job carries
+  `serviceAccountName: mlops-pipeline`, `automountServiceAccountToken: false`, and
+  an `envFrom` pulling the `mlops-pipeline-config` ConfigMap plus the optional
+  `mlops-pipeline-secret`; the `ConfigMap` holds exactly `LOG_LEVEL` and
+  `MLFLOW_TRACKING_URI` (no credential keys), and the **Secret template is not
+  emitted** by the build.
+- Scope discipline is asserted: the rendered manifest still contains **no**
+  deferred fields (no `resources`, no `securityContext`) — those are PR 4/PR 5.
 - The workload model, boundaries, and trade-offs are documented and recorded in
   an ADR.
 
@@ -245,6 +276,17 @@ against a live cluster. The **Job lifecycle was verified end to end**:
   succeeds against this live cluster (the offline `--dry-run=client` could not
   reach an API server); `kubeconform` remains uninstalled.
 
+**PR 3 config/identity — also verified on the live cluster (Docker Desktop
+Kubernetes v1.34.3).** `kubectl apply -k k8s/overlays/local` created the
+`ServiceAccount`, `ConfigMap`, and Job; the applied pod carried
+`serviceAccountName: mlops-pipeline` with an **empty `spec.volumes`** and empty
+container `volumeMounts` — proving `automountServiceAccountToken: false` (no
+`kube-api-access-*` token volume mounted). The container **started** with the
+optional Secret absent (confirming `secretRef.optional: true`), then failed at the
+same known SCM blocker as PR 2 — i.e. this PR altered configuration and identity
+only, not pipeline behavior. The existing test suite is likewise unaffected
+(100 passed, 1 pre-existing skip). Resources were deleted afterward.
+
 **Production-deferred (explicitly out of scope for Sprint 5):**
 
 - Any managed cluster (EKS/AKS/GKE), high availability, autoscaling, GitOps,
@@ -262,11 +304,12 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
 
 ## 8. What This Does *Not* Claim
 
-- It does not claim a demonstrated cluster run — only rendered, structurally
-  validated manifests (offline render + YAML parse + field assertions) and a
-  documented, runnable model.
-- It does not claim production readiness, security hardening, or resource tuning —
-  those are explicitly later PRs.
+- It does not claim a **green** in-cluster pipeline run. The Job *mechanism* and
+  the config/identity wiring are demonstrated on a local cluster, but `dvc repro`
+  does not complete (it aborts at the SCM check); an end-to-end green run needs the
+  remaining "make it runnable" work (SCM in the image + mounted data).
+- It does not claim production readiness, security-context hardening, or resource
+  tuning — those are explicitly later PRs.
 - It does not introduce an HTTP API, `Service`, or `Ingress`; the workload is
   batch and is modelled as such.
 

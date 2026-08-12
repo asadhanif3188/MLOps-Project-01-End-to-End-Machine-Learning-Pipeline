@@ -14,7 +14,13 @@ namespace: mlops
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
   - job.yaml
+  # secret.example.yaml is intentionally NOT a resource: it is a committed
+  # *template* with placeholder values, never applied. The real Secret is created
+  # out-of-band from your local .env so credentials never enter git or a rendered
+  # manifest (see secret.example.yaml and k8s/README.md § "Secrets").
 
 # Common identifying metadata for every resource. includeSelectors is false on
 # purpose: a Job's spec.selector is auto-generated and immutable, so a label

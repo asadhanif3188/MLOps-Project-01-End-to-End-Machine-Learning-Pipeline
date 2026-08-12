@@ -7,18 +7,21 @@
 # full rationale, completion/retry semantics, and the rejected alternatives are in
 # docs/decisions/ADR-009-kubernetes-workload-model.md.
 #
-# SCOPE (Sprint 5, PR 2 — the runnable batch workload). This manifest is the
-# actual workload: the real, locally built image and the real container command
-# (`dvc repro`, the image's default CMD), with a lifecycle appropriate for a
-# finite ML run. It deliberately does NOT yet include the following — each lands
-# in a later, focused PR so the reasoning stays reviewable:
-#   * ConfigMap / Secret / env wiring for data + MLflow credentials  (PR 3)
+# SCOPE (Sprint 5). PR 2 made this the actual runnable workload: the real,
+# locally built image and the real container command (`dvc repro`, the image's
+# default CMD), with a lifecycle appropriate for a finite ML run. PR 3 (this
+# change) adds externalized configuration and a least-privilege identity:
+#   * a ConfigMap for non-secret runtime config (LOG_LEVEL, MLFLOW_TRACKING_URI)
+#   * a Secret (created out-of-band; template committed) for MLflow credentials
+#   * a dedicated ServiceAccount with the API token automount turned off
+# It still deliberately does NOT include the following — each lands in a later,
+# focused PR so the reasoning stays reviewable:
 #   * securityContext hardening (runAsNonRoot, drop caps, seccomp, ...)  (PR 4)
 #   * CPU/memory resource requests & limits                            (PR 5)
-#   * a dedicated least-privilege ServiceAccount                       (PR 3)
-# Consequently a *green* end-to-end run needs PR 3's data/credential wiring: the
-# runtime image excludes data (.dockerignore) and expects it mounted, so without
-# it the pipeline fails fast at the preprocess stage. See
+# A *green* end-to-end run still needs the remaining "make it runnable" work: an
+# SCM in the image (`dvc repro` aborts with "/app is not a git repository") and a
+# mounted dataset (the runtime image excludes data via .dockerignore and expects
+# it mounted). Credentials are now injectable via the Secret above. See
 # docs/kubernetes-architecture.md § "Local validation vs production-deferred".
 apiVersion: batch/v1
 kind: Job
@@ -55,6 +58,14 @@ spec:
       # a fresh pod for each retry (up to backoffLimit). This keeps every attempt
       # a clean run of the deterministic pipeline rather than a mutated container.
       restartPolicy: Never
+      # Run under the workload's own least-privilege identity (serviceaccount.yaml)
+      # instead of the namespace `default` account.
+      serviceAccountName: mlops-pipeline
+      # The pipeline never calls the Kubernetes API (it runs dvc/sklearn/MLflow),
+      # so it needs no API token. Re-asserted here at the pod level even though the
+      # ServiceAccount already defaults it off — defense in depth, and it makes the
+      # workload's "no cluster API access" intent explicit in the Job itself.
+      automountServiceAccountToken: false
       containers:
         - name: pipeline
           # The actual image the project builds. Name only here — the tag is
@@ -68,3 +79,20 @@ spec:
           # Same entrypoint as the container image's default CMD; stated
           # explicitly so the workload's intent is legible in the manifest.
           command: ["dvc", "repro"]
+          # Externalized configuration (PR 3). The image stays immutable; env-var
+          # config is injected from the cluster:
+          #   * configMapRef — non-secret config (LOG_LEVEL, MLFLOW_TRACKING_URI),
+          #     always present (it is part of the Kustomize base).
+          #   * secretRef    — MLflow credentials (MLFLOW_TRACKING_USERNAME/
+          #     _PASSWORD). optional: true so `kubectl apply -k` succeeds before
+          #     the operator creates the out-of-band Secret (see secret.example.yaml);
+          #     without it the pipeline still runs but the MLflow calls fail with a
+          #     clear auth error — the credentials are never baked into the image.
+          # Both sources inject env vars whose names match exactly what the code
+          # reads (require_env / logging_config / the MLflow client).
+          envFrom:
+            - configMapRef:
+                name: mlops-pipeline-config
+            - secretRef:
+                name: mlops-pipeline-secret
+                optional: true

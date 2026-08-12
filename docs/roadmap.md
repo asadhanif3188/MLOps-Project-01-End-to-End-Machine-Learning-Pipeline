@@ -166,7 +166,13 @@ reducing regressions and manual effort.
   Docker Desktop cluster (2026-08-12): the Job lifecycle is verified end to end (3
   attempts → terminal `Failed`), though the pipeline is not yet green in-cluster
   (`dvc repro` needs an SCM + data + credentials — PR 3).
-- Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
+- ✅ Externalize configuration and secrets for a cluster — **implemented** (Sprint
+  5, PR 3): a `ConfigMap` for non-secret runtime config (`LOG_LEVEL`,
+  `MLFLOW_TRACKING_URI`), a **Secret template** for the MLflow/DagsHub credentials
+  (`MLFLOW_TRACKING_USERNAME`/`_PASSWORD`, created out-of-band — never committed),
+  and a least-privilege `ServiceAccount` with `automountServiceAccountToken: false`
+  (the workload needs no Kubernetes API access, so no RBAC is granted). Wired into
+  the Job via `envFrom` and verified on a local cluster.
 - Define resource requests/limits for reproducible scheduling.
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
@@ -177,9 +183,12 @@ independent of a developer's local machine.
 > manifests define a **runnable** Job (namespace + Job + Kustomize + local
 > runbook), validated by offline rendering and field assertions **and by an
 > executed run on a local Docker Desktop cluster** (2026-08-12) that verified the
-> Job lifecycle end to end. Still to come in Sprint 5: a green in-cluster
-> `dvc repro` (SCM + data + credentials), config/secrets + identity, security
-> hardening (ADR-010), resource management, and CI manifest validation.
+> Job lifecycle end to end. PR 3 adds externalized **config/secrets + identity** (a
+> `ConfigMap`, an out-of-band `Secret` template, and a least-privilege
+> `ServiceAccount` with token automount off), also verified on the local cluster.
+> Still to come in Sprint 5: a green in-cluster `dvc repro` (SCM + data +
+> credentials), security hardening (ADR-010), resource management, and CI manifest
+> validation.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
