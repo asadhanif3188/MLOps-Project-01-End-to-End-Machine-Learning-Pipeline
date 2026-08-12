@@ -139,13 +139,16 @@ A step-by-step local run (build → side-load → apply → inspect → logs →
 in [`k8s/README.md`](k8s/README.md).
 
 > **Status:** namespace, workload model, and the **runnable** Job + local runbook
-> are in place (Sprint 5 PR 1–2). The Job was **executed on a local Docker Desktop
+> are in place (Sprint 5 PR 1–2), and PR 3 adds externalized **configuration** (a
+> `ConfigMap`: `LOG_LEVEL`, `MLFLOW_TRACKING_URI`), a **Secret** template for the
+> DagsHub credentials (created out-of-band — never committed), and a
+> least-privilege **ServiceAccount** with the API-token automount off (the workload
+> needs no cluster API access). The Job was **executed on a local Docker Desktop
 > cluster** (2026-08-12) and its lifecycle verified end to end (3 attempts →
 > terminal `Failed`); the pipeline does **not** complete yet — `dvc repro` aborts
-> with `/app is not a git repository`, so a *green* in-cluster run needs the PR 3
-> "make it runnable" work (SCM in the image + mounted data + credentials).
-> Configuration/secrets, security hardening, CPU/memory limits, and CI validation
-> are deferred to later PRs. Rationale:
+> with `/app is not a git repository`, so a *green* in-cluster run still needs an
+> SCM in the image + mounted data. Security hardening, CPU/memory limits, and CI
+> validation are deferred to later PRs. Rationale:
 > [Kubernetes Architecture](docs/kubernetes-architecture.md) and
 > [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md); run details:
 > [`k8s/README.md`](k8s/README.md).

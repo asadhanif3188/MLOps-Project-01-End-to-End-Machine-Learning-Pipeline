@@ -4,13 +4,17 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
-> **Status — runnable batch workload (Sprint 5, PR 2).** PR 1 established the
-> structure, namespace boundary, and workload *model*; PR 2 makes it the actual
-> **runnable** workload — the real `ml-pipeline:local` image, the real `dvc repro`
-> command, and a finite-run lifecycle (`restartPolicy: Never`, `backoffLimit: 2`,
-> `activeDeadlineSeconds: 1800`). It intentionally does **not** yet include
-> configuration/secrets, security hardening, or CPU/memory resource limits — those
-> land in later, focused PRs (see [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
+> **Status — configuration & identity (Sprint 5, PR 3).** PR 1 established the
+> structure and namespace; PR 2 made it a **runnable** workload (real
+> `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —
+> `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3
+> (this change) externalizes **configuration** (a `ConfigMap`), a **Secret**
+> template (created out-of-band, never committed), and a least-privilege
+> **ServiceAccount** with the API-token automount turned off (see
+> [§ Configuration, secrets & identity](#configuration-secrets--identity-pr-3)).
+> It intentionally does **not** yet include security-context hardening or
+> CPU/memory resource limits — those land in later, focused PRs (see
+> [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
 > lifecycle verified end to end (see [§ Execution record](#execution-record-pr-2)),
 > but the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not
@@ -173,6 +177,90 @@ the PR 3 "make it runnable" scope and needs three things, in order:
 
 The workload *mechanism* is validated here; its *green execution* is not claimed.
 
+## Configuration, secrets & identity (PR 3)
+
+The image is immutable; everything environment-specific is injected at run time,
+split by sensitivity. All names below are the **actual** variables the code reads
+(`src/pipeline_io.py::require_env`, `src/logging_config.py`, and the MLflow
+client) — none are invented.
+
+| Value | Sensitive? | Carrier | Committed? |
+|---|---|---|---|
+| `LOG_LEVEL` (default `INFO`) | No | `ConfigMap` `mlops-pipeline-config` | Yes |
+| `MLFLOW_TRACKING_URI` (DagsHub endpoint) | No — an endpoint, not a credential | `ConfigMap` `mlops-pipeline-config` | Yes |
+| `MLFLOW_TRACKING_USERNAME` | **Yes** — auth | `Secret` `mlops-pipeline-secret` | **No — created out-of-band** |
+| `MLFLOW_TRACKING_PASSWORD` | **Yes** — auth token | `Secret` `mlops-pipeline-secret` | **No — created out-of-band** |
+
+Both carriers are wired into the Job with `envFrom` (see
+[`base/job.yaml`](base/job.yaml)): the ConfigMap is always present (it is part of
+the Kustomize base); the Secret reference is `optional: true` so
+`kubectl apply -k` succeeds *before* the Secret exists.
+
+### ConfigMap usage
+
+`kustomize build k8s/overlays/local` renders the ConfigMap and the Job's
+`envFrom`. The `MLFLOW_TRACKING_URI` is the project's public DagsHub MLflow
+endpoint — the same host already committed as the DVC S3 remote in
+[`.dvc/config`](../.dvc/config), so committing it leaks nothing. A future
+staging/prod overlay overrides it with a patch or `configMapGenerator` without
+touching the base.
+
+### Secrets — creation, lifecycle, and why nothing is committed
+
+**Why credentials are never committed.** A `Secret`'s `data` is only base64, not
+encryption; committing it (even the example) would leak the DagsHub token into git
+history forever. So the repo ships **only a template** —
+[`base/secret.example.yaml`](base/secret.example.yaml), with placeholder values —
+and it is deliberately **excluded from `base/kustomization.yaml`**, so no render or
+apply can ever emit it. The real Secret is created straight from your local,
+git-ignored `.env` and never passes through git or a rendered manifest.
+
+**Create it** (once per cluster/namespace, after the namespace exists):
+
+```bash
+# From your local .env (see .env.example for the three variables):
+kubectl create secret generic mlops-pipeline-secret \
+  --namespace mlops \
+  --from-env-file=.env
+
+# …or supply just the two credential keys explicitly:
+kubectl create secret generic mlops-pipeline-secret \
+  --namespace mlops \
+  --from-literal=MLFLOW_TRACKING_USERNAME='<dagshub-username>' \
+  --from-literal=MLFLOW_TRACKING_PASSWORD='<dagshub-token>'
+```
+
+**Lifecycle.** Rotate by replacing it (the next Job run picks up new values):
+
+```bash
+kubectl create secret generic mlops-pipeline-secret --namespace mlops \
+  --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Remove it with `kubectl -n mlops delete secret mlops-pipeline-secret`. Because the
+Job's `secretRef` is `optional: true`, the pipeline still *starts* without it —
+the MLflow calls then fail with a clear auth error rather than the pod refusing to
+schedule.
+
+### Does the workload need Kubernetes API access? No.
+
+The pipeline runs `dvc repro` (preprocess → split → train → evaluate) and talks
+only to MLflow/DagsHub over HTTPS — it never creates, reads, or watches cluster
+objects. So it gets a dedicated **ServiceAccount** (`mlops-pipeline`) purely as a
+named identity, with **`automountServiceAccountToken: false`** (set on both the
+ServiceAccount and the Job's pod template): no API token is mounted, so there is
+no unused, exfiltratable credential in the pod. For the same reason **no
+`Role`/`RoleBinding` is defined** — granting permissions the workload never uses
+would violate least privilege.
+
+This was verified on the live cluster: the applied pod carried
+`serviceAccountName: mlops-pipeline` with an **empty `spec.volumes`** and an empty
+container `volumeMounts` — i.e. no `kube-api-access-*` projected-token volume and
+no `/var/run/secrets/kubernetes.io/serviceaccount` mount. The pod still *started*
+(container Created → Started) with the optional Secret absent, then hit the same
+known SCM blocker as PR 2 (`/app is not a git repository`) — confirming this PR
+changed configuration/identity only, not pipeline behavior.
+
 ## What is deliberately absent (and where it lands)
 
 ### Roadmap within Sprint 5
@@ -184,8 +272,8 @@ The workload *mechanism* is validated here; its *green execution* is not claimed
 | Runnable workload (real image, command, lifecycle) | ✅ this PR | PR 2 |
 | Local run **runbook** (build/load/apply/inspect/logs/re-run) | ✅ this PR | PR 2 |
 | Demonstrated local cluster run (Job lifecycle) | ✅ executed 2026-08-12 (see [§ Execution record](#execution-record-pr-2)) | PR 2 |
-| Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3 |
-| ConfigMap / Secret / ServiceAccount | ⬜ deferred | PR 3 |
+| ConfigMap / Secret template / ServiceAccount + token automount off | ✅ this PR | PR 3 |
+| Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
 | Security hardening (securityContext, seccomp, dropped caps) | ⬜ deferred | PR 4 |
 | CPU/memory resource requests/limits, lifecycle tuning | ⬜ deferred | PR 5 |
 | CI manifest validation | ⬜ deferred | PR 6 |

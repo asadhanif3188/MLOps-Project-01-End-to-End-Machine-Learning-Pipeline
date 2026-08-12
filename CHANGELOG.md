@@ -59,6 +59,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     repository` (the image has no SCM). A *green* in-cluster run is PR 3 scope —
     an SCM (`git init`/`core.no_scm`), a mounted dataset, and credentials. The Job
     *mechanism* is proven; a *green pipeline run* is not claimed.
+- **Kubernetes configuration, secrets & workload identity** (Sprint 5, PR 3) —
+  externalized config and a least-privilege identity, wired into the Job, with no
+  credentials committed:
+  - A **`ConfigMap`** (`mlops-pipeline-config`) for the non-secret runtime config
+    the code actually reads — `LOG_LEVEL` (`src/logging_config.py`) and
+    `MLFLOW_TRACKING_URI` (`require_env` in `src/train.py`/`src/evaluate.py`). The
+    URI is a public endpoint (the same host already committed as the DVC S3 remote
+    in `.dvc/config`), not a credential.
+  - A **`Secret` template** ([`k8s/base/secret.example.yaml`](k8s/base/secret.example.yaml))
+    for the sensitive values — `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD`
+    — with placeholders only. It is **excluded from the Kustomize base**, so no
+    render or apply can emit it; the real Secret is created out-of-band from a
+    git-ignored `.env` (`kubectl create secret … --from-env-file`). **No credentials
+    are committed.**
+  - An explicit least-privilege **`ServiceAccount`** (`mlops-pipeline`) with
+    **`automountServiceAccountToken: false`** (on both the account and the pod): the
+    pipeline never calls the Kubernetes API, so no API token is mounted and **no
+    `Role`/`RoleBinding`** is granted.
+  - The `Job` now sets `serviceAccountName`, disables the token automount, and pulls
+    config/credentials via `envFrom` (the ConfigMap unconditionally; the Secret as
+    `optional: true` so `apply -k` works before the Secret exists).
+  - Validated: base and overlay render via Kustomize; field assertions confirm the
+    ConfigMap holds no credential keys, the Secret template is not emitted, and env
+    names match the app. Verified on a local Docker Desktop cluster — the applied
+    pod carried the ServiceAccount with an empty `volumes`/`volumeMounts` (no API
+    token projected) and started with the optional Secret absent, failing only at
+    the pre-existing SCM blocker. Existing tests unchanged (100 passed, 1 skip). No
+    application behavior changed.
 
 ### Changed
 

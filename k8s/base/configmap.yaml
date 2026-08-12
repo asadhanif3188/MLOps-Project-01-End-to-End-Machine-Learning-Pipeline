@@ -1,0 +1,32 @@
+# ConfigMap — non-secret runtime configuration for the pipeline.
+#
+# Twelve-factor config: the image stays immutable and environment-specific,
+# non-sensitive values are injected at run time (consistent with ADR-005 and the
+# docker-compose `environment:` block). Only values that are genuinely NOT secret
+# live here; credentials go in a Secret (see secret.example.yaml), never here.
+#
+# Every key is a real environment variable the application code reads:
+#   * LOG_LEVEL          — read by src/logging_config.py (default "INFO").
+#   * MLFLOW_TRACKING_URI — read by src/train.py / src/evaluate.py via
+#                           require_env("MLFLOW_TRACKING_URI"); passed to
+#                           mlflow.set_tracking_uri(). It is an ENDPOINT, not a
+#                           credential — authentication uses the Secret's
+#                           MLFLOW_TRACKING_USERNAME / MLFLOW_TRACKING_PASSWORD.
+#
+# The URI is the project's public DagsHub MLflow endpoint — the same host already
+# committed (non-secret) as the DVC S3 remote in .dvc/config, so committing it
+# here leaks nothing. A future staging/prod overlay repoints it with a patch or a
+# configMapGenerator without editing this base.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlops-pipeline-config
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: config
+    app.kubernetes.io/managed-by: kustomize
+data:
+  LOG_LEVEL: "INFO"
+  MLFLOW_TRACKING_URI: "https://dagshub.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline.mlflow"
