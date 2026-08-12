@@ -293,19 +293,23 @@ jobs:
 
           echo "::group::kustomize v${KUSTOMIZE_VERSION}"
           base="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}"
-          curl -fsSLo kustomize.tar.gz "${base}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          # Download to the EXACT filename each checksums file references, so
+          # `sha256sum -c -` (which reads the name from the checksum line) can find it.
+          kustomize_tar="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "${kustomize_tar}" "${base}/${kustomize_tar}"
           curl -fsSLo kustomize_checksums.txt "${base}/checksums.txt"
-          grep "kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" kustomize_checksums.txt | sha256sum -c -
-          tar -xzf kustomize.tar.gz
+          grep "${kustomize_tar}" kustomize_checksums.txt | sha256sum -c -
+          tar -xzf "${kustomize_tar}"
           sudo install -m 0755 kustomize /usr/local/bin/kustomize
           echo "::endgroup::"
 
           echo "::group::kubeconform v${KUBECONFORM_VERSION}"
           kcbase="https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}"
-          curl -fsSLo kubeconform.tar.gz "${kcbase}/kubeconform-linux-amd64.tar.gz"
+          kubeconform_tar="kubeconform-linux-amd64.tar.gz"
+          curl -fsSLo "${kubeconform_tar}" "${kcbase}/${kubeconform_tar}"
           curl -fsSLo kubeconform_checksums.txt "${kcbase}/CHECKSUMS"
-          grep "kubeconform-linux-amd64.tar.gz" kubeconform_checksums.txt | sha256sum -c -
-          tar -xzf kubeconform.tar.gz
+          grep "${kubeconform_tar}" kubeconform_checksums.txt | sha256sum -c -
+          tar -xzf "${kubeconform_tar}"
           sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
           echo "::endgroup::"
 
