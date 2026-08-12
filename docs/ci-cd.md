@@ -6,11 +6,15 @@ and the road to **Continuous Delivery (CD)**. The implemented pipeline lives in
 **GitHub Actions**.
 
 > **Scope today: integration, not delivery.** CI *validates* every change — it
-> lints, tests, and builds the container image to prove it assembles and runs. It
-> deliberately does **not** deploy, does **not** push images to any registry, and
-> does **not** touch Kubernetes. Those are CD concerns, deferred to the roadmap
-> below. This keeps the pipeline safe to run on untrusted pull requests: it has
-> read-only permissions and no publish credentials.
+> lints, tests, builds the container image to prove it assembles and runs, and
+> **statically validates the Kubernetes manifests** (syntax, schema, Kustomize
+> rendering, and the workload's security/resource contract). It deliberately does
+> **not** deploy, does **not** push images to any registry, and does **not** run
+> the workload on a cluster. The single job that contacts a Kubernetes API server
+> is **opt-in** (manual `workflow_dispatch`) and only does a server-side *dry run*.
+> Those delivery steps are deferred to the roadmap below. This keeps the pipeline
+> safe to run on untrusted pull requests: it has read-only permissions and no
+> publish credentials.
 
 ---
 
@@ -30,9 +34,11 @@ consume minutes.
 
 ## Pipeline stages
 
-The workflow has two jobs. `quality` runs first; `docker` runs only if it passes
+The workflow has four jobs. `quality` runs first; `docker` runs only if it passes
 (`needs: quality`), so image-build minutes are never spent on a change that
-already fails lint or tests.
+already fails lint or tests. `k8s-validate` runs **in parallel** (it needs neither
+the Python package nor the image). `k8s-cluster-dry-run` is **opt-in** — it runs
+only on a manual `workflow_dispatch`.
 
 ### Job 1 — `quality` (Lint & Test)
 
@@ -60,6 +66,55 @@ already fails lint or tests.
 > Dockerfile smoke-test already exercises the environment at build time). The
 > `development` image is a local convenience and is validated implicitly by the
 > `quality` job running the same tools.
+
+### Job 3 — `k8s-validate` (Kubernetes Manifest Validation, static)
+
+Runs on every push/PR, in parallel with `quality`. **Static** validation only — no
+cluster is contacted and the workload is never run. Deterministic: tool **and**
+schema versions are pinned (job `env`) and the downloaded binaries are
+checksum-verified. Design of record:
+[ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md).
+
+| # | Stage | Tool (pinned) | Purpose |
+|---|-------|---------------|---------|
+| 1 | Checkout | `actions/checkout@v4` | Fetch the repo. |
+| 2 | Setup Python + PyYAML | `setup-python@v5` (3.12) + `pyyaml==6.0.2` | The project validator's only dependency — no ML stack, so the job stays lean. |
+| 3 | Install tools | `kustomize` 5.4.3, `kubeconform` 0.6.7 | Single static binaries, each verified against its release checksums before use. |
+| 4 | **Render + schema** | `kustomize build` → `kubeconform -strict` (k8s 1.31.0) | Renders `base/` **and** `overlays/local/` (proves Kustomize builds + YAML parses), then validates every object against the pinned upstream Kubernetes OpenAPI schema and **rejects unknown fields**. |
+| 5 | **Security + required fields** | `python k8s/validate.py` | Asserts the PR 1–5 workload contract that a schema check can't express, one PASS/FAIL line per check (below). |
+
+`k8s/validate.py` checks: `runAsNonRoot` + non-root `runAsUser`;
+`allowPrivilegeEscalation: false`; `seccompProfile: RuntimeDefault`;
+`capabilities: drop [ALL]`; an explicit **non-default** ServiceAccount that exists
+in the render; `automountServiceAccountToken: false` (pod + SA); CPU/memory
+**requests and limits**; a Job `restartPolicy` of `Never`/`OnFailure`; an
+**explicit, pinned** image (no `:latest`); every namespaced object pinned to
+`mlops`; and **secret hygiene** (no rendered `Secret`, no inline credential values,
+no secret fingerprints anywhere in `k8s/`, template holds only placeholders).
+
+> **Static, not deployment.** This job proves the manifests are well-formed,
+> schema-valid, and hardened — **not** that the workload deploys or runs. Its one
+> network dependency is `kubeconform` fetching the pinned schema; everything else is
+> offline.
+
+### Job 4 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
+
+The **only** job that talks to a Kubernetes API server, and it is **not** on the
+per-PR path — it runs only on a manual `workflow_dispatch` (`if:
+github.event_name == 'workflow_dispatch'`), so a real cluster's bootstrap cost and
+flake surface never burden ordinary changes. It stands up an **ephemeral kind
+cluster** (`helm/kind-action`, k8s v1.31.0) and does a **server-side dry run**:
+
+```bash
+kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k k8s/overlays/local --dry-run=server   # admits; persists/ runs nothing
+```
+
+Every object passes through the API server's validation, defaulting, and admission
+(including Pod Security) — but nothing is persisted and the Job never executes. This
+validates **admissibility**, not deployment: a green dry-run does **not** mean the
+pipeline completes in-cluster (it still needs an SCM in the image + mounted data —
+see [k8s/README.md](../k8s/README.md)). The cluster is torn down automatically.
 
 ---
 
@@ -126,6 +181,21 @@ docker run --rm ml-pipeline:ci python -c "import sklearn, mlflow, dvc, pandas; p
 docker run --rm ml-pipeline:ci dvc --version
 ```
 
+**Kubernetes manifest validation** (mirrors the `k8s-validate` job):
+
+```bash
+# Security + required-field checks (uses your local kustomize/kubectl):
+python k8s/validate.py
+
+# Schema validation (install kubeconform once; pin the k8s version to match CI):
+kustomize build k8s/base            | kubeconform -strict -summary -kubernetes-version 1.31.0 -schema-location default -
+kustomize build k8s/overlays/local  | kubeconform -strict -summary -kubernetes-version 1.31.0 -schema-location default -
+
+# Optional cluster admission dry-run against any local cluster (kind/minikube/Docker Desktop):
+kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k k8s/overlays/local --dry-run=server     # admits; runs nothing
+```
+
 For the full inner-loop workflow, see
 [docker-development.md](docker-development.md); pre-commit hooks
 (`make install-dev` installs them) catch most lint/format issues before a commit
@@ -159,7 +229,11 @@ project roadmap ([roadmap.md](roadmap.md)):
    CI builds are byte-for-byte repeatable.
 5. **Deploy to Kubernetes (v4–v5).** Roll the published image out to a cluster
    (staging → production) with environment-scoped config and secrets. This is the
-   first true **CD** step and is explicitly **not** implemented here.
+   first true **CD** step and is explicitly **not** implemented here. *Manifest
+   **validation** is already in place* (Job 3 `k8s-validate` — static syntax,
+   schema, Kustomize, and security/resource checks — plus the opt-in Job 4
+   admission dry-run; [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)),
+   but validating the manifests is not deploying them.
 6. **Progressive delivery & rollback (v5+).** Canary/blue-green strategies,
    automated rollback on failed health checks, and a serving component with real
    liveness/readiness probes.
@@ -172,6 +246,8 @@ choice and the orchestration/secret-handling approach as open decisions).
 ## See also
 
 - [.github/workflows/ci.yml](../.github/workflows/ci.yml) — the pipeline itself
+- [k8s/README.md](../k8s/README.md) — the manifests and how to validate/run them locally
+- [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md) — Kubernetes manifest validation decision record
 - [containerization.md](containerization.md) — image design and the container's role in CI/CD
 - [ADR-005](decisions/ADR-005-containerization-strategy.md) — containerization decision record
 - [docker-development.md](docker-development.md) — local Docker Compose workflow

@@ -1,12 +1,17 @@
 # Continuous Integration for the End-to-End ML Pipeline.
 #
 # Quality gates that run on every push to `main` and every pull request. CI is
-# validation ONLY: it lints, tests, and builds the container image to prove it
-# assembles and runs — it does NOT deploy, does NOT push images to any registry,
-# and does NOT touch Kubernetes. Continuous *delivery* is deferred (see
-# docs/ci-cd.md § "Future CD roadmap" and roadmap.md v3).
+# validation ONLY: it lints, tests, builds the container image to prove it
+# assembles and runs, and STATICALLY validates the Kubernetes manifests (YAML
+# syntax, upstream schema, Kustomize rendering, and the workload's security
+# contract). It does NOT deploy, does NOT push images to any registry, and does
+# NOT run the workload on a cluster. The one job that touches a Kubernetes API
+# server — `k8s-cluster-dry-run` — is opt-in (workflow_dispatch only) and does a
+# server-side *dry run* that admits the manifests without persisting or executing
+# them. Continuous *delivery* (an actual deploy) is deferred (see docs/ci-cd.md
+# § "Future CD roadmap" and roadmap.md v3).
 #
-# Design of record: docs/ci-cd.md.
+# Design of record: docs/ci-cd.md (§ "Kubernetes manifest validation").
 
 name: CI
 
@@ -236,4 +241,152 @@ jobs:
 
           echo "::group::DVC entrypoint present"
           docker run --rm ml-pipeline:ci dvc --version
+          echo "::endgroup::"
+
+  # ---------------------------------------------------------------------------
+  # k8s-validate — STATIC validation of the Kubernetes manifests. Independent of
+  # `quality`/`docker` (no Python package or image needed), so it runs in
+  # parallel for fast feedback. Deterministic: no cluster is contacted and the
+  # workload is never run — this proves the manifests are well-formed, schema-
+  # valid, render cleanly through Kustomize, and satisfy the security contract
+  # from PRs 1-5. It does NOT prove the workload deploys or runs (that is the
+  # opt-in k8s-cluster-dry-run job below). Tool + schema versions are pinned so a
+  # green run today is a green run tomorrow. Design of record: docs/ci-cd.md
+  # § "Kubernetes manifest validation".
+  # ---------------------------------------------------------------------------
+  k8s-validate:
+    name: K8s Manifest Validation (static)
+    runs-on: ubuntu-latest
+    env:
+      # Pinned for reproducibility. Bump deliberately, not implicitly.
+      KUSTOMIZE_VERSION: 5.4.3
+      KUBECONFORM_VERSION: 0.6.7
+      # The Kubernetes API version whose OpenAPI schema the manifests are checked
+      # against. Pinned so the schema gate is stable regardless of the manifests'
+      # eventual target cluster version.
+      K8S_SCHEMA_VERSION: 1.31.0
+    steps:
+      # Stage 1 — Checkout.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Stage 2 — Python 3.12 for the project validator (k8s/validate.py). Only
+      # PyYAML is needed; installing just that keeps the job lean and fast (no
+      # sklearn/dvc/mlflow stack) — the validator is pure stdlib + PyYAML.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML (validator's only dependency)
+        run: pip install "pyyaml==6.0.2"
+
+      # Stage 3 — Install kustomize (pinned) and kubeconform (pinned) as single
+      # static binaries, each verified against its release checksums before use
+      # (integrity against a corrupted download). GitHub runners ship *some*
+      # kustomize, but pinning makes the render deterministic across runner image
+      # bumps. Pinning the binaries by digest is a future supply-chain hardening
+      # step (roadmap / ADR-005), noted honestly rather than claimed here.
+      - name: Install kustomize + kubeconform (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"; cd "$tmp"
+
+          echo "::group::kustomize v${KUSTOMIZE_VERSION}"
+          base="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}"
+          # Download to the EXACT filename each checksums file references, so
+          # `sha256sum -c -` (which reads the name from the checksum line) can find it.
+          kustomize_tar="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "${kustomize_tar}" "${base}/${kustomize_tar}"
+          curl -fsSLo kustomize_checksums.txt "${base}/checksums.txt"
+          grep "${kustomize_tar}" kustomize_checksums.txt | sha256sum -c -
+          tar -xzf "${kustomize_tar}"
+          sudo install -m 0755 kustomize /usr/local/bin/kustomize
+          echo "::endgroup::"
+
+          echo "::group::kubeconform v${KUBECONFORM_VERSION}"
+          kcbase="https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}"
+          kubeconform_tar="kubeconform-linux-amd64.tar.gz"
+          curl -fsSLo "${kubeconform_tar}" "${kcbase}/${kubeconform_tar}"
+          curl -fsSLo kubeconform_checksums.txt "${kcbase}/CHECKSUMS"
+          grep "${kubeconform_tar}" kubeconform_checksums.txt | sha256sum -c -
+          tar -xzf "${kubeconform_tar}"
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          echo "::endgroup::"
+
+          kustomize version
+          kubeconform -v
+
+      # Stage 4 — Kustomize render + schema validation (kubeconform). Rendering
+      # both base and overlay proves the Kustomize build is valid (and that the
+      # YAML is syntactically sound); piping into kubeconform -strict validates
+      # every object against the pinned upstream Kubernetes OpenAPI schema and
+      # REJECTS unknown fields (a typo'd or misplaced field fails here).
+      #   NOTE: kubeconform fetches the pinned schema from the public
+      #   kubernetes-json-schema repo, so this step needs network. It is the only
+      #   network dependency in this job; the rest is fully offline.
+      - name: Render + schema validation (kustomize + kubeconform)
+        run: |
+          set -euo pipefail
+          for target in k8s/base k8s/overlays/local; do
+            echo "::group::kubeconform ${target} (k8s ${K8S_SCHEMA_VERSION}, strict)"
+            kustomize build "${target}" \
+              | kubeconform -strict -summary -verbose \
+                  -kubernetes-version "${K8S_SCHEMA_VERSION}" \
+                  -schema-location default -
+            echo "::endgroup::"
+          done
+
+      # Stage 5 — Project security & required-field checks. Renders overlays/local
+      # and asserts the workload contract that a generic schema validator cannot
+      # express: runAsNonRoot, allowPrivilegeEscalation false, seccomp
+      # RuntimeDefault, capabilities drop ALL, explicit non-default ServiceAccount,
+      # token automount off, CPU/memory requests+limits, explicit pinned image,
+      # namespace pinning, and secret hygiene (no rendered Secret, no inline
+      # credentials). Each check prints a PASS/FAIL line, so a failure names
+      # exactly what is wrong.
+      - name: Static security & required-field checks (k8s/validate.py)
+        run: python k8s/validate.py
+
+  # ---------------------------------------------------------------------------
+  # k8s-cluster-dry-run — OPT-IN cluster admission check. This is the only job
+  # that talks to a Kubernetes API server. It is NOT run per-PR (it would add
+  # cluster-bootstrap cost and a flake surface to every change); trigger it
+  # manually from the Actions tab (workflow_dispatch) when you want to validate
+  # admission against a live API server. It stands up an *ephemeral* kind cluster
+  # and does a server-side DRY RUN: every object passes through the API server's
+  # validation, defaulting, and admission (including Pod Security) — but nothing
+  # is persisted and the Job is never executed. This validates admissibility, not
+  # deployment: a green run here does NOT mean the pipeline runs to completion in
+  # cluster (it still needs an SCM in the image + mounted data — see k8s/README.md).
+  # The cluster is torn down automatically when the job ends.
+  # ---------------------------------------------------------------------------
+  k8s-cluster-dry-run:
+    name: K8s Cluster Admission (dry-run, manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Ephemeral kind cluster pinned to the same Kubernetes minor the static
+      # schema gate targets. The action provisions kubectl + a working kubeconfig
+      # and deletes the cluster at job end.
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          version: v0.23.0
+          node_image: kindest/node:v1.31.0
+          cluster_name: mlops-validate
+
+      # A server-side dry-run admits the whole overlay without running it.
+      # Namespaced objects need their namespace to exist first, so the throwaway
+      # cluster gets the namespace for real, then the overlay is dry-run applied.
+      - name: Server-side dry-run admission (validates, runs nothing)
+        run: |
+          set -euo pipefail
+          echo "::group::create namespace (real, on throwaway cluster)"
+          kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
+          echo "::endgroup::"
+          echo "::group::kubectl apply -k --dry-run=server (admission only)"
+          kubectl apply -k k8s/overlays/local --dry-run=server
           echo "::endgroup::"

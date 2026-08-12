@@ -12,7 +12,7 @@ PYTHON ?= python
 .DEFAULT_GOAL := help
 
 .PHONY: help install install-dev format format-check lint lint-fix typecheck \
-        test test-smoke test-unit coverage check pre-commit repro clean
+        test test-smoke test-unit coverage check pre-commit repro k8s-validate clean
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -62,6 +62,9 @@ pre-commit: ## Run every pre-commit hook against all files
 
 repro: ## Reproduce the DVC pipeline
 	dvc repro
+
+k8s-validate: ## Statically validate the Kubernetes manifests (security + required fields)
+	$(PYTHON) k8s/validate.py
 
 clean: ## Remove caches and Python bytecode
 	rm -rf .ruff_cache .mypy_cache .pytest_cache

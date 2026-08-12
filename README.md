@@ -116,10 +116,12 @@ image:
 5. **DVC pipeline integrity** — parse the graph and check status, offline
 6. **Fixture pipeline reproduction** — a real `dvc repro` with byte-identical artifact validation
 7. **Docker build** of the production image (built and validated — never pushed)
+8. **Kubernetes manifest validation** — YAML syntax, upstream **schema** (`kubeconform`), **Kustomize** rendering, and the workload **security/resource** contract (`k8s/validate.py`); **static only** — no deploy, workload never run ([ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md))
 
-CI is validation only — it does not deploy, publish images, or use Kubernetes.
-See [docs/ci-cd.md](docs/ci-cd.md) for the stages, failure strategy, and how to
-reproduce each gate locally.
+CI is validation only — it does not deploy or publish images, and its Kubernetes
+checks are **static** (plus one opt-in ephemeral-cluster admission dry-run); it
+never runs the workload on a cluster. See [docs/ci-cd.md](docs/ci-cd.md) for the
+stages, failure strategy, and how to reproduce each gate locally.
 
 ## Kubernetes
 
@@ -151,18 +153,23 @@ in [`k8s/README.md`](k8s/README.md).
 > **resource requests/limits chosen from measured usage** (`requests: cpu 250m /
 > mem 256Mi`, `limits: cpu 1 / mem 512Mi` → Burstable QoS) and documented the
 > lifecycle, the **deliberate absence of health probes**, and the failure modes
-> ([ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)). The Job was
-> **executed on a local Docker Desktop cluster** (2026-08-12) and its lifecycle,
-> hardened context, and resource enforcement verified end to end; the pipeline does
-> **not** complete yet — `dvc repro` aborts with `/app is not a git repository`, so
-> a *green* in-cluster run still needs an SCM in the image + mounted data. CI
-> validation is deferred to a later PR; the resource values are **not
-> production-certified** and **restricted Pod Security Standard compliance is not
-> claimed**. Rationale:
+> ([ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)); PR 6 added
+> **automated CI validation** of the manifests — YAML syntax, upstream **schema**
+> (`kubeconform`), **Kustomize** rendering, and the PR 1–5 **security/resource
+> contract** (`k8s/validate.py`), plus an opt-in ephemeral-cluster admission
+> dry-run ([ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md)).
+> The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
+> lifecycle, hardened context, and resource enforcement verified end to end; the
+> pipeline does **not** complete yet — `dvc repro` aborts with `/app is not a git
+> repository`, so a *green* in-cluster run still needs an SCM in the image +
+> mounted data. **CI validation is static** (plus the opt-in dry-run) — it does not
+> deploy or run the workload; the resource values are **not production-certified**
+> and **restricted Pod Security Standard compliance is not claimed**. Rationale:
 > [Kubernetes Architecture](docs/kubernetes-architecture.md),
 > [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md),
-> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md), and
-> [ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md); run details:
+> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md),
+> [ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md), and
+> [ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md); run details:
 > [`k8s/README.md`](k8s/README.md).
 
 ### How the DVC Stages Are Defined
