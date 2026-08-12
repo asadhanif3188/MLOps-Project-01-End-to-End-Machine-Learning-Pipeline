@@ -87,6 +87,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     token projected) and started with the optional Secret absent, failing only at
     the pre-existing SCM blocker. Existing tests unchanged (100 passed, 1 skip). No
     application behavior changed.
+- **Kubernetes workload security hardening** (Sprint 5, PR 4) — an enforced
+  `securityContext` on the pipeline `Job`, designed against the real image rather
+  than copy-pasted:
+  - **Pod level:** `runAsNonRoot: true` with an **explicit** `runAsUser`/`runAsGroup`
+    `10001` — required, not cosmetic, because the image's `USER` is the *name*
+    `appuser` (which the kubelet cannot verify as non-root, so `runAsNonRoot` alone
+    would reject the pod) — and `seccompProfile.type: RuntimeDefault`.
+  - **Container level:** `allowPrivilegeEscalation: false` (verified `NoNewPrivs: 1`)
+    and `capabilities.drop: [ALL]` (the pipeline needs no Linux capabilities).
+  - **`readOnlyRootFilesystem` is set explicitly to `false` and deferred with
+    evidence:** `dvc repro` mutates DVC state in-tree at the `/app` repo root (its
+    first write under a read-only root fails with
+    `[Errno 30] Read-only file system: '/app/.dvc/tmp'`; it also rewrites
+    `dvc.lock`, `.dvc/cache`, and needs a writable `.git`), so enabling it now would
+    break the workload *earlier* than the pre-existing SCM blocker. Deferred to the
+    green-in-cluster work per [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md).
+  - [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md) records the
+    decision, the pod-vs-container scoping, the read-only-root deferral, and why
+    RBAC / `NetworkPolicy` are intentionally out of scope.
+  - Validated: 21 rendered-manifest assertions (fields present, correct scope, no
+    `privileged`/host-namespace footguns); `docker run` probes on the real image
+    (imports clean under dropped caps + no-new-privs; behaviour-neutral — reaches
+    the *same* SCM blocker; read-only-root failure reproduced); and a live Docker
+    Desktop cluster **admitted** the Job and enforced the exact context (pod ran and
+    terminated at the same blocker, token automount still off). **Restricted Pod
+    Security Standard compliance is not claimed.** Tests unchanged (100 passed,
+    1 skip); no application behavior changed.
 
 ### Changed
 

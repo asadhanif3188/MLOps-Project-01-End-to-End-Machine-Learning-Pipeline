@@ -9,20 +9,27 @@
 #
 # SCOPE (Sprint 5). PR 2 made this the actual runnable workload: the real,
 # locally built image and the real container command (`dvc repro`, the image's
-# default CMD), with a lifecycle appropriate for a finite ML run. PR 3 (this
-# change) adds externalized configuration and a least-privilege identity:
-#   * a ConfigMap for non-secret runtime config (LOG_LEVEL, MLFLOW_TRACKING_URI)
-#   * a Secret (created out-of-band; template committed) for MLflow credentials
-#   * a dedicated ServiceAccount with the API token automount turned off
-# It still deliberately does NOT include the following — each lands in a later,
+# default CMD), with a lifecycle appropriate for a finite ML run. PR 3 added
+# externalized configuration and a least-privilege identity (ConfigMap, an
+# out-of-band Secret, a dedicated ServiceAccount with the API token automount
+# off). PR 4 (this change) hardens the runtime with a securityContext:
+#   * pod level      — runAsNonRoot + explicit runAsUser/runAsGroup 10001 (the
+#     image's USER is the NAME `appuser`, which the kubelet cannot verify as
+#     non-root; a numeric UID is required for runAsNonRoot to admit), and
+#     seccompProfile RuntimeDefault.
+#   * container level — allowPrivilegeEscalation: false and capabilities drop ALL
+#     (the pipeline needs no Linux capabilities), plus an EXPLICIT
+#     readOnlyRootFilesystem: false with the reason inline below.
+# It still deliberately does NOT include the following — it lands in a later,
 # focused PR so the reasoning stays reviewable:
-#   * securityContext hardening (runAsNonRoot, drop caps, seccomp, ...)  (PR 4)
 #   * CPU/memory resource requests & limits                            (PR 5)
 # A *green* end-to-end run still needs the remaining "make it runnable" work: an
 # SCM in the image (`dvc repro` aborts with "/app is not a git repository") and a
 # mounted dataset (the runtime image excludes data via .dockerignore and expects
-# it mounted). Credentials are now injectable via the Secret above. See
-# docs/kubernetes-architecture.md § "Local validation vs production-deferred".
+# it mounted). Credentials are injectable via the Secret. Security rationale and
+# the read-only-root decision are in
+# docs/decisions/ADR-010-kubernetes-security-hardening.md; see also
+# docs/kubernetes-architecture.md § "Identity & security boundary".
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -66,6 +73,25 @@ spec:
       # ServiceAccount already defaults it off — defense in depth, and it makes the
       # workload's "no cluster API access" intent explicit in the Job itself.
       automountServiceAccountToken: false
+      # Pod-level security context (PR 4). Applies to every container in the pod.
+      securityContext:
+        # Refuse to start if the resolved user is root (uid 0). The image already
+        # drops to `appuser` via `USER appuser`, but that USER is a NAME; the
+        # kubelet cannot resolve a name to a uid at admission, so runAsNonRoot
+        # alone would fail with CreateContainerConfigError ("container has
+        # runAsNonRoot and image has non-numeric user"). The explicit numeric
+        # runAsUser/runAsGroup below is therefore REQUIRED, not cosmetic.
+        runAsNonRoot: true
+        # Match the Dockerfile's dedicated identity exactly (groupadd/useradd
+        # --uid 10001 --gid 10001). Stating it here means the pod's identity is
+        # legible in the manifest and independent of the image's USER directive.
+        runAsUser: 10001
+        runAsGroup: 10001
+        # Apply the container runtime's default seccomp profile (blocks the
+        # dangerous/obsolete syscalls) instead of running seccomp-unconfined.
+        # Required by the restricted Pod Security Standard.
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: pipeline
           # The actual image the project builds. Name only here — the tag is
@@ -79,6 +105,36 @@ spec:
           # Same entrypoint as the container image's default CMD; stated
           # explicitly so the workload's intent is legible in the manifest.
           command: ["dvc", "repro"]
+          # Container-level security context (PR 4). These are container-scoped
+          # fields (they cannot live in the pod securityContext).
+          securityContext:
+            # Forbid a process from gaining more privileges than its parent
+            # (no setuid/setgid escalation). Verified: /proc/self/status reports
+            # NoNewPrivs: 1 under this setting.
+            allowPrivilegeEscalation: false
+            # The pipeline shells out to nothing privileged — it runs Python
+            # (sklearn/pandas/mlflow) and dvc over HTTPS. It needs no Linux
+            # capabilities at all, so drop the entire default set.
+            capabilities:
+              drop:
+                - ALL
+            # DELIBERATELY false, and validated as the correct choice today — not
+            # an oversight. `dvc repro` mutates DVC state IN-TREE at the /app repo
+            # root: its first action under a read-only root FS is a write to
+            # /app/.dvc/tmp (empirically: "[Errno 30] Read-only file system:
+            # '/app/.dvc/tmp'"), and it further writes /app/.dvc/cache, updates
+            # /app/dvc.lock, and requires a writable /app/.git for the SCM DVC
+            # depends on — all at the repo root, interleaved with the baked-in,
+            # read-only application code and .dvc/config. Those paths cannot be
+            # carved out with emptyDir mounts without either shadowing the image's
+            # own files or making the code root writable (which defeats the
+            # control). Enabling readOnlyRootFilesystem now would introduce a NEW,
+            # earlier failure than the pre-existing SCM blocker — i.e. weaken the
+            # workload to satisfy a checkbox. It is deferred to the same work that
+            # makes the pipeline green in-cluster (relocating DVC's cache/tmp/lock
+            # and SCM onto declared writable volumes), tracked in
+            # ADR-010-kubernetes-security-hardening.md § "Read-only root filesystem".
+            readOnlyRootFilesystem: false
           # Externalized configuration (PR 3). The image stays immutable; env-var
           # config is injected from the cluster:
           #   * configMapRef — non-secret config (LOG_LEVEL, MLFLOW_TRACKING_URI),

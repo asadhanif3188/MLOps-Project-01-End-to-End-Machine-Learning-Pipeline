@@ -4,27 +4,36 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
-> **Status — configuration & identity (Sprint 5, PR 3).** PR 1 established the
-> structure and namespace; PR 2 made it a **runnable** workload (real
-> `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —
-> `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3
-> (this change) externalizes **configuration** (a `ConfigMap`), a **Secret**
-> template (created out-of-band, never committed), and a least-privilege
-> **ServiceAccount** with the API-token automount turned off (see
-> [§ Configuration, secrets & identity](#configuration-secrets--identity-pr-3)).
-> It intentionally does **not** yet include security-context hardening or
-> CPU/memory resource limits — those land in later, focused PRs (see
-> [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
+> **Status — security hardening (Sprint 5, PR 4).** PR 1 established the structure
+> and namespace; PR 2 made it a **runnable** workload (real `ml-pipeline:local`
+> image, real `dvc repro`, finite-run lifecycle — `restartPolicy: Never`,
+> `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3 externalized
+> **configuration** (a `ConfigMap`), a **Secret** template (created out-of-band,
+> never committed), and a least-privilege **ServiceAccount** with the API-token
+> automount off (see
+> [§ Configuration, secrets & identity](#configuration-secrets--identity-pr-3));
+> PR 4 (this change) adds a **hardened `securityContext`** — non-root with an
+> explicit uid/gid `10001`, `allowPrivilegeEscalation: false`, all Linux
+> capabilities dropped, and seccomp `RuntimeDefault` (see
+> [§ Security hardening](#security-hardening-pr-4)). One control — **read-only root
+> filesystem — is deliberately deferred** (DVC writes state in-tree; see that
+> section and [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)).
+> It intentionally does **not** yet include CPU/memory resource limits — those land
+> in a later, focused PR (see [§ Roadmap within Sprint 5](#roadmap-within-sprint-5)).
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
-> lifecycle verified end to end (see [§ Execution record](#execution-record-pr-2)),
-> but the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not
-> a git repository`, and a *green* run additionally needs the PR 3 data/credential
-> wiring. Nothing here has been applied to a production cluster.
+> lifecycle + hardened context verified end to end (see
+> [§ Execution record](#execution-record-pr-2) and
+> [§ Security hardening](#security-hardening-pr-4)), but the pipeline does **not**
+> complete yet: `dvc repro` aborts with `/app is not a git repository`, and a
+> *green* run additionally needs the PR 3 data/credential wiring. Nothing here has
+> been applied to a production cluster, and **restricted Pod Security Standard
+> compliance is not claimed**.
 
 For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, the
 workload lifecycle, and the local-vs-production boundary — see
-[docs/kubernetes-architecture.md](../docs/kubernetes-architecture.md) and
-[ADR-009](../docs/decisions/ADR-009-kubernetes-workload-model.md).
+[docs/kubernetes-architecture.md](../docs/kubernetes-architecture.md),
+[ADR-009](../docs/decisions/ADR-009-kubernetes-workload-model.md), and
+[ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md).
 
 ## Layout
 
@@ -261,6 +270,74 @@ no `/var/run/secrets/kubernetes.io/serviceaccount` mount. The pod still *started
 known SCM blocker as PR 2 (`/app is not a git repository`) — confirming this PR
 changed configuration/identity only, not pipeline behavior.
 
+## Security hardening (PR 4)
+
+The `Job` runs under a `securityContext` that *enforces* a restricted posture at
+the platform layer, rather than trusting the image alone. Design of record:
+[ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md).
+
+**Pod level** (applies to every container in the pod):
+
+| Field | Value | Why |
+|---|---|---|
+| `runAsNonRoot` | `true` | Refuse to start as uid 0 — enforced, not assumed. |
+| `runAsUser` / `runAsGroup` | `10001` | Matches the Dockerfile's `useradd/groupadd --uid/--gid 10001`. **Required**, not cosmetic: the image's `USER` is the *name* `appuser`, which the kubelet cannot verify as non-root, so `runAsNonRoot` alone would fail with `CreateContainerConfigError`. |
+| `seccompProfile.type` | `RuntimeDefault` | Apply the runtime's default syscall filter instead of running unconfined. |
+
+**Container level** (these fields cannot live at the pod level):
+
+| Field | Value | Why |
+|---|---|---|
+| `allowPrivilegeEscalation` | `false` | No setuid/setgid escalation (verified: `NoNewPrivs: 1`). |
+| `capabilities.drop` | `[ALL]` | The pipeline runs Python + `dvc` over HTTPS; it needs **no** Linux capabilities. |
+| `readOnlyRootFilesystem` | `false` | Deliberately deferred — see below. |
+
+### Why the root filesystem is **not** read-only (yet)
+
+`readOnlyRootFilesystem: true` is evaluated and intentionally *not* enabled,
+because `dvc repro` **writes DVC state in-tree at the `/app` repo root**:
+
+```bash
+# Proof — read-only root, only /tmp writable:
+docker run --rm --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges \
+  --read-only --tmpfs /tmp ml-pipeline:local dvc repro
+# → ERROR: unexpected error - [Errno 30] Read-only file system: '/app/.dvc/tmp'
+```
+
+DVC further writes `/app/.dvc/cache`, rewrites `/app/dvc.lock`, and needs a
+writable `/app/.git` for its SCM — all at the repo root, alongside the read-only
+baked-in code and `.dvc/config`. Those paths cannot be carved out with `emptyDir`
+without shadowing the image's own files or making the code tree writable (which
+defeats the control). Enabling it now would make the container fail *earlier* than
+the pre-existing SCM blocker — weakening a working workload to pass a checkbox. It
+is deferred to the same work that makes the pipeline green in-cluster (relocating
+DVC cache/tmp/lock + SCM onto declared writable volumes), tracked in
+[ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md).
+
+### How this was validated
+
+- **`docker run` probes** against the real image: the core stack imports cleanly
+  under `--cap-drop ALL --security-opt no-new-privileges` as uid `10001`; `dvc
+  repro` reaches the *same* pre-existing `/app is not a git repository` blocker
+  (behaviour-neutral); `NoNewPrivs: 1` confirmed; and the read-only-root failure
+  above is reproduced.
+- **Live cluster (Docker Desktop v1.34.3):** `kubectl apply -k k8s/overlays/local`
+  was **admitted** (the explicit numeric uid satisfies `runAsNonRoot`). The pod's
+  enforced `spec.securityContext` and container `securityContext` reported exactly
+  the values above; `spec.volumes` was still empty (PR 3 token automount-off
+  intact); the container **ran** and terminated (exit 255) at the same SCM blocker
+  — no regression. Resources were deleted afterward.
+- **21 rendered-manifest assertions** pass (fields present, at the correct pod-vs-
+  container scope, no `privileged`/`hostNetwork`/`hostPID`/`hostIPC`). No local
+  static scanner (`kubesec`/`kube-score`/`kube-linter`/`checkov`/`trivy`) is
+  installed; the cluster admission + kubelet enforcement served as the
+  authoritative check, and the manifest was not sent to any external service.
+
+> **Not claimed:** restricted **Pod Security Standard compliance**. The manifest
+> carries the fields the profile requires and a live cluster admitted it, but no
+> Pod Security admission label or policy engine has validated it, and read-only
+> root is not met.
+
 ## What is deliberately absent (and where it lands)
 
 ### Roadmap within Sprint 5
@@ -274,7 +351,7 @@ changed configuration/identity only, not pipeline behavior.
 | Demonstrated local cluster run (Job lifecycle) | ✅ executed 2026-08-12 (see [§ Execution record](#execution-record-pr-2)) | PR 2 |
 | ConfigMap / Secret template / ServiceAccount + token automount off | ✅ this PR | PR 3 |
 | Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
-| Security hardening (securityContext, seccomp, dropped caps) | ⬜ deferred | PR 4 |
+| Security hardening (securityContext, seccomp, dropped caps) | ✅ this PR (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
 | CPU/memory resource requests/limits, lifecycle tuning | ⬜ deferred | PR 5 |
 | CI manifest validation | ⬜ deferred | PR 6 |
 | Operations runbook & proof | ⬜ deferred | PR 7 |
