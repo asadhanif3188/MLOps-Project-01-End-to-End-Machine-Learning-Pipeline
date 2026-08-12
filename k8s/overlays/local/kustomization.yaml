@@ -1,9 +1,11 @@
 # Local overlay — specializes the base for a local cluster (kind / minikube).
 #
-# This is where the base/overlay split pays off: the base stays registry-neutral,
-# and this overlay maps the workload to the image a developer actually builds on
-# their machine. Later PRs extend this same overlay with local-appropriate
-# resource requests and config, keeping environment differences in one place.
+# This is where the base/overlay split pays off: the base names the workload
+# image but leaves the tag open, and this overlay pins the tag a developer
+# actually builds on their machine. A future staging/prod overlay repoints
+# `newName` to a registry path and `newTag` to a released version here — without
+# editing the base. Later PRs extend this same overlay with local-appropriate
+# config, keeping environment differences in one place.
 #
 # Render and inspect with:  kustomize build k8s/overlays/local
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -12,12 +14,12 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Map the base's registry-neutral reference to the image built locally per the
-# README (§ "Running with Docker") and docker-compose (`ml-pipeline:local`).
-# `imagePullPolicy` and a published registry tag are deferred until image
-# publishing exists (roadmap v3); for a local kind/minikube run the image is
-# side-loaded (e.g. `kind load docker-image ml-pipeline:local`).
+# Pin the base image to the tag built locally per the README (§ "Running with
+# Docker") and docker-compose (`ml-pipeline:local`). For a local kind/minikube
+# run the image is side-loaded into the cluster (e.g.
+# `kind load docker-image ml-pipeline:local`) rather than pulled from a registry.
+# A published registry tag and an explicit imagePullPolicy are deferred until
+# image publishing exists (roadmap).
 images:
-  - name: mlops-pipeline
-    newName: ml-pipeline
+  - name: ml-pipeline
     newTag: local

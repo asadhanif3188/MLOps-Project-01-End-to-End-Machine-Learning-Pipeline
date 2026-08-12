@@ -33,6 +33,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     [docs/diagrams/kubernetes-architecture/](docs/diagrams/kubernetes-architecture/).
   - [`k8s/README.md`](k8s/README.md) with render/apply instructions and a table of
     what is deliberately deferred to which PR.
+- **Runnable Kubernetes batch workload** (Sprint 5, PR 2) — the foundation Job is
+  promoted to the actual runnable workload:
+  - The base `Job` now references the **real image the project builds**
+    (`ml-pipeline`, name only) instead of a placeholder; the local overlay pins
+    the tag to `ml-pipeline:local` (produced by `docker build -t ml-pipeline:local`
+    and docker-compose). No registry path is invented — none exists yet.
+  - A finite-run lifecycle appropriate for a batch pipeline: `restartPolicy: Never`,
+    `backoffLimit: 2`, and a new `activeDeadlineSeconds: 1800` wall-clock safety
+    ceiling (a completion-semantics guard against a stuck run — **not** a
+    CPU/memory limit, which stays deferred to PR 5).
+  - A local **runbook** in [`k8s/README.md`](k8s/README.md): build the image,
+    side-load it (`kind load` / `minikube image load`), `kubectl apply -k`,
+    inspect (`get`/`describe`), fetch logs, and delete/re-run.
+  - Validated offline: `kustomize build` renders base and overlay, manifests parse
+    as YAML, and field/scope assertions confirm the rendered image, command, and
+    lifecycle fields — and that **no** deferred fields (resources, securityContext,
+    env, volumes, ServiceAccount) leaked in.
+  - **Executed on a local cluster** (2026-08-12, Docker Desktop Kubernetes
+    v1.34.3): `kubectl apply -k k8s/overlays/local` created the namespace + Job,
+    the local image resolved with no registry pull, and the Job ran its designed
+    lifecycle — 3 attempts (initial pod + `backoffLimit: 2`), each a fresh pod
+    (`restartPolicy: Never`), then `BackoffLimitExceeded` → terminal `Failed`. The
+    pipeline does **not** complete: `dvc repro` aborts with `/app is not a git
+    repository` (the image has no SCM). A *green* in-cluster run is PR 3 scope —
+    an SCM (`git init`/`core.no_scm`), a mounted dataset, and credentials. The Job
+    *mechanism* is proven; a *green pipeline run* is not claimed.
 
 ### Changed
 
