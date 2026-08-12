@@ -129,11 +129,15 @@ professionally engineered project and is safe to change with confidence.
 reducing regressions and manual effort.
 
 > **Status:** CI (checkout → setup Python → install → Ruff → mypy → pytest → DVC
-> pipeline integrity → fixture `dvc repro` → Docker build → build validation) is
-> implemented on **GitHub Actions**. It validates only — no deploy, no image push,
-> no Kubernetes. Offline pipeline-definition validation landed in Sprint 4, and a
-> real fixture-pipeline `dvc repro` execution check landed in the proof-hardening
-> milestone ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)); the
+> pipeline integrity → fixture `dvc repro` → Docker build → build validation →
+> **Kubernetes manifest validation**) is implemented on **GitHub Actions**. It
+> validates only — no deploy, no image push, and its Kubernetes checks are
+> **static** (schema/Kustomize/security) plus one opt-in cluster admission dry-run;
+> the workload is never run on a cluster (Sprint 5, PR 6 —
+> [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)). Offline
+> pipeline-definition validation landed in Sprint 4, and a real fixture-pipeline
+> `dvc repro` execution check landed in the proof-hardening milestone
+> ([ADR-008](decisions/ADR-008-fixture-reproducibility.md)); the
 > remaining items above (publish, scan, branch protection) are the path to
 > continuous *delivery*; see
 > [CI/CD § Future CD roadmap](ci-cd.md#future-cd-roadmap).
@@ -189,6 +193,12 @@ reducing regressions and manual effort.
   the deliberate absence of health probes, and the failure modes are documented;
   values are **not** production-certified
   ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)).
+- ✅ Validate the manifests automatically in CI — **implemented** (Sprint 5, PR 6):
+  a static, deterministic `k8s-validate` job (pinned `kustomize` render +
+  `kubeconform -strict` schema + a project `k8s/validate.py` security/required-field
+  check), plus an opt-in ephemeral-kind **server-side dry-run** admission job.
+  Static validation only — it does **not** deploy or run the workload
+  ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)).
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
 independent of a developer's local machine.
@@ -207,8 +217,11 @@ independent of a developer's local machine.
 > and PR 5 added **resource requests/limits chosen from measured usage** plus the
 > documented lifecycle/probe/failure-mode decisions
 > ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)) — all verified on
-> the local cluster. Still to come in Sprint 5: a green in-cluster `dvc repro`
-> (SCM + data + credentials) and CI manifest validation.
+> the local cluster, and PR 6 added **automated CI manifest validation** (static
+> syntax/schema/Kustomize/security checks + an opt-in cluster admission dry-run —
+> [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)). Still to come in
+> Sprint 5: a green in-cluster `dvc repro` (SCM + data + credentials) and an
+> operations runbook & proof.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 

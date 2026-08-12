@@ -4,7 +4,7 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
-> **Status — resource & lifecycle management (Sprint 5, PR 5).** PR 1 established
+> **Status — automated manifest validation (Sprint 5, PR 6).** PR 1 established
 > the structure and namespace; PR 2 made it a **runnable** workload (real
 > `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —
 > `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3
@@ -17,10 +17,15 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > seccomp `RuntimeDefault` (see [§ Security hardening](#security-hardening-pr-4);
 > read-only root is deliberately deferred —
 > [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)); PR 5
-> (this change) adds **resource requests/limits chosen from measured usage** and
-> documents the lifecycle, the **deliberate absence of health probes**, and the
-> **failure modes** (see [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)
-> and [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)).
+> added **resource requests/limits chosen from measured usage** and documented the
+> lifecycle, the **deliberate absence of health probes**, and the **failure modes**
+> (see [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)
+> and [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)); PR 6
+> (this change) adds **automated CI validation** of these manifests — YAML syntax,
+> upstream **schema** (`kubeconform`), **Kustomize** rendering, and the PR 1–5
+> **security/resource contract** (`k8s/validate.py`), plus an opt-in ephemeral-cluster
+> admission dry-run (see [§ CI manifest validation](#ci-manifest-validation-pr-6)
+> and [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)).
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
 > lifecycle, hardened context, and resource enforcement verified end to end (see
 > [§ Execution record](#execution-record-pr-2),
@@ -28,9 +33,10 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)), but
 > the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not a
 > git repository`, and a *green* run additionally needs the PR 3 data/credential
-> wiring. Nothing here has been applied to a production cluster; the resource
-> values are **not production-certified** and **restricted Pod Security Standard
-> compliance is not claimed**.
+> wiring. **CI validation is static** (plus opt-in admission) — it does **not**
+> deploy or run the workload. Nothing here has been applied to a production cluster;
+> the resource values are **not production-certified** and **restricted Pod Security
+> Standard compliance is not claimed**.
 
 For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, the
 workload lifecycle, and the local-vs-production boundary — see
@@ -44,11 +50,15 @@ workload lifecycle, and the local-vs-production boundary — see
 k8s/
 ├── base/                     # environment-independent definition
 │   ├── namespace.yaml        # the `mlops` namespace (environment boundary)
+│   ├── serviceaccount.yaml   # least-privilege identity, token automount off
+│   ├── configmap.yaml        # non-secret runtime config (LOG_LEVEL, MLFLOW_TRACKING_URI)
+│   ├── secret.example.yaml   # Secret TEMPLATE (placeholders; excluded from kustomize)
 │   ├── job.yaml              # the pipeline as a run-to-completion batch Job
 │   └── kustomization.yaml    # aggregates the base, applies common labels
-└── overlays/
-    └── local/                # specialization for a local cluster (kind/minikube)
-        └── kustomization.yaml # pins the image to the locally built ml-pipeline:local
+├── overlays/
+│   └── local/                # specialization for a local cluster (kind/minikube)
+│       └── kustomization.yaml # pins the image to the locally built ml-pipeline:local
+└── validate.py              # static validation (security + required fields) — PR 6
 ```
 
 Why Kustomize (and not raw `kubectl apply -f`): a single base is specialized per
@@ -427,6 +437,60 @@ healthy run. The real health signal is the exit code plus the structured logs.
 > *local* single-node run on the small bundled dataset; a larger dataset, wider
 > grid, or real cluster would require re-measuring.
 
+## CI manifest validation (PR 6)
+
+Every push and pull request runs **static** validation of these manifests, so a
+future edit cannot silently regress the PR 1–5 contract. Design of record:
+[ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md);
+the job is `k8s-validate` in [ci.yml](../.github/workflows/ci.yml).
+
+**What runs (deterministic, no cluster, workload never executed):**
+
+| Check | Tool (pinned) | Proves |
+|---|---|---|
+| YAML syntax + Kustomize rendering | `kustomize build` (v5.4.3) | `base/` and `overlays/local/` render; the YAML parses. |
+| Kubernetes schema | `kubeconform -strict` (v0.6.7, schema v1.31.0) | every field is a real API field of the right type; unknown fields are rejected. |
+| Security + required fields | `k8s/validate.py` (stdlib + PyYAML) | the workload contract below. |
+
+`k8s/validate.py` asserts, with a PASS/FAIL line per check: `runAsNonRoot` + non-root
+`runAsUser`; `allowPrivilegeEscalation: false`; `seccompProfile: RuntimeDefault`;
+`capabilities: drop [ALL]`; an explicit non-default ServiceAccount that exists;
+`automountServiceAccountToken: false` (pod + SA); CPU/memory **requests and limits**;
+`restartPolicy` `Never`/`OnFailure`; an explicit **pinned** image (no `:latest`);
+namespace pinning; and **secret hygiene** (no rendered `Secret`, no inline
+credentials, no secret fingerprints, template holds only placeholders).
+
+**Run it locally** (uses your local `kustomize`/`kubectl`; matches CI):
+
+```bash
+python k8s/validate.py                      # security + required-field checks
+kustomize build k8s/overlays/local | \
+  kubeconform -strict -summary -kubernetes-version 1.31.0 -schema-location default -
+```
+
+> **This is static validation, not deployment validation.** It proves the manifests
+> are well-formed, schema-valid, and hardened — **not** that the workload deploys or
+> runs. `kubeconform` needs network to fetch the pinned upstream schema; everything
+> else is offline.
+
+### Cluster integration (opt-in, separate)
+
+Full cluster integration is kept **off** the per-PR path (bootstrap cost + flake
+surface). A separate, manual job — `k8s-cluster-dry-run` (`workflow_dispatch` only) —
+stands up an **ephemeral kind cluster** and does a **server-side dry run**
+(`kubectl apply -k k8s/overlays/local --dry-run=server`): every object passes through
+a real API server's validation, defaulting, and admission (incl. Pod Security), but
+nothing is persisted and the Job never runs. Reproduce it against any local cluster:
+
+```bash
+kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k k8s/overlays/local --dry-run=server     # admits; runs nothing
+```
+
+This validates **admissibility**, not execution — a green dry-run still does not
+mean the pipeline completes in-cluster (it needs an SCM in the image + mounted data,
+see [§ Execution record](#execution-record-pr-2)).
+
 ## What is deliberately absent (and where it lands)
 
 ### Roadmap within Sprint 5
@@ -441,8 +505,8 @@ healthy run. The real health signal is the exit code plus the structured logs.
 | ConfigMap / Secret template / ServiceAccount + token automount off | ✅ this PR | PR 3 |
 | Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
 | Security hardening (securityContext, seccomp, dropped caps) | ✅ done (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
-| CPU/memory resource requests/limits, lifecycle & probe decision, failure modes | ✅ this PR (measured values, [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)) | PR 5 |
-| CI manifest validation | ⬜ deferred | PR 6 |
+| CPU/memory resource requests/limits, lifecycle & probe decision, failure modes | ✅ done (measured values, [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)) | PR 5 |
+| CI manifest validation (syntax, schema, kustomize, security) | ✅ this PR (static + opt-in dry-run, [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)) | PR 6 |
 | Operations runbook & proof | ⬜ deferred | PR 7 |
 
 No credentials are committed anywhere in this directory, and none will be — the

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Automated Kubernetes manifest validation in CI** (Sprint 5, PR 6) — every push
+  and pull request now statically validates the `k8s/` manifests, so a future edit
+  cannot silently regress the PR 1–5 contract.
+  - New CI job **`k8s-validate`** (runs in parallel with `quality`, no cluster): a
+    minimal, pinned toolchain — `kustomize` renders `base/` + `overlays/local/`
+    (Kustomize + YAML-syntax check), `kubeconform -strict` validates every object
+    against the pinned upstream Kubernetes **schema** (rejecting unknown fields),
+    and a new project script **`k8s/validate.py`** (stdlib + PyYAML) asserts the
+    **security/required-field contract** with a PASS/FAIL line per check:
+    `runAsNonRoot`, `allowPrivilegeEscalation: false`, seccomp `RuntimeDefault`,
+    `capabilities: drop [ALL]`, explicit non-default ServiceAccount, token automount
+    off, CPU/memory **requests and limits**, explicit **pinned** image, namespace
+    pinning, and **secret hygiene** (no rendered `Secret`, no inline credentials, no
+    secret fingerprints, template holds only placeholders).
+  - New **opt-in** job **`k8s-cluster-dry-run`** (`workflow_dispatch` only): an
+    ephemeral **kind** cluster + a **server-side dry-run**
+    (`kubectl apply -k … --dry-run=server`) validates admissibility (schema,
+    defaulting, Pod Security) **without** persisting or running the workload. Kept
+    off the per-PR path to stay deterministic and fast.
+  - Tool **and** schema versions are pinned (kustomize 5.4.3, kubeconform 0.6.7,
+    k8s schema 1.31.0) and the downloaded binaries are checksum-verified.
+  - Validated locally end to end: `kubeconform` passes for base + overlay (4/4
+    each); `k8s/validate.py` passes 34/34; a temporarily flipped
+    `allowPrivilegeEscalation`/`runAsNonRoot` is caught by `k8s/validate.py` and a
+    string `activeDeadlineSeconds` is caught by `kubeconform -strict`; the
+    server-side dry-run admits all objects on Docker Desktop. **CI validation is
+    static** (plus the opt-in dry-run) — it does **not** deploy or run the workload.
+  - [ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md) records the
+    tiered design, the rejected alternatives (OPA/Gatekeeper, kube-linter, kubeval,
+    per-PR kind), and what the decision does not imply.
 - **Kubernetes resource & lifecycle management** (Sprint 5, PR 5) — the pipeline
   `Job` now declares CPU/memory requests and limits chosen from **measured** usage
   of the real image, and its finite-run lifecycle and probe decision are documented.

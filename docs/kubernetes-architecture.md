@@ -7,7 +7,7 @@ image and lifecycle (PR 2), the configuration boundary (PR 3), and the
 **enforced security context** (PR 4), and — critically — exactly which parts are
 locally validatable today versus deferred to a production cluster.
 
-> **Scope note.** Through PR 5 the manifests in [`k8s/`](../k8s/) define the
+> **Scope note.** Through PR 6 the manifests in [`k8s/`](../k8s/) define the
 > namespace, a **runnable** batch `Job` — the real `ml-pipeline:local` image, the
 > real `dvc repro` command, and a finite-run lifecycle — plus externalized
 > **configuration** (`ConfigMap`), a **Secret** template (created out-of-band,
@@ -16,7 +16,12 @@ locally validatable today versus deferred to a production cluster.
 > uid/gid, no privilege escalation, all capabilities dropped, seccomp
 > `RuntimeDefault`), and **resource requests/limits chosen from measured usage**
 > (see [ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)); all render
-> cleanly through Kustomize. CI validation is deferred to a later PR (see
+> cleanly through Kustomize. PR 6 added **automated CI validation** of these
+> manifests — static YAML-syntax, upstream **schema** (`kubeconform`), **Kustomize**
+> rendering, and the security/resource contract (`k8s/validate.py`), plus an opt-in
+> ephemeral-cluster admission dry-run
+> ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)); this validation
+> is **static** — it does not deploy or run the workload (see
 > [§6](#6-identity--security-boundary) and
 > [§7](#7-local-validation-vs-production-deferred)). The Job was **executed on a
 > local Docker Desktop cluster** (2026-08-12) and its lifecycle verified end to
@@ -307,8 +312,17 @@ A reviewer should be able to tell exactly what is proven today.
 - Resource & lifecycle are asserted (PR 5): the rendered container carries
   `resources.requests {cpu: 250m, memory: 256Mi}` and `resources.limits
   {cpu: "1", memory: 512Mi}`, and no `livenessProbe`/`readinessProbe`/
-  `startupProbe` is present. Scope discipline still holds — no CI-validation
-  wiring is present yet (that is PR 6).
+  `startupProbe` is present.
+- **All of the above is now enforced by CI (PR 6):** the `k8s-validate` job renders
+  base + overlay with `kustomize`, validates every object against the pinned
+  upstream Kubernetes **schema** with `kubeconform -strict`, and runs the committed
+  `k8s/validate.py` (the productionized successor to the earlier per-PR scratch
+  assertions) which re-checks all the security/required-field/secret-hygiene items
+  above with a PASS/FAIL line each. Verified by negative test: a flipped
+  `allowPrivilegeEscalation`/`runAsNonRoot` fails `k8s/validate.py`, and a string
+  `activeDeadlineSeconds` fails `kubeconform`. This validation is **static** — it
+  does not deploy or run the workload
+  ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)).
 - The workload model, boundaries, and trade-offs are documented and recorded in
   an ADR.
 
@@ -331,8 +345,10 @@ against a live cluster. The **Job lifecycle was verified end to end**:
   PR 3 "make it runnable" work — an SCM in the image (`git init` or
   `core.no_scm=true`), a mounted dataset (the image ships none by design), and
   MLflow/DagsHub credentials. Full OpenAPI schema validation via `kubectl apply`
-  succeeds against this live cluster (the offline `--dry-run=client` could not
-  reach an API server); `kubeconform` remains uninstalled.
+  succeeds against this live cluster; since PR 6, offline schema validation also
+  runs in CI via `kubeconform -strict`, and a server-side `kubectl apply -k
+  --dry-run=server` admission check is available as an opt-in ephemeral-kind job
+  ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)).
 
 **PR 3 config/identity — also verified on the live cluster (Docker Desktop
 Kubernetes v1.34.3).** `kubectl apply -k k8s/overlays/local` created the
@@ -397,7 +413,7 @@ new failure mode. Full method and the failure-mode table:
 
 ```text
 Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Production deployment
-   ✅ PR 1–5               ✅ executed — lifecycle + config/identity     ⬜ future roadmap
+   ✅ PR 1–6 (+CI static)  ✅ executed — lifecycle + config/identity     ⬜ future roadmap
                               + hardened securityContext + measured
                               resources verified;
                               pipeline not green yet (SCM + data)
