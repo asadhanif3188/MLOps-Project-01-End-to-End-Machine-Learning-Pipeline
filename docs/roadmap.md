@@ -173,6 +173,14 @@ reducing regressions and manual effort.
   and a least-privilege `ServiceAccount` with `automountServiceAccountToken: false`
   (the workload needs no Kubernetes API access, so no RBAC is granted). Wired into
   the Job via `envFrom` and verified on a local cluster.
+- ✅ Harden the workload with a Kubernetes `securityContext` — **implemented**
+  (Sprint 5, PR 4): non-root with an explicit uid/gid `10001` (required — the
+  image's `USER` is a name), `allowPrivilegeEscalation: false`, all Linux
+  capabilities dropped, and seccomp `RuntimeDefault`, applied at the correct
+  pod/container scopes and verified enforced on a local cluster. Read-only root
+  filesystem is **evaluated and deliberately deferred** (DVC writes state in-tree
+  at the repo root); restricted Pod Security Standard compliance is **not** claimed
+  ([ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)).
 - Define resource requests/limits for reproducible scheduling.
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
@@ -185,9 +193,12 @@ independent of a developer's local machine.
 > executed run on a local Docker Desktop cluster** (2026-08-12) that verified the
 > Job lifecycle end to end. PR 3 adds externalized **config/secrets + identity** (a
 > `ConfigMap`, an out-of-band `Secret` template, and a least-privilege
-> `ServiceAccount` with token automount off), also verified on the local cluster.
-> Still to come in Sprint 5: a green in-cluster `dvc repro` (SCM + data +
-> credentials), security hardening (ADR-010), resource management, and CI manifest
+> `ServiceAccount` with token automount off), and PR 4 added an **enforced
+> `securityContext`** (non-root uid/gid `10001`, no privilege escalation, all
+> capabilities dropped, seccomp `RuntimeDefault`; read-only root filesystem
+> deferred with evidence — [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)),
+> both verified on the local cluster. Still to come in Sprint 5: a green in-cluster
+> `dvc repro` (SCM + data + credentials), resource management, and CI manifest
 > validation.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).

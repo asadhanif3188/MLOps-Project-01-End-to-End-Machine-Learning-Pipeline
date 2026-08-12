@@ -139,18 +139,24 @@ A step-by-step local run (build → side-load → apply → inspect → logs →
 in [`k8s/README.md`](k8s/README.md).
 
 > **Status:** namespace, workload model, and the **runnable** Job + local runbook
-> are in place (Sprint 5 PR 1–2), and PR 3 adds externalized **configuration** (a
+> are in place (Sprint 5 PR 1–2); PR 3 added externalized **configuration** (a
 > `ConfigMap`: `LOG_LEVEL`, `MLFLOW_TRACKING_URI`), a **Secret** template for the
 > DagsHub credentials (created out-of-band — never committed), and a
 > least-privilege **ServiceAccount** with the API-token automount off (the workload
-> needs no cluster API access). The Job was **executed on a local Docker Desktop
-> cluster** (2026-08-12) and its lifecycle verified end to end (3 attempts →
-> terminal `Failed`); the pipeline does **not** complete yet — `dvc repro` aborts
-> with `/app is not a git repository`, so a *green* in-cluster run still needs an
-> SCM in the image + mounted data. Security hardening, CPU/memory limits, and CI
-> validation are deferred to later PRs. Rationale:
-> [Kubernetes Architecture](docs/kubernetes-architecture.md) and
-> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md); run details:
+> needs no cluster API access); PR 4 added a **hardened `securityContext`** —
+> non-root with an explicit uid/gid `10001`, `allowPrivilegeEscalation: false`, all
+> Linux capabilities dropped, and seccomp `RuntimeDefault` (read-only root
+> filesystem is deliberately deferred because DVC writes state in-tree —
+> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md)). The Job was
+> **executed on a local Docker Desktop cluster** (2026-08-12) and its lifecycle +
+> hardened context verified end to end; the pipeline does **not** complete yet —
+> `dvc repro` aborts with `/app is not a git repository`, so a *green* in-cluster
+> run still needs an SCM in the image + mounted data. CPU/memory limits and CI
+> validation are deferred to later PRs, and **restricted Pod Security Standard
+> compliance is not claimed**. Rationale:
+> [Kubernetes Architecture](docs/kubernetes-architecture.md),
+> [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md), and
+> [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md); run details:
 > [`k8s/README.md`](k8s/README.md).
 
 ### How the DVC Stages Are Defined

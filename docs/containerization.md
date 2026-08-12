@@ -538,6 +538,18 @@ docker run --rm \
 Writes are confined to the mounted volumes and `/tmp`; the root filesystem stays
 read-only.
 
+> **Caveat for the default `dvc repro` command.** The snippet above runs read-only
+> cleanly for a single stage (e.g. `python src/preprocess.py`) whose writes land in
+> the mounted `data/`/`models/`/`logs/`. The *full* `dvc repro`, however, also
+> mutates DVC state **in-tree at the `/app` repo root** — `/app/.dvc/tmp`,
+> `/app/.dvc/cache`, `/app/dvc.lock`, and `/app/.git` — which the mounts above do
+> not cover, so under `--read-only` it fails with
+> `[Errno 30] Read-only file system: '/app/.dvc/tmp'`. Running the whole pipeline
+> read-only therefore requires additionally relocating DVC's cache/tmp/lock and SCM
+> onto writable mounts. This is the same reason the Kubernetes `Job` sets
+> `readOnlyRootFilesystem: false` for now; the analysis and path forward are in
+> [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md).
+
 ### Notes & known follow-ups
 
 - **`dvc repro` prerequisites.** The default command operates on the DVC
