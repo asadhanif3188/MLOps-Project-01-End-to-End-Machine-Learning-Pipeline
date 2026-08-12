@@ -1,0 +1,57 @@
+# Kubernetes Job — the ML pipeline as a finite, run-to-completion batch workload.
+#
+# Why a Job and not a Deployment: the pipeline (`dvc repro`: preprocess → split →
+# train → evaluate) runs to completion and exits. It has no request/response
+# surface and nothing to keep alive, so a Deployment (which restarts a "healthy"
+# process forever) would report its natural, successful exit as a crash-loop. The
+# full rationale, completion/retry semantics, and the rejected alternatives are in
+# docs/decisions/ADR-009-kubernetes-workload-model.md.
+#
+# SCOPE OF THIS PR (foundation only). This manifest establishes the workload
+# MODEL. It deliberately does NOT yet include the following — each lands in a
+# later, focused PR so the reasoning stays reviewable:
+#   * ConfigMap / Secret / env wiring for data + MLflow credentials  (PR 3)
+#   * securityContext hardening (runAsNonRoot, drop caps, seccomp, ...)  (PR 4)
+#   * resource requests/limits and activeDeadlineSeconds tuning         (PR 5)
+#   * a dedicated least-privilege ServiceAccount                        (PR 3)
+# As written it renders and is schema-valid; a real cluster run needs the PR 3
+# data/credential wiring. See docs/kubernetes-architecture.md § "Local validation
+# vs production-deferred".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlops-pipeline
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: batch-pipeline
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Completion/retry semantics (ADR-009). A finite Job completes once its single
+  # pod exits 0. backoffLimit caps retries so a deterministic failure (bad data,
+  # config error) fails fast instead of looping — it is NOT a service that should
+  # be kept running. Tuning of activeDeadlineSeconds / ttlSecondsAfterFinished is
+  # deferred to the reliability PR (PR 5).
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mlops-pipeline
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: batch-pipeline
+    spec:
+      # Never: a failed pod is not restarted in place; the Job controller creates
+      # a fresh pod for each retry (up to backoffLimit). This keeps every attempt
+      # a clean run of the deterministic pipeline rather than a mutated container.
+      restartPolicy: Never
+      containers:
+        - name: pipeline
+          # Registry-neutral base reference. Environment overlays pin it to a
+          # concrete build — see k8s/overlays/local, which maps this to the
+          # locally built `ml-pipeline:local` image (README § "Running with
+          # Docker"). Image publishing to a registry is a separate roadmap item.
+          image: mlops-pipeline:0.0.0-placeholder
+          # Same entrypoint as the container image's default CMD; stated
+          # explicitly so the workload's intent is legible in the manifest.
+          command: ["dvc", "repro"]

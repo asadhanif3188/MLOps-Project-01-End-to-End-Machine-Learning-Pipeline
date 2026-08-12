@@ -12,7 +12,7 @@ prescribing implementation details. Concrete technical decisions are captured as
 | [v1](#version-1--foundation-release) | Foundation Release | ✅ |
 | [v2](#version-2--engineering-improvements) | Engineering Improvements | 🚧 |
 | [v3](#version-3--cicd) | CI/CD | 🚧 |
-| [v4](#version-4--kubernetes) | Kubernetes | ⬜ |
+| [v4](#version-4--kubernetes) | Kubernetes | 🚧 |
 | [v5](#version-5--production-cloud-platform) | Production Cloud Platform | ⬜ |
 | [v6](#version-6--enterprise-mlops) | Enterprise MLOps | ⬜ |
 
@@ -154,16 +154,25 @@ reducing regressions and manual effort.
   local dev workflow ([Containerization Strategy](containerization.md),
   [Docker Development](docker-development.md),
   [ADR-005](decisions/ADR-005-containerization-strategy.md)).
-- Run pipeline stages as orchestrated workloads on Kubernetes.
+- 🚧 Run pipeline stages as an orchestrated Kubernetes workload — **foundation
+  landed** (Sprint 5, PR 1): an `mlops` namespace and the pipeline modelled as a
+  `batch/v1` **Job** (not a Deployment), structured with Kustomize under
+  [`k8s/`](../k8s/) ([Kubernetes Architecture](kubernetes-architecture.md),
+  [ADR-009](decisions/ADR-009-kubernetes-workload-model.md)). Manifests render via
+  Kustomize; a demonstrated local cluster run is the next PR.
 - Externalize configuration and secrets for a cluster (ConfigMaps/Secrets).
 - Define resource requests/limits for reproducible scheduling.
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
 independent of a developer's local machine.
 
-> **TODO:** The container **base image** is ratified in
-> [ADR-005](decisions/ADR-005-containerization-strategy.md); still to ratify as
-> ADRs — the orchestration approach and cluster secret handling.
+> **Status.** The workload model is ratified in
+> [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) and the `k8s/`
+> foundation exists (namespace + Job + Kustomize), validated by local rendering.
+> Still to come in Sprint 5: local cluster run, config/secrets + identity,
+> security hardening (ADR-010), resource management, and CI manifest validation.
+> The container **base image** is ratified in
+> [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
 ---
 

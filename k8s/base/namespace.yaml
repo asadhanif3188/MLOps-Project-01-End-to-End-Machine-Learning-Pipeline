@@ -1,0 +1,21 @@
+# Namespace for the MLOps batch workload.
+#
+# A dedicated namespace is the environment boundary for everything this project
+# schedules on a cluster: the Job (this PR) and, in later PRs, its ConfigMap,
+# Secret, and ServiceAccount. Isolating the workload in its own namespace keeps
+# RBAC, quotas, and Pod Security expectations scoped to this project rather than
+# leaking into `default`.
+#
+# Design of record: docs/kubernetes-architecture.md and
+# docs/decisions/ADR-009-kubernetes-workload-model.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlops
+  labels:
+    # Standard Kubernetes recommended labels (app.kubernetes.io/*) so tooling and
+    # `kubectl get -l` selectors can identify everything this project owns.
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/managed-by: kustomize

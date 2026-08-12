@@ -1,0 +1,23 @@
+# Local overlay — specializes the base for a local cluster (kind / minikube).
+#
+# This is where the base/overlay split pays off: the base stays registry-neutral,
+# and this overlay maps the workload to the image a developer actually builds on
+# their machine. Later PRs extend this same overlay with local-appropriate
+# resource requests and config, keeping environment differences in one place.
+#
+# Render and inspect with:  kustomize build k8s/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Map the base's registry-neutral reference to the image built locally per the
+# README (§ "Running with Docker") and docker-compose (`ml-pipeline:local`).
+# `imagePullPolicy` and a published registry tag are deferred until image
+# publishing exists (roadmap v3); for a local kind/minikube run the image is
+# side-loaded (e.g. `kind load docker-image ml-pipeline:local`).
+images:
+  - name: mlops-pipeline
+    newName: ml-pipeline
+    newTag: local
