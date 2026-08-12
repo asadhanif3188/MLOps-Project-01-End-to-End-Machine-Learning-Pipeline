@@ -181,7 +181,14 @@ reducing regressions and manual effort.
   filesystem is **evaluated and deliberately deferred** (DVC writes state in-tree
   at the repo root); restricted Pod Security Standard compliance is **not** claimed
   ([ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)).
-- Define resource requests/limits for reproducible scheduling.
+- ✅ Define resource requests/limits for reproducible scheduling — **implemented**
+  (Sprint 5, PR 5): `requests: cpu 250m / mem 256Mi`, `limits: cpu 1 / mem 512Mi`
+  (Burstable QoS), chosen from *measured* usage of the real image — the CPU limit
+  doubles as the memory-safety control because `GridSearchCV(n_jobs=-1)` sizes
+  joblib's worker fan-out from the cgroup CPU quota. The finite-run lifecycle,
+  the deliberate absence of health probes, and the failure modes are documented;
+  values are **not** production-certified
+  ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)).
 
 **Expected outcome:** The pipeline runs reproducibly on any conformant cluster,
 independent of a developer's local machine.
@@ -197,9 +204,11 @@ independent of a developer's local machine.
 > `securityContext`** (non-root uid/gid `10001`, no privilege escalation, all
 > capabilities dropped, seccomp `RuntimeDefault`; read-only root filesystem
 > deferred with evidence — [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)),
-> both verified on the local cluster. Still to come in Sprint 5: a green in-cluster
-> `dvc repro` (SCM + data + credentials), resource management, and CI manifest
-> validation.
+> and PR 5 added **resource requests/limits chosen from measured usage** plus the
+> documented lifecycle/probe/failure-mode decisions
+> ([ADR-011](decisions/ADR-011-kubernetes-resource-lifecycle.md)) — all verified on
+> the local cluster. Still to come in Sprint 5: a green in-cluster `dvc repro`
+> (SCM + data + credentials) and CI manifest validation.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
