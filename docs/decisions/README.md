@@ -24,6 +24,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-014](ADR-014-terraform-architecture.md) | Terraform Architecture & Foundation (structure, versions, tagging, local state) | Accepted (design) | 2026-08-14 |
 | [ADR-015](ADR-015-aws-network-architecture.md) | AWS Network Architecture (VPC, Subnets, AZs, NAT) | Accepted (design) | 2026-08-14 |
 | [ADR-016](ADR-016-aws-iam-foundation.md) | AWS IAM Foundation for EKS (Cluster & Node Roles) | Accepted (design) | 2026-08-14 |
+| [ADR-017](ADR-017-eks-platform.md) | Amazon EKS Platform (Cluster, Managed Node Group, Core Addons) | Accepted (design) | 2026-08-14 |
 
 ## Template
 

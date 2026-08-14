@@ -36,6 +36,7 @@ terraform/
 ├── main.tf                   # locals (name prefix + common tags) + context data sources
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
 ├── iam.tf                     # EKS cluster + node IAM roles, trust, policy attachments (Sprint 6, PR 3)
+├── eks.tf                     # EKS cluster, managed node group, core addons (Sprint 6, PR 4)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -100,12 +101,14 @@ terraform plan
 ```
 
 `plan` **does** contact AWS (to resolve the context and Availability-Zone data
-sources), so valid credentials are required. As of **PR 3** a plan proposes the
-**network** described below — a VPC, subnets, an internet gateway, a NAT
-gateway, and route tables (18 resources with the defaults) — **plus the IAM
-foundation**: two EKS roles and their four managed-policy attachments (6
-resources). The **NAT gateway** is the only meaningful cost; **IAM roles and
-policy attachments are free**. `validate` alone contacts nothing.
+sources), so valid credentials are required. As of **PR 4** a plan proposes the
+**network** (VPC, subnets, internet gateway, NAT gateway, route tables — 18
+resources with the defaults), the **IAM foundation** (two EKS roles and their
+four managed-policy attachments — 6 resources), and the **EKS platform** (one
+cluster, one managed node group, three core addons — 5 resources): **29
+resources** in total. The **EKS control plane and worker nodes are now the
+dominant hourly cost**, alongside the NAT gateway; IAM is free. `validate` alone
+contacts nothing.
 
 > Normal pull-request CI never runs `terraform apply`. Cloud provisioning is a
 > deliberate, controlled operation — see [ADR-014](../docs/decisions/ADR-014-terraform-architecture.md)
@@ -219,6 +222,81 @@ the sensitive `aws_account_id` output. Retrieve an ARN with
 **Cost.** IAM roles and policy attachments are **free** — they add no billable
 resource to the plan.
 
+## EKS platform
+
+PR 4 provisions the managed Kubernetes platform: an **EKS control plane**, one
+small **managed node group**, and only the **three core addons** a functioning
+cluster needs. It consumes the PR 2 network and the PR 3 IAM roles and adds no
+networking or IAM of its own beyond the cluster security group EKS creates
+automatically. Design of record:
+[ADR-017](../docs/decisions/ADR-017-eks-platform.md).
+
+```text
+        EKS control plane (managed)              Kubernetes 1.35
+        role: …-eks-cluster-role                 endpoint: public* + private
+        ENIs across public + private subnets     logs → CloudWatch (api/audit/authn)
+                    │
+                    ▼
+        Managed node group  …-eks-ng             role: …-eks-node-role
+        2 × t3.medium (ON_DEMAND, AL2023)        private subnets only, egress via NAT
+        fixed size (min = max = desired = 2)     no autoscaler, no GPU, no SSH
+                    │
+                    ▼
+        Core addons: vpc-cni · coredns · kube-proxy   (no optional addons)
+```
+
+**Kubernetes version.** Pinned explicitly to **1.35** (`kubernetes_version`) for
+reproducibility — a deliberately chosen, comfortably-supported version rather
+than "whatever is newest". EKS manages the patch version; the addon versions
+track the control-plane version (their `addon_version` is left to the EKS
+default per Kubernetes version).
+
+**Node sizing.** A **fixed pair of `t3.medium`** (2 vCPU / 4 GiB) on-demand nodes
+on the Amazon Linux 2023 EKS AMI, 20 GiB root volume each. That is enough for the
+single batch `Job` plus EKS system pods (CoreDNS ×2, and the `aws-node`/
+`kube-proxy` DaemonSets per node) with room to schedule, and nothing more — no
+GPUs (sprint non-goal) and no oversizing. `min = max = desired = 2` and **no
+Cluster Autoscaler is installed**, so the group is effectively fixed-size; all
+sizes are variables (`node_instance_types`, `node_desired_size`, …) for easy
+resize.
+
+**Endpoint & security.** Both **private and public** API access are enabled: the
+private endpoint keeps in-VPC traffic off the public path, while the public
+endpoint lets an operator validate the cluster with `kubectl`. The public
+endpoint's source range is `cluster_endpoint_public_access_cidrs` — it defaults
+to `0.0.0.0/0` **for first-run validation only** and **should be set to your
+operator IP/CIDR** for any real use. Cluster access uses **EKS access entries**
+(`API_AND_CONFIG_MAP`) and bootstraps the creating principal as cluster admin,
+so `kubectl` works without hand-editing `aws-auth`. Control-plane logging ships
+the **security-relevant** types (`api`, `audit`, `authenticator`) to CloudWatch;
+set `cluster_enabled_log_types = []` to remove that small cost. Nodes have **no
+public IP and no SSH remote-access** configured.
+
+**Intentionally not provisioned.** No GPU nodes, no Cluster Autoscaler /
+autoscaling, no service mesh, no ingress controller, no observability stack
+(Prometheus/Grafana/logging agents), no optional addons (EBS/EFS CSI, ALB
+controller), no additional AWS services, and **no application/workload
+resources** — the Kubernetes `Job` stays in Kustomize
+([`k8s/`](../k8s/)), wired to EKS in a later PR. Envelope encryption of secrets
+with a customer-managed KMS key is a documented follow-up, not included here.
+
+**Outputs.** All EKS outputs are **non-sensitive** connection/inspection details
+— `eks_cluster_name`, `eks_cluster_endpoint`, `eks_cluster_version`,
+`eks_cluster_security_group_id`, `eks_cluster_oidc_issuer_url`,
+`eks_node_group_name`, and a ready-to-run `configure_kubectl` command. No
+kubeconfig, token, or certificate is emitted; operators fetch short-lived
+credentials with:
+
+```bash
+aws eks update-kubeconfig --region <region> --name <eks_cluster_name>
+```
+
+**Cost.** The EKS **control plane bills at a flat hourly rate** and the **two
+on-demand nodes bill per hour**; together with the NAT gateway these are the
+meaningful line items. The cluster is **short-lived by design** — provision,
+verify, capture evidence, then `terraform destroy` (PR 8). Cheaper knobs:
+`node_capacity_type = "SPOT"`, fewer/smaller nodes, or `node_desired_size = 1`.
+
 ## State handling
 
 - **Local state for now.** This first implementation uses Terraform's default
@@ -263,14 +341,15 @@ resource to the plan.
 |----|------|
 | **PR 1** | Terraform foundation — versions, provider, variables, outputs, naming + tagging, docs. No AWS resources. |
 | **PR 2** | AWS network foundation — VPC, public/private subnets across AZs, routing, internet + NAT gateways, EKS subnet tags. |
-| **PR 3 (this PR)** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
-| **PR 4** | Managed EKS cluster + node group, required addons, connection outputs. |
+| **PR 3** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
+| **PR 4 (this PR)** | Managed EKS cluster + node group, three core addons, non-sensitive connection outputs. |
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
 | **PR 6** | Terraform CI validation gates (`fmt`/`init`/`validate`/`plan`, lint/security scans). |
 | **PR 7** | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. |
 | **PR 8** | Cost controls, teardown (`terraform destroy`), and lifecycle documentation. |
 
-As of PR 2, `terraform apply` in this directory **does** create billable
-resources (chiefly the NAT gateway); PR 3 adds only **free** IAM roles on top.
-Provision deliberately and run `terraform destroy` after evidence capture — see
-the cost notes above and the teardown procedure in PR 8.
+As of PR 4, `terraform apply` in this directory creates a **billable, running
+EKS platform** — the control plane and two on-demand nodes bill hourly, on top
+of the NAT gateway (PR 3's IAM roles remain free). Provision deliberately and run
+`terraform destroy` promptly after evidence capture — see the cost notes above
+and the teardown procedure in PR 8.
