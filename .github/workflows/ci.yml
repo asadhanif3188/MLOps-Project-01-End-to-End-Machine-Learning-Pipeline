@@ -490,7 +490,7 @@ jobs:
             --severity CRITICAL,HIGH \
             --exit-code 1 \
             --ignorefile .trivyignore \
-            --no-progress || {
+            --skip-version-check || {
               echo "::error::Trivy found unignored CRITICAL/HIGH IaC misconfigurations in terraform/. Fix them, or (only for a deliberate, documented trade-off) add a justified suppression to terraform/.trivyignore."
               exit 1
             }
