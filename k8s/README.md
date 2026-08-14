@@ -4,7 +4,7 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
-> **Status — automated manifest validation (Sprint 5, PR 6).** PR 1 established
+> **Status — operations & proof (Sprint 5, PR 7).** PR 1 established
 > the structure and namespace; PR 2 made it a **runnable** workload (real
 > `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —
 > `restartPolicy: Never`, `backoffLimit: 2`, `activeDeadlineSeconds: 1800`); PR 3
@@ -21,11 +21,17 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > lifecycle, the **deliberate absence of health probes**, and the **failure modes**
 > (see [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)
 > and [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)); PR 6
-> (this change) adds **automated CI validation** of these manifests — YAML syntax,
+> added **automated CI validation** of these manifests — YAML syntax,
 > upstream **schema** (`kubeconform`), **Kustomize** rendering, and the PR 1–5
 > **security/resource contract** (`k8s/validate.py`), plus an opt-in ephemeral-cluster
 > admission dry-run (see [§ CI manifest validation](#ci-manifest-validation-pr-6)
-> and [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)).
+> and [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)); PR 7
+> (this change) completes the sprint with the **operations & proof** documentation —
+> a full deployment guide (below), an [operations runbook](../docs/kubernetes-operations.md)
+> with a [troubleshooting matrix](#troubleshooting), a
+> [security document](../docs/kubernetes-security.md), and a
+> [Sprint 5 Proof-Impact Assessment](../docs/proof/sprint-05-proof-impact.md) — and
+> re-executes the local deployment path from a clean state as evidence.
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
 > lifecycle, hardened context, and resource enforcement verified end to end (see
 > [§ Execution record](#execution-record-pr-2),
@@ -42,7 +48,11 @@ For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, t
 workload lifecycle, and the local-vs-production boundary — see
 [docs/kubernetes-architecture.md](../docs/kubernetes-architecture.md),
 [ADR-009](../docs/decisions/ADR-009-kubernetes-workload-model.md), and
-[ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md).
+[ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md). For **day-2
+operations**, the **security posture**, and the **evidence-based claims**, see the
+[Operations runbook](../docs/kubernetes-operations.md),
+[Security document](../docs/kubernetes-security.md), and the
+[Sprint 5 Proof-Impact Assessment](../docs/proof/sprint-05-proof-impact.md).
 
 ## Layout
 
@@ -81,10 +91,47 @@ kustomize build k8s/overlays/local
 
 `kubectl` can render the same way with `kubectl kustomize k8s/overlays/local`.
 
+## Prerequisites
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| **Docker** | Build the `ml-pipeline:local` image | Already required by the project ([root README § Running with Docker](../README.md#running-with-docker)). |
+| **A local Kubernetes cluster** | Run the workload | **Docker Desktop Kubernetes**, **kind**, or **minikube** — any single-node local cluster. |
+| **`kubectl`** | Apply/inspect/log/delete | Point it at the local context: `kubectl config current-context` should be `docker-desktop`, `kind-*`, or `minikube`. |
+| **`kustomize`** (optional) | Render the manifests standalone | `kubectl` has it built in (`kubectl kustomize …` / `kubectl apply -k …`), so a separate binary is optional. |
+
+No registry, no cloud account, and no credentials are required to render, apply, or
+inspect the workload. MLflow/DagsHub credentials are only needed for a *green*
+pipeline run (which also needs the SCM + data work — see
+[§ Execution record](#execution-record-pr-2)).
+
+### Local cluster setup
+
+Enable **one** local cluster:
+
+```bash
+# Docker Desktop: Settings → Kubernetes → "Enable Kubernetes" (shares the Docker daemon)
+kubectl config use-context docker-desktop
+
+# …or kind:
+kind create cluster --name mlops
+kubectl config use-context kind-mlops
+
+# …or minikube:
+minikube start
+kubectl config use-context minikube
+```
+
+Confirm it is reachable before deploying: `kubectl get nodes` should list a `Ready`
+node.
+
 ## Run it locally (runbook)
 
 The steps below are the operational flow for a local cluster (kind, minikube, or
-Docker Desktop Kubernetes).
+Docker Desktop Kubernetes). For **day-2 operations** — re-running, rotating the
+Secret, updating config, the full failure-mode playbook, and the complete
+troubleshooting matrix — see the
+[Kubernetes Operations runbook](../docs/kubernetes-operations.md).
 
 > **Executed on 2026-08-12** against Docker Desktop Kubernetes (v1.34.3). The Job
 > lifecycle was verified end to end (see [§ Execution record](#execution-record-pr-2)):
@@ -107,25 +154,40 @@ docker build \
   -t ml-pipeline:local .
 ```
 
-### 2. Load the image into the cluster
+### 2. Make the image available to the cluster
 
-A local cluster cannot see your host's Docker images until they are side-loaded:
+**Docker Desktop** shares the host Docker daemon with its Kubernetes, so the image
+is visible with **no** extra step. **kind** and **minikube** run their own
+container runtime and must be side-loaded:
 
 ```bash
 kind load docker-image ml-pipeline:local          # kind
 # or:
 minikube image load ml-pipeline:local             # minikube
+# Docker Desktop Kubernetes: nothing to do — it shares the daemon.
 ```
 
-### 3. Apply the workload
+### 3. (Optional) create the credential Secret
+
+Only needed for MLflow/DagsHub tracking; the workload applies and runs without it
+(the `secretRef` is `optional: true`). Created **out-of-band** so nothing is
+committed — full rationale in [§ Secrets](#secrets--creation-lifecycle-and-why-nothing-is-committed):
+
+```bash
+kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -   # if not yet applied
+kubectl create secret generic mlops-pipeline-secret --namespace mlops --from-env-file=.env
+```
+
+### 4. Apply the workload
 
 ```bash
 kubectl apply -k k8s/overlays/local
 ```
 
-This creates the `mlops` namespace and the `mlops-pipeline` Job.
+This creates the `mlops` namespace and the `mlops-pipeline` Job (plus the
+ServiceAccount and ConfigMap).
 
-### 4. Inspect it
+### 5. Inspect it
 
 ```bash
 kubectl -n mlops get jobs,pods                    # high-level status
@@ -133,14 +195,14 @@ kubectl -n mlops describe job/mlops-pipeline      # events, completions, backoff
 kubectl -n mlops get job/mlops-pipeline -o wide
 ```
 
-### 5. Retrieve logs
+### 6. Retrieve logs
 
 ```bash
 kubectl -n mlops logs job/mlops-pipeline          # logs from the Job's pod
 kubectl -n mlops logs -f job/mlops-pipeline       # follow while it runs
 ```
 
-### 6. Delete / re-run
+### 7. Delete / re-run
 
 A Job's pod template is immutable, so re-running means delete-then-apply (this is
 expected for batch Jobs — you are starting a fresh run, not mutating a live one):
@@ -156,6 +218,21 @@ To re-run while keeping the namespace, delete just the Job first:
 kubectl -n mlops delete job/mlops-pipeline
 kubectl apply -k k8s/overlays/local
 ```
+
+## Troubleshooting
+
+Deployment-time symptoms and fixes. The **full** operational matrix (stalls, OOM,
+secret/config, admission, RBAC) is in the
+[Kubernetes Operations runbook § Troubleshooting matrix](../docs/kubernetes-operations.md#3-troubleshooting-matrix).
+
+| Symptom | Likely cause | Investigation | Remediation |
+|---|---|---|---|
+| `ImagePullBackOff` / `ErrImagePull` | Cluster can't see `ml-pipeline:local` — not built, or not side-loaded (kind/minikube). | `kubectl -n mlops describe pod <pod>` → `Events`. | Build it, then side-load for kind/minikube (`kind load docker-image …` / `minikube image load …`); Docker Desktop needs no load — see [§ Step 2](#2-make-the-image-available-to-the-cluster). |
+| Pod `Pending`, never schedules | Node lacks CPU/memory for the `requests` (250m/256Mi). | `describe pod` → `FailedScheduling`. | Raise the local cluster's resources (Docker Desktop → Settings → Resources). |
+| `CreateContainerConfigError` — "runAsNonRoot and image has non-numeric user" | The explicit numeric `runAsUser: 10001` was removed (the image's `USER` is a name). | `describe pod` → container state. | Keep `runAsUser: 10001` — it is **required** ([ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)). |
+| Pod `Error`, exit `255`, log `/app is not a git repository` | **Expected today** — `dvc repro` needs an SCM the runtime image ships none. | `kubectl -n mlops logs job/mlops-pipeline`. | Not a deploy fault; the documented "make it runnable" gap ([§ Execution record](#execution-record-pr-2)). |
+| Job `Failed`, `BackoffLimitExceeded` | Pod failed all `backoffLimit + 1 = 3` attempts. | `describe job` events, then the **pod logs** for the real cause. | Fix the underlying pod error above; fail-fast is intentional for a deterministic pipeline. |
+| `kubectl apply -k` render/schema error | Malformed or schema-invalid manifest. | `kustomize build k8s/overlays/local` and `python k8s/validate.py`; `kubeconform -strict`. | Fix the manifest; CI's `k8s-validate` catches this class before merge. |
 
 ## Execution record (PR 2)
 
@@ -506,8 +583,8 @@ see [§ Execution record](#execution-record-pr-2)).
 | Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
 | Security hardening (securityContext, seccomp, dropped caps) | ✅ done (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
 | CPU/memory resource requests/limits, lifecycle & probe decision, failure modes | ✅ done (measured values, [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)) | PR 5 |
-| CI manifest validation (syntax, schema, kustomize, security) | ✅ this PR (static + opt-in dry-run, [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)) | PR 6 |
-| Operations runbook & proof | ⬜ deferred | PR 7 |
+| CI manifest validation (syntax, schema, kustomize, security) | ✅ done (static + opt-in dry-run, [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)) | PR 6 |
+| Operations runbook, security doc & proof (this PR) | ✅ this PR ([operations](../docs/kubernetes-operations.md), [security](../docs/kubernetes-security.md), [proof](../docs/proof/sprint-05-proof-impact.md)) | PR 7 |
 
 No credentials are committed anywhere in this directory, and none will be — the
 Secret strategy (PR 3) uses a committed **template without values**.

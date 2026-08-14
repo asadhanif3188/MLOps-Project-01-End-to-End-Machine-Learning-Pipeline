@@ -157,7 +157,11 @@ in [`k8s/README.md`](k8s/README.md).
 > **automated CI validation** of the manifests — YAML syntax, upstream **schema**
 > (`kubeconform`), **Kustomize** rendering, and the PR 1–5 **security/resource
 > contract** (`k8s/validate.py`), plus an opt-in ephemeral-cluster admission
-> dry-run ([ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md)).
+> dry-run ([ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md)); PR 7
+> completes the sprint with **operations & proof** — a full deployment guide, an
+> [operations runbook](docs/kubernetes-operations.md) with a troubleshooting matrix,
+> a [security document](docs/kubernetes-security.md), and a
+> [Sprint 5 Proof-Impact Assessment](docs/proof/sprint-05-proof-impact.md).
 > The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
 > lifecycle, hardened context, and resource enforcement verified end to end; the
 > pipeline does **not** complete yet — `dvc repro` aborts with `/app is not a git

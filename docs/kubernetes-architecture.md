@@ -7,7 +7,7 @@ image and lifecycle (PR 2), the configuration boundary (PR 3), and the
 **enforced security context** (PR 4), and — critically — exactly which parts are
 locally validatable today versus deferred to a production cluster.
 
-> **Scope note.** Through PR 6 the manifests in [`k8s/`](../k8s/) define the
+> **Scope note.** Through PR 7 the manifests in [`k8s/`](../k8s/) define the
 > namespace, a **runnable** batch `Job` — the real `ml-pipeline:local` image, the
 > real `dvc repro` command, and a finite-run lifecycle — plus externalized
 > **configuration** (`ConfigMap`), a **Secret** template (created out-of-band,
@@ -23,7 +23,14 @@ locally validatable today versus deferred to a production cluster.
 > ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)); this validation
 > is **static** — it does not deploy or run the workload (see
 > [§6](#6-identity--security-boundary) and
-> [§7](#7-local-validation-vs-production-deferred)). The Job was **executed on a
+> [§7](#7-local-validation-vs-production-deferred)). PR 7 completes the sprint with
+> **operations & proof** documentation — a full deployment guide
+> ([`k8s/README.md`](../k8s/README.md)), an
+> [operations runbook](kubernetes-operations.md) with a troubleshooting matrix, a
+> [security document](kubernetes-security.md), and a
+> [Sprint 5 Proof-Impact Assessment](proof/sprint-05-proof-impact.md) — and
+> re-executes the local deployment path from a clean state as evidence. The Job was
+> **executed on a
 > local Docker Desktop cluster** (2026-08-12) and its lifecycle verified end to
 > end, but the pipeline does **not** complete yet: `dvc repro` aborts because the
 > image has no SCM (`/app is not a git repository`), and a *green* run also needs
@@ -445,6 +452,12 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
 ## Related Documentation
 
 - [ADR-009 — Kubernetes Workload Model](decisions/ADR-009-kubernetes-workload-model.md)
+- [ADR-010 — Security Hardening](decisions/ADR-010-kubernetes-security-hardening.md) ·
+  [ADR-011 — Resource & Lifecycle](decisions/ADR-011-kubernetes-resource-lifecycle.md) ·
+  [ADR-012 — Manifest Validation](decisions/ADR-012-kubernetes-manifest-validation.md)
+- [Kubernetes Operations](kubernetes-operations.md) ·
+  [Kubernetes Security](kubernetes-security.md) ·
+  [Sprint 5 Proof-Impact](proof/sprint-05-proof-impact.md)
 - [Architecture](architecture.md)
 - [Containerization Strategy](containerization.md)
 - [ADR-005 — Containerization Strategy](decisions/ADR-005-containerization-strategy.md)

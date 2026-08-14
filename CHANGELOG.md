@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kubernetes operations, security & proof documentation** (Sprint 5, PR 7) — the
+  final Sprint 5 PR; documentation and evidence only, **no manifest or code change**.
+  - A complete **deployment guide** in [`k8s/README.md`](k8s/README.md): prerequisites,
+    local cluster setup, image build/load, optional secret setup, deploy, inspect,
+    logs, a deployment **troubleshooting matrix**, cleanup, and re-run.
+  - A new [**Kubernetes Operations** runbook](docs/kubernetes-operations.md): the
+    operational model, routine day-2 operations (deploy/observe/logs/re-run/rotate
+    secret/update config/tear down), a full **symptom → cause → investigation →
+    remediation** matrix, a failure-handling playbook, and an **honest observability
+    posture** (`kubectl` + structured logs; **no** production observability stack).
+  - A new [**Kubernetes Security** document](docs/kubernetes-security.md): the
+    two-layer (image + platform) enforcement, least-privilege identity, the pod/
+    container `securityContext`, the read-only-root deferral, the secret/data-handling
+    model, and a controls→evidence checklist with an explicit "what is **not** claimed"
+    (no restricted-PSS certification, no `NetworkPolicy`, no production baseline).
+  - A new [**Sprint 5 Proof-Impact Assessment**](docs/proof/sprint-05-proof-impact.md):
+    a conservative **Before/After** capability model, evidence-linked new claims,
+    a proof/evidence table across the six dimensions (workload model, security,
+    resources, configuration, validation, operations), and explicit known limitations
+    (**local cluster only; no production cloud deployment; no GitOps; no production
+    observability/HA/serving**).
+  - **The local deployment path was re-executed from a clean state** (2026-08-12,
+    Docker Desktop Kubernetes v1.34.3) as evidence: render → `python k8s/validate.py`
+    (**34/34**) → `kubectl apply -k` (4 objects, image resolved with no registry pull)
+    → the designed **3-attempt** back-off lifecycle (`RESTARTS: 0`, Job `Failed`) →
+    logs (`/app is not a git repository`) → `kubectl delete -k` (namespace `NotFound`).
+    The live pod enforced QoS `Burstable`, the exact `securityContext` and `resources`,
+    and an **empty** `volumes` (no API token). Consistent with every prior Sprint 5
+    record: the Job **mechanism** and control **enforcement** are proven on a real
+    cluster; a **green** pipeline run is **not** claimed (the image lacks an SCM).
+  - Documentation reconciled to reflect the final Sprint 5 implementation:
+    [kubernetes-architecture.md](docs/kubernetes-architecture.md) (scope → PR 7),
+    [roadmap.md](docs/roadmap.md) (v4 operations & proof ✅), the root
+    [README](README.md) (Kubernetes status + doc links), and the
+    [docs index](docs/README.md) (Kubernetes docs, refreshed ADR list, Sprint 5 proof).
+    **No release tag is cut in this PR.** No production Kubernetes expertise is claimed.
 - **Automated Kubernetes manifest validation in CI** (Sprint 5, PR 6) — every push
   and pull request now statically validates the `k8s/` manifests, so a future edit
   cannot silently regress the PR 1–5 contract.
