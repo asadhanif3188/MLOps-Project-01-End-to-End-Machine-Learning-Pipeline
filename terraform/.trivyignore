@@ -1,0 +1,37 @@
+# Trivy IaC-scan suppressions for terraform/.
+#
+# Every entry below is a DELIBERATE, ADR-ratified configuration choice for this
+# SHORT-LIVED, SINGLE-OPERATOR EKS *validation* cluster — not an unreviewed risk.
+# Each is justified inline and cross-referenced to the ADR that ratifies the
+# trade-off. Trivy still FAILS CI on any OTHER CRITICAL/HIGH finding, so this file
+# is a triage record, not a blanket mute (see
+# .github/workflows/ci.yml § terraform-validate and ADR-019).
+#
+# Re-triage this list whenever the network / EKS / IAM configuration changes.
+# For a persistent or production cluster, the correct action is to REMEDIATE these
+# (narrow the API CIDR, disable the public endpoint, add a KMS CMK) rather than to
+# keep suppressing them.
+
+# AVD-AWS-0041 (CRITICAL) — "EKS cluster should not have open public access CIDRs."
+#   var.cluster_endpoint_public_access_cidrs defaults to 0.0.0.0/0 so a first-run
+#   operator can reach the Kubernetes API with kubectl from a workstation while
+#   validating a throwaway cluster. It is a documented knob the operator MUST
+#   narrow to their own IP/CIDR for any real environment, and private endpoint
+#   access is enabled alongside it. See ADR-017 (endpoint posture) and the
+#   variable's own guidance in terraform/variables.tf.
+AVD-AWS-0041
+
+# AVD-AWS-0040 (HIGH) — "EKS cluster should not have public access enabled."
+#   Same rationale: the public API endpoint is intentionally on for out-of-band
+#   operator validation of a short-lived cluster, restricted by the CIDR knob
+#   above and paired with private access. Set cluster_endpoint_public_access =
+#   false for a private-only production posture. See ADR-017.
+AVD-AWS-0040
+
+# AVD-AWS-0039 (HIGH) — "EKS should have secrets encryption (KMS envelope) enabled."
+#   No customer-managed KMS envelope encryption of Kubernetes secrets is
+#   configured on this validation cluster: it stores no production secrets (the
+#   MLflow credential is delivered out-of-band at run time), and it is destroyed
+#   after evidence capture. Adding a CMK is the documented hardening step for a
+#   persistent/production cluster. See ADR-017 and ADR-019.
+AVD-AWS-0039

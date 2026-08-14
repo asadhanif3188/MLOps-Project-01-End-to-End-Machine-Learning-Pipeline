@@ -364,6 +364,122 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
+  # terraform-validate — STATIC validation of the Terraform IaC under terraform/.
+  # Independent of the other jobs (needs no Python package, image, or cluster), so
+  # it runs in parallel for fast feedback. Every step is static source analysis
+  # that NEVER contacts AWS: canonical formatting, a provider-only init (no
+  # backend, no state), configuration validation, a TFLint lint (language rules +
+  # AWS ruleset), and a Trivy IaC misconfiguration scan. Tool versions are pinned
+  # so a green run today is a green run tomorrow.
+  #
+  # It deliberately does NOT run `terraform plan` or `terraform apply`. A real
+  # `plan` reads data sources (aws_caller_identity, aws_region,
+  # aws_availability_zones), so it needs live AWS credentials — which are
+  # intentionally absent from CI. Adding long-lived AWS keys to GitHub Actions to
+  # make `plan` run would be the exact security regression this project refuses;
+  # the boundary is documented instead (docs/ci-cd.md § "Terraform validation",
+  # terraform/README.md § Planning). Cloud provisioning is a deliberate,
+  # credentialed, out-of-band operation an operator runs against their OWN
+  # account. Design of record: ADR-019.
+  # ---------------------------------------------------------------------------
+  terraform-validate:
+    name: Terraform Validation (static, no AWS)
+    runs-on: ubuntu-latest
+    # Least privilege, restated explicitly at the job level: this job only reads
+    # the repository. It carries no AWS identity and no write scope of any kind,
+    # so even a compromised step cannot provision, publish, or mutate anything.
+    permissions:
+      contents: read
+    env:
+      # Pinned for reproducibility. Bump deliberately, not implicitly.
+      TF_VERSION: 1.9.8
+      TFLINT_VERSION: v0.54.0
+      TRIVY_VERSION: v0.56.1
+      # Keep the Trivy suppression list beside the Terraform it applies to.
+      TRIVY_IGNOREFILE: terraform/.trivyignore
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      # Stage 1 — Checkout.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Stage 2 — Pinned Terraform CLI. terraform_wrapper:false so raw exit codes
+      # reach the shell (the wrapper wraps stdout/exit and changes step semantics).
+      - name: Set up Terraform (pinned)
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # Stage 3 — Canonical formatting. Checks (never rewrites) every .tf file
+      # recursively; drift fails the job with an actionable message.
+      - name: Terraform fmt (check, recursive)
+        run: |
+          terraform fmt -check -recursive || {
+            echo "::error::Terraform files are not canonically formatted. Run 'terraform fmt -recursive' in terraform/ and commit the result."
+            exit 1
+          }
+
+      # Stage 4 — Provider-only init. `-backend=false` installs the provider
+      # plugins from the committed .terraform.lock.hcl WITHOUT configuring any
+      # backend or touching state, and needs NO AWS credentials. It is the
+      # prerequisite for `validate` (which needs the provider schema).
+      - name: Terraform init (providers only — no backend, no AWS access)
+        run: terraform init -backend=false -input=false
+
+      # Stage 5 — Configuration validation. Checks syntax, types, references, and
+      # provider-schema conformance. Makes NO AWS API calls and needs no
+      # credentials; it is the primary correctness gate for the IaC.
+      - name: Terraform validate
+        run: |
+          terraform validate -no-color || {
+            echo "::error::terraform validate failed — the configuration is not internally consistent. Fix the reported errors."
+            exit 1
+          }
+
+      # Stage 6 — TFLint (language best-practices preset + AWS ruleset). Static
+      # lint only; contacts no cloud. Config lives in terraform/.tflint.hcl.
+      - name: Set up TFLint (pinned)
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      # `tflint --init` fetches the pinned AWS ruleset plugin from GitHub;
+      # GITHUB_TOKEN raises the anonymous API rate limit and is the repo-scoped,
+      # read-only ephemeral Actions token — it carries NO AWS identity.
+      - name: TFLint (init plugins + lint)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init
+          tflint --no-color -f compact || {
+            echo "::error::TFLint reported issues in terraform/. Fix them, or justify a rule exception in terraform/.tflint.hcl."
+            exit 1
+          }
+
+      # Stage 7 — Trivy IaC misconfiguration scan. Static analysis of the
+      # Terraform for insecure configuration (public exposure, missing encryption,
+      # over-broad IAM, …). It reads only the source — no AWS access. Fails the
+      # job on CRITICAL or HIGH findings. The few intentional, ADR-ratified
+      # exposures for this SHORT-LIVED validation cluster (the open default API
+      # CIDR, no KMS envelope encryption) are suppressed WITH justification in
+      # terraform/.trivyignore, so any NEW critical/high the scanner surfaces is a
+      # real, blocking regression rather than expected noise.
+      #   NOTE: scan-ref is repo-root-relative (a `uses:` step ignores the job's
+      #   working-directory), so it points at the `terraform` folder directly.
+      - name: Trivy IaC security scan (Terraform misconfiguration)
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          hide-progress: "true"
+          version: ${{ env.TRIVY_VERSION }}
+
+  # ---------------------------------------------------------------------------
   # k8s-cluster-dry-run — OPT-IN cluster admission check. This is the only job
   # that talks to a Kubernetes API server. It is NOT run per-PR (it would add
   # cluster-bootstrap cost and a flake surface to every change); trigger it
