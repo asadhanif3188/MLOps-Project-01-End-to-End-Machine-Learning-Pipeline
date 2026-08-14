@@ -394,9 +394,7 @@ jobs:
       # Pinned for reproducibility. Bump deliberately, not implicitly.
       TF_VERSION: 1.9.8
       TFLINT_VERSION: v0.54.0
-      TRIVY_VERSION: v0.56.1
-      # Keep the Trivy suppression list beside the Terraform it applies to.
-      TRIVY_IGNOREFILE: terraform/.trivyignore
+      TRIVY_VERSION: 0.74.0
     defaults:
       run:
         working-directory: terraform
@@ -459,25 +457,43 @@ jobs:
             exit 1
           }
 
-      # Stage 7 — Trivy IaC misconfiguration scan. Static analysis of the
-      # Terraform for insecure configuration (public exposure, missing encryption,
-      # over-broad IAM, …). It reads only the source — no AWS access. Fails the
-      # job on CRITICAL or HIGH findings. The few intentional, ADR-ratified
-      # exposures for this SHORT-LIVED validation cluster (the open default API
-      # CIDR, no KMS envelope encryption) are suppressed WITH justification in
-      # terraform/.trivyignore, so any NEW critical/high the scanner surfaces is a
-      # real, blocking regression rather than expected noise.
-      #   NOTE: scan-ref is repo-root-relative (a `uses:` step ignores the job's
-      #   working-directory), so it points at the `terraform` folder directly.
+      # Stage 7 — Trivy IaC misconfiguration scan. Installed as a single pinned,
+      # checksum-verified static binary — the SAME pattern the k8s-validate job
+      # uses for kustomize/kubeconform — instead of a third-party action, whose
+      # transitive setup pins have broken in the past. Integrity is checked against
+      # the release checksums before use.
+      - name: Install Trivy (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          tar="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSLo "${tmp}/${tar}" "${base}/${tar}"
+          curl -fsSLo "${tmp}/checksums.txt" "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          ( cd "${tmp}" && grep "${tar}" checksums.txt | sha256sum -c - )
+          tar -xzf "${tmp}/${tar}" -C "${tmp}" trivy
+          sudo install -m 0755 "${tmp}/trivy" /usr/local/bin/trivy
+          trivy --version
+
+      # Static analysis of the Terraform for insecure configuration (public
+      # exposure, missing encryption, over-broad IAM, …). Reads only the source —
+      # no AWS access. Fails the job on CRITICAL/HIGH. The few intentional,
+      # ADR-ratified exposures for this SHORT-LIVED validation cluster (the open
+      # default API CIDR, no KMS envelope encryption) are suppressed WITH
+      # justification in terraform/.trivyignore (read from the job's working
+      # directory), so any NEW critical/high is a real, blocking regression rather
+      # than expected noise.
       - name: Trivy IaC security scan (Terraform misconfiguration)
-        uses: aquasecurity/trivy-action@v0.28.0
-        with:
-          scan-type: config
-          scan-ref: terraform
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          hide-progress: "true"
-          version: ${{ env.TRIVY_VERSION }}
+        run: |
+          set -euo pipefail
+          trivy config . \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignorefile .trivyignore \
+            --no-progress || {
+              echo "::error::Trivy found unignored CRITICAL/HIGH IaC misconfigurations in terraform/. Fix them, or (only for a deliberate, documented trade-off) add a justified suppression to terraform/.trivyignore."
+              exit 1
+            }
 
   # ---------------------------------------------------------------------------
   # k8s-cluster-dry-run — OPT-IN cluster admission check. This is the only job

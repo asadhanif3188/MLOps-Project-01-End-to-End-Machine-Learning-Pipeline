@@ -118,7 +118,7 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 | 4 | **init** | `terraform init -backend=false` | Installs the pinned provider from the committed `.terraform.lock.hcl` — **no backend, no state, no AWS credentials**. Prerequisite for `validate`. |
 | 5 | **validate** | `terraform validate` | Syntax, types, references, and provider-schema conformance. **No AWS API calls.** The primary IaC correctness gate. |
 | 6 | **TFLint** | `terraform-linters/setup-tflint@v4` (0.54.0) + `tflint` | Language best-practices preset **+ AWS ruleset** (config in [`terraform/.tflint.hcl`](../terraform/.tflint.hcl)). Static lint; contacts no cloud. |
-| 7 | **Trivy IaC scan** | `aquasecurity/trivy-action@v0.28.0` (trivy 0.56.1) | `trivy config` misconfiguration scan of `terraform/`. **Fails on CRITICAL/HIGH.** Reads only the source — no AWS access. |
+| 7 | **Trivy IaC scan** | `trivy` 0.74.0 (pinned, checksum-verified binary) | `trivy config` misconfiguration scan of `terraform/`. **Fails on CRITICAL/HIGH.** Reads only the source — no AWS access. |
 
 > **Why no `terraform plan`.** A real `plan` reads data sources
 > (`aws_caller_identity`, `aws_region`, `aws_availability_zones`), so it needs
