@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AWS EKS Deployment Overlay** (Sprint 6, PR 5) — integrates the existing
+  Sprint 5 Kubernetes workload with the Terraform-provisioned EKS platform by
+  **reusing the base unchanged**, with **no workload duplication** and **no
+  security weakening**. Design of record:
+  [ADR-018](docs/decisions/ADR-018-aws-eks-deployment-overlay.md).
+  - **New [`k8s/overlays/aws/`](k8s/overlays/aws/)** — a thin overlay over
+    `../../base` that layers **only** the three genuine cloud differences: the
+    image source (**Amazon ECR**, pulled via the node role's ECR read-only policy
+    — no pod credential/IRSA), an explicit **`imagePullPolicy: Always`**, and the
+    runtime **dataset mount** at `/app/data/raw`. It **deliberately does not**
+    override MLflow, so the cloud run uses the **real DagsHub endpoint** + the
+    out-of-band Secret (the local overlay's in-pod file store is local-only).
+  - **Security preserved, provably** — the rendered pod/container
+    `securityContext`, `resources`, `serviceAccountName`, and
+    `automountServiceAccountToken` are **byte-identical** to the local overlay's
+    (`runAsNonRoot` + uid/gid `10001`, `allowPrivilegeEscalation: false`,
+    `capabilities: drop [ALL]`, seccomp `RuntimeDefault`, measured
+    requests/limits). Both overlays pass the same **45-check** static contract.
+  - **No account ID in git** — the ECR reference is a committed
+    `000000000000`/`us-east-1` **placeholder**; the operator points it at their
+    own account at deploy time via `kustomize edit set image` (no file edit).
+  - **Validation tooling extended** — CI now runs the Kustomize render +
+    `kubeconform -strict` schema gate, the `k8s/validate.py`
+    security/runtime-contract gate, and the opt-in server-side dry-run admission
+    for **both** the `local` and `aws` overlays.
+  - **Base and local overlay unchanged** — local behavior is byte-for-byte
+    preserved; no ingress, Service, mesh, GitOps, observability, or new AWS
+    service is added. The **real EKS execution** (Job Complete, exit 0) is the
+    Sprint 6 PR 7 integration test.
+  - **Docs** — [`k8s/README.md`](k8s/README.md) § "AWS overlay — deploy to EKS"
+    and [`docs/kubernetes-architecture.md`](docs/kubernetes-architecture.md)
+    document the cloud-specific differences and the static-vs-runtime boundary.
 - **Managed EKS Platform** (Sprint 6, PR 4) — provisions the real Kubernetes
   platform as Terraform, consuming the PR 2 network and PR 3 IAM roles. Design of
   record: [ADR-017](docs/decisions/ADR-017-eks-platform.md).

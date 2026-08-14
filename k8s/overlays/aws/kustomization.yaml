@@ -1,0 +1,54 @@
+# AWS overlay — specializes the SAME base for the Terraform-provisioned EKS
+# platform (Sprint 6, PR 5 — Cloud Runtime Integration).
+#
+# This overlay reuses `../../base` unchanged and layers ONLY what genuinely
+# differs on EKS versus a local cluster. It deliberately does NOT copy the
+# workload: the Namespace, ServiceAccount, ConfigMap, DVC no-SCM config, and the
+# hardened Job (securityContext, resources, lifecycle) all come from the base, so
+# every Sprint 5 security control is inherited verbatim — this overlay changes
+# none of them. See ADR-018 and k8s/README.md § "AWS overlay".
+#
+# The three cloud-specific differences, and where each is expressed:
+#   1. Image source — a registry (Amazon ECR), not a side-loaded local image.
+#      Expressed by the `images` transformer below.
+#   2. Image pull policy + runtime dataset source — expressed by the strategic
+#      merge patch `job-cloud.yaml`.
+#   3. MLflow backend — the AWS overlay intentionally does NOT override
+#      MLFLOW_TRACKING_URI, so the base ConfigMap's real DagsHub endpoint is used
+#      with credentials from the out-of-band Secret. (The LOCAL overlay overrides
+#      it to an in-pod file store; AWS exercises the real tracking path instead.)
+#
+# Render and inspect with:  kustomize build k8s/overlays/aws
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Cloud image source. Nodes run in the PRIVATE subnets (ADR-015) and cannot see a
+# locally built image, so on EKS the workload image is PULLED from a registry —
+# Amazon ECR is the natural choice (the node role carries
+# AmazonEC2ContainerRegistryReadOnly from ADR-016, so the kubelet authenticates
+# the pull with the node's instance role — no pod-level credential or IRSA).
+#
+# The values below are a committed PLACEHOLDER: `000000000000` (the AWS account
+# ID) and the region are filled in for the operator's OWN account during the real
+# cloud run (PR 7), without editing this file, via:
+#
+#     cd k8s/overlays/aws
+#     kustomize edit set image \
+#       ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1
+#
+# The tag is an explicit, immutable version (`1.3.1`, the image's BUILD_VERSION —
+# see the root README § "Running with Docker"), never `:latest`, so a run is
+# reproducible and the static image-pinning check passes.
+images:
+  - name: ml-pipeline
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/mlops-pipeline
+    newTag: "1.3.1"
+
+# Cloud-specific patch: image pull policy + the runtime dataset source. Kept in a
+# single small strategic-merge patch so the AWS-vs-base delta is legible in one
+# place. It changes no security field.
+patches:
+  - path: job-cloud.yaml

@@ -25,6 +25,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-015](ADR-015-aws-network-architecture.md) | AWS Network Architecture (VPC, Subnets, AZs, NAT) | Accepted (design) | 2026-08-14 |
 | [ADR-016](ADR-016-aws-iam-foundation.md) | AWS IAM Foundation for EKS (Cluster & Node Roles) | Accepted (design) | 2026-08-14 |
 | [ADR-017](ADR-017-eks-platform.md) | Amazon EKS Platform (Cluster, Managed Node Group, Core Addons) | Accepted (design) | 2026-08-14 |
+| [ADR-018](ADR-018-aws-eks-deployment-overlay.md) | AWS EKS Deployment Overlay (Cloud Runtime Integration) | Accepted (design) | 2026-08-14 |
 
 ## Template
 

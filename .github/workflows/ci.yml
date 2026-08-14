@@ -327,7 +327,7 @@ jobs:
       - name: Render + schema validation (kustomize + kubeconform)
         run: |
           set -euo pipefail
-          for target in k8s/base k8s/overlays/local; do
+          for target in k8s/base k8s/overlays/local k8s/overlays/aws; do
             echo "::group::kubeconform ${target} (k8s ${K8S_SCHEMA_VERSION}, strict)"
             kustomize build "${target}" \
               | kubeconform -strict -summary -verbose \
@@ -337,7 +337,7 @@ jobs:
           done
 
       # Stage 5 — Project security, required-field & runtime-contract checks.
-      # Renders overlays/local and asserts the workload contract that a generic
+      # Renders each overlay and asserts the workload contract that a generic
       # schema validator cannot express: runAsNonRoot, allowPrivilegeEscalation
       # false, seccomp RuntimeDefault, capabilities drop ALL, explicit non-default
       # ServiceAccount, token automount off, CPU/memory requests+limits, explicit
@@ -348,8 +348,20 @@ jobs:
       # configured MLFLOW_TRACKING_URI. This is STILL static — it proves the manifest
       # declares the contract, not that a run succeeds. Each check prints a PASS/FAIL
       # line, so a failure names exactly what is wrong.
+      #
+      # BOTH deployable overlays are checked: `local` (Sprint 5) and `aws` (the
+      # Sprint 6 PR 5 EKS overlay). Running the same contract over the AWS overlay
+      # proves its cloud-specific patch (ECR image, pull policy, dataset mount)
+      # keeps every Sprint 5 security control intact — the overlay inherits them
+      # from the base and weakens none.
       - name: Static security, required-field & runtime-contract checks (k8s/validate.py)
-        run: python k8s/validate.py
+        run: |
+          set -euo pipefail
+          for overlay in k8s/overlays/local k8s/overlays/aws; do
+            echo "::group::k8s/validate.py ${overlay}"
+            python k8s/validate.py "${overlay}"
+            echo "::endgroup::"
+          done
 
   # ---------------------------------------------------------------------------
   # k8s-cluster-dry-run — OPT-IN cluster admission check. This is the only job
@@ -392,6 +404,13 @@ jobs:
           echo "::group::create namespace (real, on throwaway cluster)"
           kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
           echo "::endgroup::"
-          echo "::group::kubectl apply -k --dry-run=server (admission only)"
-          kubectl apply -k k8s/overlays/local --dry-run=server
-          echo "::endgroup::"
+          # Both deployable overlays are admitted server-side. The AWS overlay's
+          # ECR image is never pulled by a dry run, so admission works on the
+          # throwaway kind cluster without any AWS access — it proves the cloud
+          # overlay is admissible (passes API validation + Pod Security), not that
+          # it runs. The real EKS execution is PR 7.
+          for overlay in k8s/overlays/local k8s/overlays/aws; do
+            echo "::group::kubectl apply -k ${overlay} --dry-run=server (admission only)"
+            kubectl apply -k "${overlay}" --dry-run=server
+            echo "::endgroup::"
+          done

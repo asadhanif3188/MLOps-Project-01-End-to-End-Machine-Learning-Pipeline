@@ -1,0 +1,70 @@
+# AWS-overlay runtime patch (Sprint 6, PR 5 — Cloud Runtime Integration).
+#
+# Strategic-merge patch onto the base Job. It carries ONLY the cloud-specific
+# runtime inputs; everything else — the pod/container securityContext
+# (runAsNonRoot + uid/gid 10001, seccomp RuntimeDefault, allowPrivilegeEscalation
+# false, capabilities drop ALL), the resource requests/limits, the finite-run
+# lifecycle, the ServiceAccount, and the DVC no-SCM config mount — is inherited
+# UNCHANGED from the base. This patch weakens nothing: it adds an image pull
+# policy and a read-only dataset mount, and touches no security field.
+#
+# What differs on EKS versus the LOCAL overlay:
+#
+#   1. imagePullPolicy — the base sets none (a locally side-loaded image needs
+#      no pull). On EKS the image is pulled from ECR, so an explicit policy
+#      belongs here. `Always` guarantees the node runs exactly the image just
+#      pushed to ECR for this validation run, removing the "stale cached image"
+#      class of confusion (the same failure mode the k8s README documents for
+#      Docker Desktop). The pull cost is negligible for a one-shot batch Job.
+#
+#   2. Runtime DATASET — mounted read-only at /app/data/raw from a ConfigMap the
+#      operator creates OUT-OF-BAND, exactly as in the local overlay. Dataset
+#      provisioning is a per-ENVIRONMENT concern by design (the base "does not
+#      presume how the data arrives" — see base/job.yaml), so each overlay
+#      declares its own source; this is not base duplication. The bundled Pima
+#      dataset is tiny (~23 KiB, well under the 1 MiB ConfigMap cap), so the same
+#      portable mechanism works on EKS. `optional: true` keeps the Job appliable
+#      before the ConfigMap exists; it then fails fast at preprocess with a clear
+#      missing-input error (the intended graceful failure — ADR-013).
+#
+#      >> Still a VALIDATION mechanism, not production storage. A production
+#      >> cloud dataset path would be S3 / a PVC / `dvc pull` from the DVC remote;
+#      >> the ConfigMap is used here only because the validation dataset is small
+#      >> and this keeps PR 5 to configuration, not new AWS storage services
+#      >> (a Sprint 6 non-goal). See ADR-018.
+#
+#   3. MLflow backend — DELIBERATELY NOT patched here. The local overlay
+#      overrides MLFLOW_TRACKING_URI to an in-pod file store for an offline run;
+#      the AWS overlay omits that override so the base ConfigMap's real DagsHub
+#      endpoint is used, with credentials supplied by the out-of-band Secret
+#      (mlops-pipeline-secret, optional). The cloud run therefore exercises the
+#      REAL MLflow tracking path. Credentials are never committed (see
+#      base/secret.example.yaml); they are created out-of-band for PR 7.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlops-pipeline
+  namespace: mlops
+spec:
+  template:
+    spec:
+      containers:
+        - name: pipeline
+          # Pull the ECR image on every run (see header rationale).
+          imagePullPolicy: Always
+          # Appended to the base container's volumeMounts (merge key: mountPath);
+          # the base's read-only /app/.dvc/config.local mount is preserved.
+          volumeMounts:
+            - name: dataset
+              mountPath: /app/data/raw
+              readOnly: true
+      # Appended to the base pod's volumes (merge key: name); the base's
+      # dvc-runtime-config volume is preserved.
+      volumes:
+        - name: dataset
+          configMap:
+            name: mlops-pipeline-dataset
+            # Apply/start succeed even before the dataset ConfigMap exists; the
+            # pipeline then fails fast at preprocess (missing input) rather than
+            # the pod being stuck unschedulable.
+            optional: true

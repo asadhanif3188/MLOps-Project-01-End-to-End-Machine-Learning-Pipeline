@@ -426,6 +426,19 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
                               pipeline not green yet (SCM + data)
 ```
 
+> **Update — Sprint 6 (Cloud Platform Foundation).** The "managed cluster
+> (EKS/…)" deferral above is being closed by Sprint 6. Terraform now provisions a
+> real **Amazon EKS** platform ([ADR-017](decisions/ADR-017-eks-platform.md)), and
+> a new **`k8s/overlays/aws`** overlay integrates *this same base workload* with it
+> by reusing the base unchanged and layering only cloud-specific config — ECR image
+> source, `imagePullPolicy`, and the dataset mount — while inheriting every Sprint 5
+> security control verbatim ([ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md)).
+> The AWS overlay is **statically validated and CI-gated** alongside the local
+> overlay (render + `kubeconform` + `k8s/validate.py`, 45/45); the **real green run
+> on EKS** is the Sprint 6 PR 7 integration test, run on the operator's own AWS
+> account. Autoscaling, GitOps, mesh, and production observability remain out of
+> scope.
+
 ---
 
 ## 8. What This Does *Not* Claim

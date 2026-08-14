@@ -75,9 +75,12 @@ k8s/
 │   ├── job.yaml              # the pipeline as a run-to-completion batch Job
 │   └── kustomization.yaml    # aggregates the base, applies common labels
 ├── overlays/
-│   └── local/                # specialization for a local cluster (kind/minikube)
-│       ├── job-runtime.yaml   # PR 8: dataset mount + offline MLflow file-store env
-│       └── kustomization.yaml # pins the image to ml-pipeline:local; applies the patch
+│   ├── local/                # specialization for a local cluster (kind/minikube)
+│   │   ├── job-runtime.yaml   # PR 8: dataset mount + offline MLflow file-store env
+│   │   └── kustomization.yaml # pins the image to ml-pipeline:local; applies the patch
+│   └── aws/                  # specialization for Terraform-provisioned EKS — Sprint 6 PR 5
+│       ├── job-cloud.yaml     # cloud patch: imagePullPolicy + dataset mount (no MLflow override)
+│       └── kustomization.yaml # repoints the image to Amazon ECR; applies the patch
 └── validate.py              # static validation (security + required + runtime) — PR 6/8
 ```
 
@@ -97,9 +100,56 @@ kustomize build k8s/base
 
 # Local overlay (image tag pinned to the locally built ml-pipeline:local)
 kustomize build k8s/overlays/local
+
+# AWS overlay (image repointed to Amazon ECR; targets the EKS platform) — PR 5
+kustomize build k8s/overlays/aws
 ```
 
 `kubectl` can render the same way with `kubectl kustomize k8s/overlays/local`.
+
+## AWS overlay — deploy to EKS (Sprint 6, PR 5)
+
+`k8s/overlays/aws` specializes the **same base** for the Terraform-provisioned
+**EKS platform** ([ADR-017](../docs/decisions/ADR-017-eks-platform.md)). It reuses
+`../../base` unchanged and layers **only** what genuinely differs on a cloud
+cluster — it does **not** copy the workload, and it changes **no security field**.
+Design of record: [ADR-018](../docs/decisions/ADR-018-aws-eks-deployment-overlay.md).
+
+**What is cloud-specific (and nothing else):**
+
+| Difference | Local overlay | AWS overlay | Why |
+|---|---|---|---|
+| **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
+| **`imagePullPolicy`** | unset (side-loaded) | `Always` | Guarantees the node runs exactly the image just pushed to ECR; avoids the stale-image failure mode. |
+| **Dataset** | out-of-band ConfigMap → `/app/data/raw` | same mechanism | Dataset provisioning is per-environment by design; the tiny dataset fits the ConfigMap. **Validation mechanism, not production storage** (S3/PVC/`dvc pull` is the follow-up). |
+| **MLflow backend** | overridden to in-pod file store (offline) | **not overridden** → base DagsHub endpoint + out-of-band Secret | The cloud run exercises the **real** MLflow tracking path. |
+
+Everything else — Namespace, ServiceAccount (token automount off), ConfigMaps, the
+DVC no-SCM config, and the hardened `Job` (`runAsNonRoot` + uid/gid `10001`,
+`allowPrivilegeEscalation: false`, `capabilities: drop [ALL]`, seccomp
+`RuntimeDefault`, measured requests/limits, finite-run lifecycle) — is **inherited
+from the base verbatim**. The rendered pod/container `securityContext`,
+`resources`, `serviceAccountName`, and `automountServiceAccountToken` are
+**byte-identical** to the local overlay's, and both overlays pass the same 45-check
+static contract (`python k8s/validate.py k8s/overlays/aws`).
+
+**Point the image at your account** (no file edit — done at deploy time, PR 7):
+
+```bash
+cd k8s/overlays/aws
+kustomize edit set image \
+  ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1
+```
+
+The committed `newName` uses a `000000000000` / `us-east-1` **placeholder** so no
+real account ID is stored in git.
+
+> **Static only in this PR.** PR 5 delivers a **validated, admissible** overlay
+> (`kustomize build`, `kubeconform -strict`, `k8s/validate.py`, and the opt-in
+> server-side dry-run all cover it). The **real** EKS execution — `terraform apply`
+> → `aws eks update-kubeconfig` → `kubectl apply -k k8s/overlays/aws` → a green
+> `Job` — and its evidence are **PR 7** (Real Cloud Integration Test), run on the
+> operator's own AWS account. Nothing here has been deployed to a cloud cluster.
 
 ## Prerequisites
 
