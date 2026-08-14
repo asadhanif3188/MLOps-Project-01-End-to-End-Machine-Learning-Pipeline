@@ -55,3 +55,43 @@ variable "additional_tags" {
   type        = map(string)
   default     = {}
 }
+
+# --- Network (Sprint 6, PR 2) -------------------------------------------------
+# The VPC that hosts the EKS cluster added in a later PR. Everything below is
+# variable-driven so the same configuration works for a small dev VPC or a
+# larger footprint without editing resource definitions. See ADR-015 and
+# terraform/README.md § Network architecture for the design rationale.
+
+variable "vpc_cidr" {
+  description = "IPv4 CIDR block for the VPC. A /16 gives ample room for the /24 per-AZ subnets this configuration derives; the prefix is capped at /20 so derived subnets stay usefully sized for EKS ENIs/pods."
+  type        = string
+  default     = "10.0.0.0/16"
+
+  validation {
+    condition     = can(cidrhost(var.vpc_cidr, 0)) && tonumber(split("/", var.vpc_cidr)[1]) >= 16 && tonumber(split("/", var.vpc_cidr)[1]) <= 20
+    error_message = "vpc_cidr must be a valid IPv4 CIDR with a prefix between /16 and /20 (e.g. \"10.0.0.0/16\")."
+  }
+}
+
+variable "az_count" {
+  description = "Number of Availability Zones to spread subnets across. EKS requires subnets in at least two AZs; AZ names are discovered at plan time, never hard-coded. Kept small (2) by default for cost; 3 is supported for broader spread."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.az_count >= 2 && var.az_count <= 3
+    error_message = "az_count must be 2 or 3 (EKS needs at least two AZs; three is the practical upper bound for this portfolio scope)."
+  }
+}
+
+variable "enable_nat_gateway" {
+  description = "Whether to create NAT gateway(s) so private-subnet nodes have outbound internet egress (image pulls, dataset fetch, pip, package indexes). Required for the EKS worker nodes, which live in the private subnets. Disable only if nodes are placed in public subnets instead."
+  type        = bool
+  default     = true
+}
+
+variable "single_nat_gateway" {
+  description = "When NAT is enabled, use one shared NAT gateway for all AZs (true, cost-optimized for this short-lived portfolio environment) instead of one per AZ (false, AZ-fault-tolerant but ~1x NAT cost per additional AZ)."
+  type        = bool
+  default     = true
+}

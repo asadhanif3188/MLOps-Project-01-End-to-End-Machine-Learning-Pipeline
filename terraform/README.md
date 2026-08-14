@@ -31,17 +31,20 @@ terraform/
 ├── README.md                 # this file
 ├── versions.tf               # Terraform + AWS provider version constraints
 ├── providers.tf              # AWS provider config (region + default_tags)
-├── variables.tf              # input variables (region, project, environment, tags)
-├── outputs.tf                # context outputs (region, account, naming, tags)
+├── variables.tf              # input variables (region, project, environment, tags, network)
+├── outputs.tf                # outputs (context + network: VPC, subnets, NAT, …)
 ├── main.tf                   # locals (name prefix + common tags) + context data sources
+├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
 There is intentionally **no `modules/` directory yet**. A single small root
-module is the honest shape for a resource-free foundation; modules will be
-introduced only when a later PR has a genuine, reusable boundary to extract
-(e.g. network or EKS). Creating empty modules now would be structure for
-appearance, which this project avoids.
+module is the honest shape at this stage; modules will be introduced only when a
+later PR has a genuine, *reusable* boundary to extract. The network is
+instantiated exactly once (one VPC, one environment), so it lives in
+`network.tf` in the root module rather than a `modules/network` used a single
+time — extracting a module for one caller adds indirection without reuse. See
+[ADR-015](../docs/decisions/ADR-015-aws-network-architecture.md).
 
 ## Authentication expectations
 
@@ -95,14 +98,86 @@ foundation PR.
 terraform plan
 ```
 
-`plan` **does** contact AWS (to resolve the account/region context data
-sources), so valid credentials are required. In this foundation PR a plan
-proposes **no resource changes** — the only data read is caller identity and
-region. Meaningful plans (VPC, IAM, EKS) begin in later PRs.
+`plan` **does** contact AWS (to resolve the context and Availability-Zone data
+sources), so valid credentials are required. As of **PR 2** a plan proposes the
+**network** described below — a VPC, subnets, an internet gateway, a NAT
+gateway, and route tables (18 resources with the defaults). Applying it creates
+billable resources (chiefly the NAT gateway); `validate` alone does not.
 
 > Normal pull-request CI never runs `terraform apply`. Cloud provisioning is a
 > deliberate, controlled operation — see [ADR-014](../docs/decisions/ADR-014-terraform-architecture.md)
 > and the Sprint 6 CI/CD boundary.
+
+## Network architecture
+
+PR 2 provisions the minimum, EKS-ready network — a single VPC spread across
+Availability Zones with a public and a private subnet per AZ. Nodes run in the
+private subnets and reach the internet **outbound only** through NAT; the
+workload is a batch `Job` with no inbound surface, so no public ingress is
+created. Design of record:
+[ADR-015](../docs/decisions/ADR-015-aws-network-architecture.md).
+
+```text
+                         Internet
+                            │
+                      ┌─────┴─────┐
+                      │    IGW     │
+                      └─────┬─────┘
+            VPC 10.0.0.0/16 │
+   ┌────────────────────────┼────────────────────────┐
+   │  AZ a                   │            AZ b         │
+   │  ┌──────────────┐   ┌───┴───┐    ┌──────────────┐ │
+   │  │ public /24   │──▶│  NAT  │◀───│ public /24   │ │  kubernetes.io/role/elb
+   │  │ 10.0.0.0/24  │   └───┬───┘    │ 10.0.1.0/24  │ │
+   │  └──────────────┘       │        └──────────────┘ │
+   │  ┌──────────────┐       │        ┌──────────────┐ │
+   │  │ private /24  │───────┴───────▶│ private /24  │ │  kubernetes.io/role/internal-elb
+   │  │ 10.0.8.0/24  │  (egress via   │ 10.0.9.0/24  │ │  ← EKS worker nodes
+   │  │  EKS nodes   │     NAT)        │  EKS nodes   │ │
+   │  └──────────────┘                └──────────────┘ │
+   └───────────────────────────────────────────────────┘
+```
+
+**Subnet strategy.** One **public** and one **private** subnet per AZ. Public
+subnets (`map_public_ip_on_launch = true`) host the NAT gateway and any future
+public load balancers and are tagged `kubernetes.io/role/elb = 1`. Private
+subnets host the **EKS worker nodes** with no public IPs and are tagged
+`kubernetes.io/role/internal-elb = 1`. Per-AZ CIDRs are derived from the VPC
+CIDR with `cidrsubnet(cidr, 8, …)` (a `/16` → `/24`s); public subnets take the
+low indices and private subnets are offset by 8 so the ranges never overlap.
+Placing nodes in private subnets is a security default (nodes are not directly
+reachable from the internet) that matches the Sprint 5 workload's posture.
+
+**AZ strategy.** AZ names are **discovered at plan time**
+(`aws_availability_zones`, standard non-opt-in zones only), never hard-coded, so
+the configuration is region-portable. `az_count` defaults to **2** — the EKS
+minimum for the managed control plane — and is capped at 3. Changing region or
+AZ count requires no edit to any resource.
+
+**Routing rationale.** A single public route table (default route → internet
+gateway) is shared by the public subnets. Each AZ gets its **own** private route
+table (default route → NAT gateway); per-AZ private tables mean enabling one NAT
+per AZ later (`single_nat_gateway = false`) needs no restructuring — each table
+simply points at its AZ-local gateway.
+
+**Cost considerations.** The **NAT gateway is the dominant cost** in this PR: it
+bills per hour *and* per GB processed, whereas the VPC, subnets, route tables,
+and internet gateway are free. Choices that keep this cheap:
+
+- **A single shared NAT gateway** (`single_nat_gateway = true`, the default) —
+  one gateway serves both AZs instead of one per AZ. This is the main
+  cost/resilience trade-off and is a documented variable.
+- **Two AZs, not three** (`az_count = 2`) — the EKS minimum; fewer subnets and,
+  with per-AZ NAT, fewer gateways.
+- **NAT can be removed entirely** (`enable_nat_gateway = false`) for a
+  deliberately ultra-low-cost run, provided nodes are placed in public subnets
+  instead.
+- The environment is **short-lived** — provision, capture evidence, then
+  `terraform destroy` (PR 8). The NAT gateway is the resource most important to
+  tear down promptly to stop hourly billing.
+
+Elastic IPs attached to a NAT gateway are free while attached; the NAT hourly
+and data-processing charges are the meaningful line items.
 
 ## State handling
 
@@ -146,8 +221,8 @@ region. Meaningful plans (VPC, IAM, EKS) begin in later PRs.
 
 | PR | Adds |
 |----|------|
-| **PR 1 (this PR)** | Terraform foundation — versions, provider, variables, outputs, naming + tagging, docs. No AWS resources. |
-| **PR 2** | AWS network foundation — VPC, subnets, routing, gateways, tags. |
+| **PR 1** | Terraform foundation — versions, provider, variables, outputs, naming + tagging, docs. No AWS resources. |
+| **PR 2 (this PR)** | AWS network foundation — VPC, public/private subnets across AZs, routing, internet + NAT gateways, EKS subnet tags. |
 | **PR 3** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
 | **PR 4** | Managed EKS cluster + node group, required addons, connection outputs. |
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
@@ -155,5 +230,7 @@ region. Meaningful plans (VPC, IAM, EKS) begin in later PRs.
 | **PR 7** | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. |
 | **PR 8** | Cost controls, teardown (`terraform destroy`), and lifecycle documentation. |
 
-Until PR 2, `terraform apply` in this directory creates nothing and incurs no
-cost.
+As of PR 2, `terraform apply` in this directory **does** create billable
+resources (chiefly the NAT gateway). Provision deliberately and run
+`terraform destroy` after evidence capture — see the cost notes above and the
+teardown procedure in PR 8.
