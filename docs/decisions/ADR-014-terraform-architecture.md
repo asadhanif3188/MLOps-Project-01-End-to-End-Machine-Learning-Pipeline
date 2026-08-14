@@ -13,10 +13,11 @@
 > Sprint 6, PR 1: the `terraform/` project structure, version/provider
 > constraints, naming and tagging strategy, and the local-state posture. It
 > declares **no AWS resources**. The AWS/EKS platform choice (why AWS, why EKS,
-> node sizing) is reserved for a later ADR (ADR-015), and the
-> infrastructure/workload separation gets its own record (ADR-016) if the
-> decision needs more depth than the summary here. This record covers only the
-> IaC foundation and how state is handled.
+> node sizing) is reserved for a later ADR, and the
+> infrastructure/workload separation gets its own record if the
+> decision needs more depth than the summary here. (The network foundation is
+> recorded separately in [ADR-015](ADR-015-aws-network-architecture.md).) This
+> record covers only the IaC foundation and how state is handled.
 
 ## Context
 
@@ -145,7 +146,7 @@ override files. The `aws_account_id` output is marked `sensitive`.
 ## What This Decision Does *Not* Imply
 
 - It does **not** choose or justify AWS/EKS specifically, node sizing, or the
-  cluster topology — that is ADR-015 with PR 4.
+  cluster topology — that is a later ADR with PR 4.
 - It does **not** provision, or claim to provision, any cloud infrastructure.
   The foundation is validation-clean, not applied.
 - It does **not** imply a production platform: local state, single operator, and

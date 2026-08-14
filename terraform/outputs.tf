@@ -28,3 +28,48 @@ output "common_tags" {
   description = "The common tag set applied to every resource via the provider's default_tags."
   value       = local.common_tags
 }
+
+# --- Network (Sprint 6, PR 2) -------------------------------------------------
+# These describe the provisioned VPC and are the hand-off contract for the EKS
+# PR: the cluster and node group consume the VPC and subnet IDs directly, and
+# EKS control-plane/node-group placement uses the private subnets.
+
+output "vpc_id" {
+  description = "ID of the VPC hosting the platform. Consumed by the EKS cluster and node group in a later PR."
+  value       = aws_vpc.this.id
+}
+
+output "vpc_cidr_block" {
+  description = "IPv4 CIDR block of the VPC (useful for security-group and peering rules in later PRs)."
+  value       = aws_vpc.this.cidr_block
+}
+
+output "availability_zones" {
+  description = "Availability Zones the subnets are spread across (discovered at plan time, not hard-coded)."
+  value       = local.azs
+}
+
+output "public_subnet_ids" {
+  description = "IDs of the public subnets (NAT, internet gateway, and future public load balancers). Tagged kubernetes.io/role/elb."
+  value       = aws_subnet.public[*].id
+}
+
+output "private_subnet_ids" {
+  description = "IDs of the private subnets where EKS worker nodes run. This is the primary input to the EKS node group in a later PR. Tagged kubernetes.io/role/internal-elb."
+  value       = aws_subnet.private[*].id
+}
+
+output "internet_gateway_id" {
+  description = "ID of the VPC's internet gateway."
+  value       = aws_internet_gateway.this.id
+}
+
+output "nat_gateway_ids" {
+  description = "IDs of the NAT gateway(s) providing outbound egress for the private subnets (empty if NAT is disabled)."
+  value       = aws_nat_gateway.this[*].id
+}
+
+output "nat_public_ips" {
+  description = "Public Elastic IP(s) of the NAT gateway(s) — the stable egress address(es) for private-subnet traffic (useful for allow-listing). Empty if NAT is disabled."
+  value       = aws_eip.nat[*].public_ip
+}

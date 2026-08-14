@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AWS Network Foundation** (Sprint 6, PR 2) — provisions the minimum,
+  EKS-ready network as Terraform, building on the PR 1 foundation. Design of
+  record: [ADR-015](docs/decisions/ADR-015-aws-network-architecture.md).
+  - **New [`terraform/network.tf`](terraform/network.tf)** — a single VPC
+    (`10.0.0.0/16` by default) with a **public and a private subnet per
+    Availability Zone**, an internet gateway, a **single shared NAT gateway**,
+    and per-tier route tables. With the defaults a plan proposes **18 resources**
+    (2 AZs). EKS worker nodes will run in the private subnets and reach the
+    internet outbound-only through NAT; the batch-`Job` workload has no inbound
+    surface, so no public ingress is created.
+  - **AZs discovered at plan time** via `aws_availability_zones` (never
+    hard-coded); `az_count` (default 2, the EKS minimum) and the VPC CIDR are
+    variables, and derived subnet CIDRs use `cidrsubnet`.
+  - **EKS subnet tags** — public subnets tagged `kubernetes.io/role/elb`,
+    private subnets `kubernetes.io/role/internal-elb`, so Kubernetes load-balancer
+    provisioning can discover them later.
+  - **Cost-aware, variable-driven NAT** — `single_nat_gateway` (default `true`)
+    shares one NAT across AZs; `enable_nat_gateway` can remove NAT entirely. The
+    NAT gateway is the dominant cost and is documented in
+    [`terraform/README.md`](terraform/README.md) § Network architecture.
+  - **New network outputs** consumed by the later EKS PR — `vpc_id`,
+    `vpc_cidr_block`, `availability_zones`, `public_subnet_ids`,
+    `private_subnet_ids`, `internet_gateway_id`, `nat_gateway_ids`,
+    `nat_public_ips`. No EKS, IAM, or application resources are created in this PR.
 - **Terraform Foundation** (Sprint 6, PR 1) — introduces a professional
   Infrastructure-as-Code foundation for the project's AWS platform, declaring
   **no billable AWS resources yet**. Design of record:
