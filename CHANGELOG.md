@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gap: the **complete ML pipeline now runs to completion inside the secured
   Kubernetes Job**. Design of record:
   [ADR-013](docs/decisions/ADR-013-kubernetes-runtime-execution.md).
+  - **Capabilities delivered:**
+    - **Kubernetes Job execution** — the workload runs as a secured `batch/v1` Job on
+      a local cluster (Docker Desktop Kubernetes v1.34.3).
+    - **DVC no-SCM runtime configuration** — `core.no_scm = true` via a mounted
+      `config.local`, resolving the `/app is not a git repository` abort.
+    - **Runtime dataset provisioning** — the dataset mounted read-only at
+      `/app/data/raw` from an out-of-band ConfigMap (local-validation, not production).
+    - **Local MLflow execution** — an in-pod file store
+      (`file:///app/mlruns` + `MLFLOW_ALLOW_FILE_STORE=true`), fully offline.
+    - **Successful end-to-end Job completion** — Job `Complete`, pod `Succeeded`,
+      **exit 0**, all four stages (preprocess → split → train → evaluate).
+    - **Failure/retry validation** — a controlled missing-dataset run demonstrated
+      fail-fast → back-off → terminal `Failed (BackoffLimitExceeded)`, then restored.
+    - **Runtime validation contract** — `k8s/validate.py` now statically asserts the
+      no-SCM config + mount, the dataset mount + backing volume, the MLflow endpoint,
+      and the `dvc` command (**43/43** checks; runs in CI).
   - **Root cause (diagnosed against the real image).** `dvc repro` aborted with
     `/app is not a git repository` — the runtime image ships no `.git` (by design),
     and DVC defaults to requiring an SCM. Two further blockers followed: the image

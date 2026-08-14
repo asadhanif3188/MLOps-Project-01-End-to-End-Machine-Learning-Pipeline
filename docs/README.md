@@ -73,6 +73,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 |---------------|-------------|
 | [Sprint 3 — v1.2.0](retrospectives/sprint-03-retrospective.md) | Containerization & CI: what was planned, delivered, decided, and deliberately deferred, plus lessons learned |
 | [Sprint 4 — v1.3.0](retrospectives/sprint-04-retrospective.md) | Pipeline correctness & reproducibility: planned vs delivered, changes during implementation, decisions, lessons, and deferred work |
+| [Sprint 5 — v1.4.0](retrospectives/sprint-05-retrospective.md) | Kubernetes platform engineering: workload model → security → resources → CI validation → operations/proof → **green in-cluster execution** (PR 8); the "structurally valid ≠ runtime-complete" lesson |
 
 ### Proof Assessments
 

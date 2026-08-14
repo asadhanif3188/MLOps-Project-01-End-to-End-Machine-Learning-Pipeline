@@ -1,9 +1,19 @@
 # Sprint 5 — Proof-Impact Assessment (Kubernetes Platform Engineering)
 
-- **Date:** 2026-08-12
+- **Date:** 2026-08-12 (updated 2026-08-14 for PR 8)
 - **Status:** Unreleased (Sprint 5). **No release tag is cut in this PR** — this
   assessment covers the work staged under `[Unreleased]` in the
   [CHANGELOG](../../CHANGELOG.md); a version tag is a separate release step.
+- **Headline (updated, PR 8):** The Kubernetes workload has now been **executed
+  successfully** on Docker Desktop Kubernetes (v1.34.3, 2026-08-14). The Job
+  **completed with exit code 0** and ran **preprocess → split → training →
+  evaluation** end to end. A **controlled missing-dataset failure** was also
+  validated, demonstrating the Job's retry (back-off) and terminal-failure
+  behaviour. Earlier Sprint 5 records that said the workload *mechanism* was proven
+  but a *green pipeline run was not claimed* are **superseded** by this evidence —
+  the green run is now claimed, and bounded to a **local** cluster with a
+  local-validation dataset and an in-pod MLflow file store (see
+  [§5](#5-what-still-cannot-be-claimed)).
 - **Related:** [Kubernetes Architecture](../kubernetes-architecture.md),
   [Kubernetes Operations](../kubernetes-operations.md),
   [Kubernetes Security](../kubernetes-security.md), [`k8s/README.md`](../../k8s/README.md),

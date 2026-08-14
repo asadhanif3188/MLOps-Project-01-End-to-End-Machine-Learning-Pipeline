@@ -167,9 +167,11 @@ reducing regressions and manual effort.
   [`k8s/`](../k8s/), with a local run runbook
   ([Kubernetes Architecture](kubernetes-architecture.md),
   [ADR-009](decisions/ADR-009-kubernetes-workload-model.md)). Executed on a local
-  Docker Desktop cluster (2026-08-12): the Job lifecycle is verified end to end (3
-  attempts → terminal `Failed`), though the pipeline is not yet green in-cluster
-  (`dvc repro` needs an SCM + data + credentials — PR 3).
+  Docker Desktop cluster (2026-08-12): the Job lifecycle is verified end to end.
+  The pipeline is now **green in-cluster** (Sprint 5, PR 8): `dvc repro` runs the
+  full pipeline to **exit 0** via the runtime contract in
+  [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md) (DVC no-SCM, mounted
+  dataset, in-pod MLflow file store), on a local cluster.
 - ✅ Externalize configuration and secrets for a cluster — **implemented** (Sprint
   5, PR 3): a `ConfigMap` for non-secret runtime config (`LOG_LEVEL`,
   `MLFLOW_TRACKING_URI`), a **Secret template** for the MLflow/DagsHub credentials
@@ -230,9 +232,14 @@ independent of a developer's local machine.
 > **operations & proof** documentation ([operations runbook](kubernetes-operations.md),
 > [security document](kubernetes-security.md),
 > [Sprint 5 Proof-Impact](proof/sprint-05-proof-impact.md)) with the local deployment
-> path re-executed as evidence. Still open beyond Sprint 5's scope: a **green**
-> in-cluster `dvc repro` (SCM + data + credentials), which the sprint documents as a
-> known limitation rather than delivers.
+> path re-executed as evidence. **PR 8 then closed the runtime gap**: a **green**
+> in-cluster `dvc repro` — the complete pipeline (preprocess → split → train →
+> evaluate) runs to **exit 0** as a secured Job, via a minimal runtime contract
+> (DVC no-SCM, a mounted dataset, an in-pod MLflow file store —
+> [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)), with a controlled
+> failure test verifying retry/terminal-failure behaviour. Bounded to a **local**
+> cluster (local-validation dataset, file-store MLflow); production storage/MLflow
+> and read-only-root remain future work.
 > The container **base image** is ratified in
 > [ADR-005](decisions/ADR-005-containerization-strategy.md).
 
