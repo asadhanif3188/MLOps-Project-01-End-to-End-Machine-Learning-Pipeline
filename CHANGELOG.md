@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AWS IAM Foundation** (Sprint 6, PR 3) — adds the least-privilege IAM roles a
+  managed EKS cluster needs, building on the PR 2 network. Creates **no EKS,
+  EC2, or application resources, and no static credentials**. Design of record:
+  [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md).
+  - **New [`terraform/iam.tf`](terraform/iam.tf)** — two dedicated IAM roles: an
+    **EKS control-plane role** (trusted only by `eks.amazonaws.com`, attached
+    `AmazonEKSClusterPolicy`) and an **EKS worker-node role** (trusted only by
+    `ec2.amazonaws.com`, attached `AmazonEKSWorkerNodePolicy`,
+    `AmazonEKS_CNI_Policy`, and `AmazonEC2ContainerRegistryReadOnly`). With the
+    defaults a plan adds **6 resources** (2 roles + 4 attachments), all **free**.
+  - **Least privilege by construction** — each role has a single-service trust
+    policy and only AWS-managed policies; **no inline policy, no project-authored
+    wildcard, no `AdministratorAccess`**. `AmazonEKSVPCResourceController` and
+    `AmazonSSMManagedInstanceCore` are intentionally omitted; the CNI-via-IRSA
+    hardening is deferred to the EKS PR. Managed-policy ARNs are partition-aware
+    (`data.aws_partition`).
+  - **New IAM outputs** consumed by the later EKS PR — `eks_cluster_role_name`,
+    `eks_node_role_name` (plain) and `eks_cluster_role_arn`, `eks_node_role_arn`
+    (marked **`sensitive`**, since a role ARN embeds the AWS account ID).
+  - **Docs** — [`terraform/README.md`](terraform/README.md) § IAM foundation and
+    [`SECURITY.md`](SECURITY.md) document the roles, trust, permissions, and what
+    is intentionally not permitted.
 - **AWS Network Foundation** (Sprint 6, PR 2) — provisions the minimum,
   EKS-ready network as Terraform, building on the PR 1 foundation. Design of
   record: [ADR-015](docs/decisions/ADR-015-aws-network-architecture.md).

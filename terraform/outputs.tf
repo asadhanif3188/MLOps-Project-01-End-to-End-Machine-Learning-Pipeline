@@ -73,3 +73,34 @@ output "nat_public_ips" {
   description = "Public Elastic IP(s) of the NAT gateway(s) — the stable egress address(es) for private-subnet traffic (useful for allow-listing). Empty if NAT is disabled."
   value       = aws_eip.nat[*].public_ip
 }
+
+# --- IAM (Sprint 6, PR 3) -----------------------------------------------------
+# The EKS PR consumes these role identities: the cluster role is passed to the
+# EKS cluster, the node role to the managed node group's instance profile.
+#
+# Role *names* are non-sensitive. Role *ARNs* embed the AWS account ID, which
+# this project deliberately treats as sensitive (see the aws_account_id output),
+# so the ARN outputs are marked `sensitive` to keep the account ID out of logs —
+# retrieve them explicitly with `terraform output -raw <name>` when wiring EKS.
+
+output "eks_cluster_role_name" {
+  description = "Name of the EKS control-plane IAM role (assumed by eks.amazonaws.com)."
+  value       = aws_iam_role.eks_cluster.name
+}
+
+output "eks_cluster_role_arn" {
+  description = "ARN of the EKS control-plane IAM role, passed to the EKS cluster in a later PR. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_iam_role.eks_cluster.arn
+  sensitive   = true
+}
+
+output "eks_node_role_name" {
+  description = "Name of the EKS worker-node IAM role (assumed by ec2.amazonaws.com)."
+  value       = aws_iam_role.eks_node.name
+}
+
+output "eks_node_role_arn" {
+  description = "ARN of the EKS worker-node IAM role, passed to the managed node group in a later PR. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_iam_role.eks_node.arn
+  sensitive   = true
+}

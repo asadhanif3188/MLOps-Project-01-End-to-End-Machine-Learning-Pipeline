@@ -35,6 +35,7 @@ terraform/
 ├── outputs.tf                # outputs (context + network: VPC, subnets, NAT, …)
 ├── main.tf                   # locals (name prefix + common tags) + context data sources
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
+├── iam.tf                     # EKS cluster + node IAM roles, trust, policy attachments (Sprint 6, PR 3)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -99,10 +100,12 @@ terraform plan
 ```
 
 `plan` **does** contact AWS (to resolve the context and Availability-Zone data
-sources), so valid credentials are required. As of **PR 2** a plan proposes the
+sources), so valid credentials are required. As of **PR 3** a plan proposes the
 **network** described below — a VPC, subnets, an internet gateway, a NAT
-gateway, and route tables (18 resources with the defaults). Applying it creates
-billable resources (chiefly the NAT gateway); `validate` alone does not.
+gateway, and route tables (18 resources with the defaults) — **plus the IAM
+foundation**: two EKS roles and their four managed-policy attachments (6
+resources). The **NAT gateway** is the only meaningful cost; **IAM roles and
+policy attachments are free**. `validate` alone contacts nothing.
 
 > Normal pull-request CI never runs `terraform apply`. Cloud provisioning is a
 > deliberate, controlled operation — see [ADR-014](../docs/decisions/ADR-014-terraform-architecture.md)
@@ -179,6 +182,43 @@ and internet gateway are free. Choices that keep this cheap:
 Elastic IPs attached to a NAT gateway are free while attached; the NAT hourly
 and data-processing charges are the meaningful line items.
 
+## IAM foundation
+
+PR 3 adds the two IAM roles a managed EKS cluster needs — a control-plane role
+and a worker-node role — with their trust relationships and the AWS-managed
+policy attachments EKS requires. It creates **no EKS, EC2, or application
+resources, and no static credentials**. Design of record:
+[ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md).
+
+| Role | Purpose | Trusted principal | Attached AWS-managed policies |
+|------|---------|-------------------|-------------------------------|
+| `…-eks-cluster-role` | Identity the EKS **control plane** assumes to manage the cluster's AWS resources (cluster ENIs, cluster security group). | `eks.amazonaws.com` | `AmazonEKSClusterPolicy` |
+| `…-eks-node-role` | Instance-profile identity each **EC2 worker node** assumes to join the cluster, run the VPC CNI, and pull images. | `ec2.amazonaws.com` | `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly` |
+
+**Least privilege.** Each role is dedicated to one purpose and its trust policy
+names exactly one AWS service principal — nothing else can assume it. Permissions
+come **only** from the AWS-managed policies EKS documents as required; this PR
+authors **no inline policy and no wildcard of its own**. The one broad grant —
+the `ec2:*NetworkInterface`/`ec2:Describe*` actions the Amazon VPC CNI needs — is
+inside AWS-owned `AmazonEKS_CNI_Policy`, is AWS-maintained, and is the documented
+minimum for pod networking rather than a project choice.
+
+**Intentionally not permitted.** No `AdministratorAccess` or `PowerUserAccess`;
+no IAM users, groups, or access keys; no static credentials or kubeconfig.
+`AmazonEKSVPCResourceController` (security-groups-for-pods, unused by the
+batch-`Job` workload) and `AmazonSSMManagedInstanceCore` (interactive node
+access) are deliberately omitted. Moving the CNI policy to a dedicated IRSA role
+is a documented hardening deferred to the EKS PR (it depends on the cluster OIDC
+provider). See [ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md).
+
+**Outputs.** Role **names** are exported plainly; role **ARNs** are marked
+`sensitive` because an IAM role ARN embeds the AWS account ID — consistent with
+the sensitive `aws_account_id` output. Retrieve an ARN with
+`terraform output -raw eks_cluster_role_arn` when wiring EKS.
+
+**Cost.** IAM roles and policy attachments are **free** — they add no billable
+resource to the plan.
+
 ## State handling
 
 - **Local state for now.** This first implementation uses Terraform's default
@@ -222,8 +262,8 @@ and data-processing charges are the meaningful line items.
 | PR | Adds |
 |----|------|
 | **PR 1** | Terraform foundation — versions, provider, variables, outputs, naming + tagging, docs. No AWS resources. |
-| **PR 2 (this PR)** | AWS network foundation — VPC, public/private subnets across AZs, routing, internet + NAT gateways, EKS subnet tags. |
-| **PR 3** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
+| **PR 2** | AWS network foundation — VPC, public/private subnets across AZs, routing, internet + NAT gateways, EKS subnet tags. |
+| **PR 3 (this PR)** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
 | **PR 4** | Managed EKS cluster + node group, required addons, connection outputs. |
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
 | **PR 6** | Terraform CI validation gates (`fmt`/`init`/`validate`/`plan`, lint/security scans). |
@@ -231,6 +271,6 @@ and data-processing charges are the meaningful line items.
 | **PR 8** | Cost controls, teardown (`terraform destroy`), and lifecycle documentation. |
 
 As of PR 2, `terraform apply` in this directory **does** create billable
-resources (chiefly the NAT gateway). Provision deliberately and run
-`terraform destroy` after evidence capture — see the cost notes above and the
-teardown procedure in PR 8.
+resources (chiefly the NAT gateway); PR 3 adds only **free** IAM roles on top.
+Provision deliberately and run `terraform destroy` after evidence capture — see
+the cost notes above and the teardown procedure in PR 8.
