@@ -86,13 +86,28 @@ gitignored.
 ## Validation
 
 ```bash
-terraform fmt -recursive -check   # formatting is canonical (CI gate in a later PR)
+terraform fmt -recursive -check   # formatting is canonical
+terraform init -backend=false     # providers only — no backend, no state, no AWS
 terraform validate                # configuration is internally consistent
+tflint --init && tflint           # language preset + AWS ruleset (.tflint.hcl)
+trivy config .                    # IaC misconfiguration scan (CRITICAL/HIGH gate)
 ```
 
-`validate` performs **no AWS API calls** and needs no credentials — it checks
-syntax, types, and references. This is the primary correctness gate for the
-foundation PR.
+Every command above performs **no AWS API calls** and needs **no credentials** —
+they check formatting, syntax, types, references, provider schema, lint rules, and
+insecure configuration purely from the source. `validate` is the primary
+correctness gate; `fmt`/`init -backend=false`/`validate`/TFLint/Trivy are the same
+checks CI runs on every push and PR in the **`terraform-validate`** job, so passing
+them locally guarantees that gate is green. Design of record:
+[ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md) and
+[docs/ci-cd.md § Job 4](../docs/ci-cd.md).
+
+> **CI never runs `terraform plan` or `apply`.** The `terraform-validate` job holds
+> no AWS credentials and no cloud identity; it validates the IaC statically and
+> stops there. A real `plan` (below) is an operator step against their **own**
+> account. Trivy's few suppressed findings are intentional, ADR-ratified
+> validation-cluster exposures, each justified in
+> [`.trivyignore`](.trivyignore).
 
 ## Planning
 
@@ -110,9 +125,13 @@ resources** in total. The **EKS control plane and worker nodes are now the
 dominant hourly cost**, alongside the NAT gateway; IAM is free. `validate` alone
 contacts nothing.
 
-> Normal pull-request CI never runs `terraform apply`. Cloud provisioning is a
-> deliberate, controlled operation — see [ADR-014](../docs/decisions/ADR-014-terraform-architecture.md)
-> and the Sprint 6 CI/CD boundary.
+> CI never runs `terraform plan` **or** `apply`: `plan` needs the AWS credentials
+> above (to resolve the data sources), which CI deliberately does not hold, so the
+> `terraform-validate` job stops at static checks. Cloud provisioning is a
+> deliberate, credentialed, operator-driven operation against your **own** account
+> — see [ADR-014](../docs/decisions/ADR-014-terraform-architecture.md),
+> [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md), and the
+> Sprint 6 CI/CD boundary in [docs/ci-cd.md](../docs/ci-cd.md).
 
 ## Network architecture
 
@@ -342,9 +361,9 @@ verify, capture evidence, then `terraform destroy` (PR 8). Cheaper knobs:
 | **PR 1** | Terraform foundation — versions, provider, variables, outputs, naming + tagging, docs. No AWS resources. |
 | **PR 2** | AWS network foundation — VPC, public/private subnets across AZs, routing, internet + NAT gateways, EKS subnet tags. |
 | **PR 3** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
-| **PR 4 (this PR)** | Managed EKS cluster + node group, three core addons, non-sensitive connection outputs. |
+| **PR 4** | Managed EKS cluster + node group, three core addons, non-sensitive connection outputs. |
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
-| **PR 6** | Terraform CI validation gates (`fmt`/`init`/`validate`/`plan`, lint/security scans). |
+| **PR 6 (this PR)** | Terraform CI validation gates — `fmt`/`init -backend=false`/`validate`, TFLint, Trivy IaC scan. **No** `plan`/`apply`, no AWS credentials in CI (in [`ci.yml`](../.github/workflows/ci.yml); see [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md)). |
 | **PR 7** | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. |
 | **PR 8** | Cost controls, teardown (`terraform destroy`), and lifecycle documentation. |
 

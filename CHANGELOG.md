@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Terraform CI validation gates** (Sprint 6, PR 6) — a new
+  **`terraform-validate`** job in [`ci.yml`](.github/workflows/ci.yml) that
+  statically validates the `terraform/` IaC on every push/PR, **in parallel** with
+  the existing gates and with **no AWS access**. Design of record:
+  [ADR-019](docs/decisions/ADR-019-terraform-ci-validation.md).
+  - **Offline gate chain (pinned tools)** — `terraform fmt -check -recursive` →
+    `terraform init -backend=false` (providers only, no backend/state, no
+    credentials) → `terraform validate` → **TFLint** (language preset + AWS
+    ruleset, config in [`terraform/.tflint.hcl`](terraform/.tflint.hcl)) → **Trivy**
+    `config` IaC misconfiguration scan (**fails on CRITICAL/HIGH**).
+  - **No unsafe provisioning** — CI **never** runs `terraform plan` or `apply`,
+    holds **no AWS credentials/OIDC identity**, and keeps `permissions:
+    contents: read`. `plan` needs live credentials (it reads AWS data sources), so
+    it is intentionally an operator-driven, own-account step; the boundary is
+    **documented, not credentialed** ([terraform/README.md](terraform/README.md),
+    [docs/ci-cd.md](docs/ci-cd.md)).
+  - **Trivy suppressions are a justified triage record** — the few intentional,
+    ADR-ratified validation-cluster exposures (open default API CIDR, no KMS
+    envelope encryption, public-subnet public IPs) are suppressed **with
+    rationale** in
+    [`terraform/.trivyignore`](terraform/.trivyignore); any **new** critical/high
+    finding blocks the merge.
+  - **All existing CI jobs preserved** — `quality`, `docker`, `k8s-validate`, and
+    the opt-in `k8s-cluster-dry-run` are unchanged; the least-privilege,
+    no-publish posture is maintained.
+
 - **AWS EKS Deployment Overlay** (Sprint 6, PR 5) — integrates the existing
   Sprint 5 Kubernetes workload with the Terraform-provisioned EKS platform by
   **reusing the base unchanged**, with **no workload duplication** and **no

@@ -6,15 +6,18 @@ and the road to **Continuous Delivery (CD)**. The implemented pipeline lives in
 **GitHub Actions**.
 
 > **Scope today: integration, not delivery.** CI *validates* every change — it
-> lints, tests, builds the container image to prove it assembles and runs, and
+> lints, tests, builds the container image to prove it assembles and runs,
 > **statically validates the Kubernetes manifests** (syntax, schema, Kustomize
-> rendering, and the workload's security/resource contract). It deliberately does
-> **not** deploy, does **not** push images to any registry, and does **not** run
-> the workload on a cluster. The single job that contacts a Kubernetes API server
-> is **opt-in** (manual `workflow_dispatch`) and only does a server-side *dry run*.
-> Those delivery steps are deferred to the roadmap below. This keeps the pipeline
-> safe to run on untrusted pull requests: it has read-only permissions and no
-> publish credentials.
+> rendering, and the workload's security/resource contract), and **statically
+> validates the Terraform IaC** (format, provider-only init, `validate`, TFLint,
+> and a Trivy misconfiguration scan — with **no AWS access**). It deliberately does
+> **not** deploy, does **not** push images to any registry, does **not** run the
+> workload on a cluster, and does **not** run `terraform plan`/`apply` or provision
+> any cloud resource. The single job that contacts a Kubernetes API server is
+> **opt-in** (manual `workflow_dispatch`) and only does a server-side *dry run*.
+> Those delivery/provisioning steps are deferred to the roadmap below. This keeps
+> the pipeline safe to run on untrusted pull requests: it has read-only
+> permissions and **no publish or cloud credentials**.
 
 ---
 
@@ -34,11 +37,12 @@ consume minutes.
 
 ## Pipeline stages
 
-The workflow has four jobs. `quality` runs first; `docker` runs only if it passes
+The workflow has five jobs. `quality` runs first; `docker` runs only if it passes
 (`needs: quality`), so image-build minutes are never spent on a change that
-already fails lint or tests. `k8s-validate` runs **in parallel** (it needs neither
-the Python package nor the image). `k8s-cluster-dry-run` is **opt-in** — it runs
-only on a manual `workflow_dispatch`.
+already fails lint or tests. `k8s-validate` and `terraform-validate` run **in
+parallel** (neither needs the Python package or the image), giving fast, static
+feedback on the Kubernetes manifests and the Terraform IaC respectively.
+`k8s-cluster-dry-run` is **opt-in** — it runs only on a manual `workflow_dispatch`.
 
 ### Job 1 — `quality` (Lint & Test)
 
@@ -97,7 +101,44 @@ no secret fingerprints anywhere in `k8s/`, template holds only placeholders).
 > network dependency is `kubeconform` fetching the pinned schema; everything else is
 > offline.
 
-### Job 4 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
+### Job 4 — `terraform-validate` (Terraform Validation, static)
+
+Runs on every push/PR, in parallel with `quality` and `k8s-validate`. **Static**
+validation of the Terraform IaC under [`terraform/`](../terraform/) — every step
+reads only the source and **never contacts AWS**. Tool versions are pinned (job
+`env`) so a green run today is a green run tomorrow. Job permissions are
+`contents: read`; the job holds **no AWS identity**. Design of record:
+[ADR-019](decisions/ADR-019-terraform-ci-validation.md).
+
+| # | Stage | Tool (pinned) | Purpose |
+|---|-------|---------------|---------|
+| 1 | Checkout | `actions/checkout@v4` | Fetch the repo. |
+| 2 | Setup Terraform | `hashicorp/setup-terraform@v3` (TF 1.9.8, `terraform_wrapper: false`) | Pinned CLI; wrapper off so raw exit codes reach the shell. |
+| 3 | **fmt** | `terraform fmt -check -recursive` | Canonical formatting is enforced (checked, never rewritten). Drift fails with an actionable message. |
+| 4 | **init** | `terraform init -backend=false` | Installs the pinned provider from the committed `.terraform.lock.hcl` — **no backend, no state, no AWS credentials**. Prerequisite for `validate`. |
+| 5 | **validate** | `terraform validate` | Syntax, types, references, and provider-schema conformance. **No AWS API calls.** The primary IaC correctness gate. |
+| 6 | **TFLint** | `terraform-linters/setup-tflint@v4` (0.54.0) + `tflint` | Language best-practices preset **+ AWS ruleset** (config in [`terraform/.tflint.hcl`](../terraform/.tflint.hcl)). Static lint; contacts no cloud. |
+| 7 | **Trivy IaC scan** | `trivy` 0.74.0 (pinned, checksum-verified binary) | `trivy config` misconfiguration scan of `terraform/`. **Fails on CRITICAL/HIGH.** Reads only the source — no AWS access. |
+
+> **Why no `terraform plan`.** A real `plan` reads data sources
+> (`aws_caller_identity`, `aws_region`, `aws_availability_zones`), so it needs
+> **live AWS credentials**. CI holds none by design, and adding long-lived AWS
+> keys to Actions to make `plan` run is the exact security regression this project
+> refuses. The `fmt` → `init` → `validate` → lint → scan chain catches formatting,
+> syntax, type, reference, and misconfiguration errors **without** any cloud
+> access; the un-run part (does this configuration *apply* cleanly against a real
+> account) is performed deliberately and out-of-band by an operator against their
+> **own** account — see [terraform/README.md § Planning](../terraform/README.md)
+> and the boundary below.
+
+> **Trivy suppressions are a triage record, not a mute.** The handful of
+> intentional, ADR-ratified exposures for the short-lived validation cluster (the
+> open default API CIDR, no KMS envelope encryption, public-subnet public IPs) are
+> suppressed **with written justification** in
+> [`terraform/.trivyignore`](../terraform/.trivyignore); any *new* CRITICAL/HIGH
+> the scanner finds is a real, blocking regression.
+
+### Job 5 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
 
 The **only** job that talks to a Kubernetes API server, and it is **not** on the
 per-PR path — it runs only on a manual `workflow_dispatch` (`if:
@@ -137,7 +178,8 @@ see [k8s/README.md](../k8s/README.md)). The cluster is torn down automatically.
   failing (or malicious) run cannot deploy, publish, or alter anything. Safe to
   run on pull requests from forks.
 - **Intended enforcement.** Branch protection on `main` should require the
-  `Lint & Test` and `Docker Build & Validate` checks to pass before merge (see
+  `Lint & Test`, `Docker Build & Validate`, `K8s Manifest Validation (static)`,
+  and `Terraform Validation (static, no AWS)` checks to pass before merge (see
   roadmap v3). CI produces the signal; branch protection makes it binding.
 - **Flakes.** Re-run via `workflow_dispatch` or the Actions "Re-run" button;
   concurrency cancellation ensures only the latest attempt matters.
@@ -196,6 +238,25 @@ kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -k k8s/overlays/local --dry-run=server     # admits; runs nothing
 ```
 
+**Terraform IaC validation** (mirrors the `terraform-validate` job — all offline,
+**no AWS credentials**):
+
+```bash
+cd terraform
+terraform fmt -check -recursive       # canonical formatting (checked, not rewritten)
+terraform init -backend=false         # providers only — no backend, no state, no AWS
+terraform validate                    # syntax, types, references, provider schema
+
+# Static lint + IaC security scan (install once; pinned to the CI versions):
+tflint --init && tflint               # language preset + AWS ruleset (.tflint.hcl)
+trivy config .                        # misconfiguration scan; CI fails on CRITICAL/HIGH
+```
+
+`terraform plan` is intentionally **not** part of this offline gate — it reads AWS
+data sources and needs live credentials. Run it yourself only after
+`aws sts get-caller-identity` confirms you are pointed at **your own** account (see
+[terraform/README.md § Planning](../terraform/README.md)); CI never runs it.
+
 For the full inner-loop workflow, see
 [docker-development.md](docker-development.md); pre-commit hooks
 (`make install-dev` installs them) catch most lint/format issues before a commit
@@ -248,6 +309,8 @@ choice and the orchestration/secret-handling approach as open decisions).
 - [.github/workflows/ci.yml](../.github/workflows/ci.yml) — the pipeline itself
 - [k8s/README.md](../k8s/README.md) — the manifests and how to validate/run them locally
 - [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md) — Kubernetes manifest validation decision record
+- [ADR-019](decisions/ADR-019-terraform-ci-validation.md) — Terraform CI validation decision record
+- [terraform/README.md](../terraform/README.md) — the Terraform IaC and how to validate/plan it locally
 - [containerization.md](containerization.md) — image design and the container's role in CI/CD
 - [ADR-005](decisions/ADR-005-containerization-strategy.md) — containerization decision record
 - [docker-development.md](docker-development.md) — local Docker Compose workflow
