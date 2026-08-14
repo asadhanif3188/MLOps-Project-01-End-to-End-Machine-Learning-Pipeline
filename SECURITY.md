@@ -63,6 +63,14 @@ Contributors and users should follow these practices:
   rather than broad credentials.
 - **Validate data sources.** Treat external datasets and artifacts as untrusted
   input.
+- **Infrastructure credentials & IAM.** The Terraform ([`terraform/`](terraform/))
+  AWS platform never stores static AWS credentials — no access keys or secret
+  keys are committed; Terraform authenticates via the standard AWS credential
+  chain. AWS IAM roles are least-privilege and dedicated to purpose (see
+  [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md)): permissions come from
+  the AWS-managed policies EKS requires, with no `AdministratorAccess` and no
+  project-authored wildcard. State files and kubeconfigs are git-ignored and
+  never committed.
 
 ---
 
