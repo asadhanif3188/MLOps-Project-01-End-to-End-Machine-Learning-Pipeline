@@ -52,9 +52,12 @@ The pipeline runs `dvc repro` and talks only to MLflow/DagsHub over HTTPS — it
 | Namespace | `mlops` (dedicated) | Environment/RBAC/quota/Pod-Security boundary scoped to this project. |
 
 **Verified on a live cluster:** the applied pod carried
-`serviceAccountName: mlops-pipeline` with an **empty `spec.volumes`** and empty
-container `volumeMounts` — i.e. no `kube-api-access-*` projected-token volume and no
-`/var/run/secrets/kubernetes.io/serviceaccount` mount.
+`serviceAccountName: mlops-pipeline` with **no `kube-api-access-*` projected-token
+volume** and no `/var/run/secrets/kubernetes.io/serviceaccount` mount. (Before PR 8
+the pod's `spec.volumes` was entirely empty; PR 8 added exactly two **read-only
+ConfigMap** volumes — `dvc-runtime-config` and `dataset` — for the runtime contract
+([ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)). The token-absence
+guarantee is unchanged: still no projected API-token volume.)
 
 ---
 
@@ -105,10 +108,19 @@ it now would make the container fail **earlier** than the pre-existing SCM block
 weakening a working workload to pass a checkbox.
 
 It is deferred to the **same** work that makes the pipeline green in-cluster
-(relocating DVC's cache/tmp/lock and the SCM onto declared writable volumes), then
-flipping the flag to `true`. Until then, the honest state is: *control evaluated,
-incompatibility proven, deferred and recorded* — see
+(relocating DVC's cache/tmp/lock onto declared writable volumes), then flipping the
+flag to `true`. Until then, the honest state is: *control evaluated, incompatibility
+proven, deferred and recorded* — see
 [ADR-010 §Read-only root filesystem](decisions/ADR-010-kubernetes-security-hardening.md).
+
+> **PR 8 update.** The *green run* is now achieved
+> ([ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)) — the SCM blocker
+> is gone (DVC no-SCM mode, so no writable `/app/.git` is needed) and the dataset is
+> mounted. But DVC's cache/tmp/lock still write in-tree at `/app`, so
+> `readOnlyRootFilesystem` stays `false` — it is now the **only** remaining item of
+> this deferral. Relocating that DVC state to writable volumes and enabling the flag
+> is the tracked next step; it was intentionally kept out of the green-run PR to
+> keep that change minimal.
 
 ---
 
@@ -143,7 +155,7 @@ placeholders. Manifests are **never** sent to any external scanning service.
 | No privilege escalation | ✅ | `allowPrivilegeEscalation: false`; `NoNewPrivs: 1` under `docker run`. |
 | All Linux capabilities dropped | ✅ | `capabilities.drop: [ALL]`; enforced on the live pod. |
 | seccomp default profile | ✅ | `seccompProfile.type: RuntimeDefault`. |
-| No API token in pod | ✅ | `automountServiceAccountToken: false` (SA + pod); empty `volumes`/`volumeMounts` on the live pod. |
+| No API token in pod | ✅ | `automountServiceAccountToken: false` (SA + pod); no `kube-api-access-*` projected-token volume on the live pod (the only volumes are two read-only ConfigMaps, PR 8). |
 | No standing RBAC | ✅ | no `Role`/`RoleBinding` in `k8s/`. |
 | No baked-in secrets/data | ✅ | out-of-band Secret; `.dockerignore`; `k8s/validate.py` secret-hygiene checks. |
 | No host namespaces / privileged | ✅ | no `privileged`/`hostNetwork`/`hostPID`/`hostIPC`; asserted by `k8s/validate.py`. |

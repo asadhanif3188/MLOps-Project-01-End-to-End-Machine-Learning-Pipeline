@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Kubernetes Runtime Execution** (Sprint 5, PR 8) — closes the last Sprint 5 proof
+  gap: the **complete ML pipeline now runs to completion inside the secured
+  Kubernetes Job**. Design of record:
+  [ADR-013](docs/decisions/ADR-013-kubernetes-runtime-execution.md).
+  - **Root cause (diagnosed against the real image).** `dvc repro` aborted with
+    `/app is not a git repository` — the runtime image ships no `.git` (by design),
+    and DVC defaults to requiring an SCM. Two further blockers followed: the image
+    ships no dataset, and MLflow needs an endpoint.
+  - **Minimal runtime contract, as Kubernetes config only (no app/image change).**
+    New base ConfigMap [`k8s/base/dvc-config.yaml`](k8s/base/dvc-config.yaml) carries
+    `config.local` with **`core.no_scm = true`** (DVC's supported no-SCM mode),
+    mounted read-only at `/app/.dvc/config.local` (subPath) — so the committed
+    `.dvc/config` and the dev/CI Git+DVC workflow are untouched. New local-overlay
+    patch [`k8s/overlays/local/job-runtime.yaml`](k8s/overlays/local/job-runtime.yaml)
+    mounts the **dataset** read-only at `/app/data/raw` from an **out-of-band**
+    ConfigMap (like the Secret; `optional: true` → graceful missing-input failure),
+    and overrides MLflow to an **in-pod file store** (`file:///app/mlruns` +
+    `MLFLOW_ALLOW_FILE_STORE=true`) so a local run needs no external MLflow or
+    credentials. The base keeps the DagsHub endpoint + Secret for real use.
+  - **Verified green end-to-end on a live cluster** (Docker Desktop Kubernetes
+    v1.34.3, 2026-08-14): Job **`Complete`**, pod **`Succeeded`**, container **exit
+    0**, first attempt (`RESTARTS: 0`), all four stages (preprocess 768 → split
+    614/154 → train acc 0.7398 → evaluate acc 0.7078). **Failure test:** removing the
+    dataset ConfigMap → fail-fast at preprocess → 3 fresh-pod attempts → terminal
+    `Failed: BackoffLimitExceeded`; restoring it returns the Job to green.
+  - **Security posture preserved and re-verified:** non-root/`10001`, seccomp
+    `RuntimeDefault`, `allowPrivilegeEscalation: false`, `capabilities.drop [ALL]`,
+    `automountServiceAccountToken: false`, QoS `Burstable`; the two added mounts are
+    read-only ConfigMaps. `readOnlyRootFilesystem` stays `false` (now the *only*
+    remaining item of the ADR-010 deferral).
+  - **Static validation extended:** [`k8s/validate.py`](k8s/validate.py) gained a
+    **Runtime execution contract** section (no-SCM ConfigMap + `/app/.dvc/config.local`
+    mount, dataset mount at `/app/data/raw` backed by a declared volume, configured
+    `MLFLOW_TRACKING_URI`, `dvc` command) — **43/43** checks pass; it runs in CI's
+    `k8s-validate` job automatically.
+  - **Docs updated:** [`k8s/README.md`](k8s/README.md) (runtime record + runbook +
+    Docker-Desktop containerd image-load note + expanded troubleshooting),
+    [operations](docs/kubernetes-operations.md), [security](docs/kubernetes-security.md),
+    the [Sprint 5 proof](docs/proof/sprint-05-proof-impact.md), and
+    [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md). The dataset
+    ConfigMap and MLflow file store are documented as **local-validation mechanisms,
+    not production storage**; no production/cloud deployment is claimed.
 - **Kubernetes operations, security & proof documentation** (Sprint 5, PR 7) — the
   final Sprint 5 PR; documentation and evidence only, **no manifest or code change**.
   - A complete **deployment guide** in [`k8s/README.md`](k8s/README.md): prerequisites,

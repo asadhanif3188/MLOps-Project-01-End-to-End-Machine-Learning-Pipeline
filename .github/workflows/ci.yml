@@ -336,15 +336,19 @@ jobs:
             echo "::endgroup::"
           done
 
-      # Stage 5 — Project security & required-field checks. Renders overlays/local
-      # and asserts the workload contract that a generic schema validator cannot
-      # express: runAsNonRoot, allowPrivilegeEscalation false, seccomp
-      # RuntimeDefault, capabilities drop ALL, explicit non-default ServiceAccount,
-      # token automount off, CPU/memory requests+limits, explicit pinned image,
-      # namespace pinning, and secret hygiene (no rendered Secret, no inline
-      # credentials). Each check prints a PASS/FAIL line, so a failure names
-      # exactly what is wrong.
-      - name: Static security & required-field checks (k8s/validate.py)
+      # Stage 5 — Project security, required-field & runtime-contract checks.
+      # Renders overlays/local and asserts the workload contract that a generic
+      # schema validator cannot express: runAsNonRoot, allowPrivilegeEscalation
+      # false, seccomp RuntimeDefault, capabilities drop ALL, explicit non-default
+      # ServiceAccount, token automount off, CPU/memory requests+limits, explicit
+      # pinned image, namespace pinning, and secret hygiene (no rendered Secret, no
+      # inline credentials). It ALSO asserts the PR 8 runtime-execution contract
+      # (ADR-013): the DVC no-SCM ConfigMap + its read-only /app/.dvc/config.local
+      # mount, the dataset mount at /app/data/raw backed by a declared volume, and a
+      # configured MLFLOW_TRACKING_URI. This is STILL static — it proves the manifest
+      # declares the contract, not that a run succeeds. Each check prints a PASS/FAIL
+      # line, so a failure names exactly what is wrong.
+      - name: Static security, required-field & runtime-contract checks (k8s/validate.py)
         run: python k8s/validate.py
 
   # ---------------------------------------------------------------------------
@@ -356,9 +360,10 @@ jobs:
   # and does a server-side DRY RUN: every object passes through the API server's
   # validation, defaulting, and admission (including Pod Security) — but nothing
   # is persisted and the Job is never executed. This validates admissibility, not
-  # deployment: a green run here does NOT mean the pipeline runs to completion in
-  # cluster (it still needs an SCM in the image + mounted data — see k8s/README.md).
-  # The cluster is torn down automatically when the job ends.
+  # deployment: a green admission here does NOT mean the pipeline ran. A verified
+  # green end-to-end run is a separate, local activity (out-of-band dataset +
+  # image imported into the node's containerd; see k8s/README § "Runtime execution
+  # record (PR 8)" and ADR-013). The cluster is torn down when the job ends.
   # ---------------------------------------------------------------------------
   k8s-cluster-dry-run:
     name: K8s Cluster Admission (dry-run, manual)

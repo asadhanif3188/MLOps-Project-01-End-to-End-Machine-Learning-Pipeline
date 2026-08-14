@@ -140,6 +140,24 @@ def pod_spec_of(job: dict) -> dict:
     return job.get("spec", {}).get("template", {}).get("spec", {}) or {}
 
 
+def volumes_of(job: dict) -> list[dict]:
+    return pod_spec_of(job).get("volumes", []) or []
+
+
+def volume_mounts_of(container: dict) -> list[dict]:
+    return container.get("volumeMounts", []) or []
+
+
+def container_env(container: dict) -> dict[str, object]:
+    """Map env var name -> its `value` (or the whole entry when valueFrom-based)."""
+    out: dict[str, object] = {}
+    for e in container.get("env", []) or []:
+        name = e.get("name")
+        if name:
+            out[name] = e.get("value", e)
+    return out
+
+
 def walk_strings(node: object):
     """Yield (key, value) for every scalar string value under a nested structure."""
     if isinstance(node, dict):
@@ -409,6 +427,109 @@ def validate() -> int:
                     not bad,
                     f"non-placeholder keys: {bad}",
                 )
+
+    # ------------------------------------------------------------------ #
+    # Section 5 — Runtime execution contract (PR 8).
+    # ------------------------------------------------------------------ #
+    # These assert the wiring that makes `dvc repro` actually RUN to completion
+    # in-cluster (proven end-to-end on a live cluster; see ADR-013). They are
+    # STATIC: they prove the manifest declares the contract, not that a run
+    # succeeds. Checked on the rendered overlay (which includes the base), so both
+    # the environment-independent DVC no-SCM config and the local dataset/MLflow
+    # wiring are present.
+    sec = "5. Runtime execution contract"
+    c0 = containers[0] if containers else {}
+
+    # (a) The workload invokes the DVC pipeline runner.
+    command = c0.get("command", []) or []
+    r.check(
+        sec,
+        "container command runs `dvc`",
+        bool(command) and command[0] == "dvc",
+        f"command={command!r} (expected it to start with 'dvc')",
+    )
+
+    # (b) DVC no-SCM contract: a ConfigMap carries `core.no_scm = true` in a
+    # `config.local`, and the Job mounts it read-only at /app/.dvc/config.local
+    # (subPath, so it does not shadow the image's /app/.dvc/config). This is what
+    # lets `dvc repro` run without a Git repo in the image.
+    no_scm_cms = [
+        cm
+        for cm in by_kind.get("ConfigMap", [])
+        if "no_scm" in (cm.get("data", {}) or {}).get("config.local", "")
+    ]
+    scm_cm_ok = any(
+        re.search(r"no_scm\s*=\s*true", cm["data"]["config.local"], re.I)
+        for cm in no_scm_cms
+    )
+    r.check(
+        sec,
+        "DVC no-SCM ConfigMap present (config.local: core.no_scm = true)",
+        scm_cm_ok,
+        "no ConfigMap has data.'config.local' containing 'no_scm = true'",
+    )
+    no_scm_cm_names = {cm.get("metadata", {}).get("name") for cm in no_scm_cms}
+    scm_vol_names = {
+        v.get("name")
+        for v in volumes_of(job)
+        if (v.get("configMap", {}) or {}).get("name") in no_scm_cm_names
+    }
+    scm_mount_ok = any(
+        m.get("name") in scm_vol_names
+        and m.get("mountPath") == "/app/.dvc/config.local"
+        and m.get("subPath") == "config.local"
+        and m.get("readOnly") is True
+        for m in volume_mounts_of(c0)
+    )
+    r.check(
+        sec,
+        "DVC config.local mounted read-only at /app/.dvc/config.local (subPath)",
+        scm_mount_ok,
+        "no read-only subPath mount of the no-SCM ConfigMap at /app/.dvc/config.local",
+    )
+
+    # (c) Runtime dataset: the Job mounts an input dataset at /app/data/raw (the
+    # preprocess stage's `data/raw/data.csv` input; the image ships no data). The
+    # backing volume must exist. The dataset ConfigMap itself is created
+    # out-of-band (like the Secret), so it is intentionally NOT in the render.
+    data_mounts = [
+        m for m in volume_mounts_of(c0) if m.get("mountPath") == "/app/data/raw"
+    ]
+    r.check(
+        sec,
+        "runtime dataset mounted at /app/data/raw",
+        bool(data_mounts),
+        "no volumeMount at /app/data/raw (the preprocess input directory)",
+    )
+    declared_vol_names = {v.get("name") for v in volumes_of(job)}
+    mount_names = [m.get("name") for m in data_mounts]
+    backed_ok = bool(data_mounts) and all(n in declared_vol_names for n in mount_names)
+    r.check(
+        sec,
+        "dataset mount is backed by a declared volume",
+        backed_ok,
+        f"mount names {mount_names} not all in volumes {sorted(declared_vol_names)}",
+    )
+
+    # (d) MLflow tracking endpoint is configured for the container — either an
+    # explicit env override (the local file store) or the base ConfigMap's
+    # MLFLOW_TRACKING_URI injected via envFrom. Credentials stay in the Secret.
+    env = container_env(c0)
+    envfrom_cm_names = {
+        (ef.get("configMapRef", {}) or {}).get("name")
+        for ef in (c0.get("envFrom", []) or [])
+    }
+    envfrom_has_uri = any(
+        "MLFLOW_TRACKING_URI" in (cm.get("data", {}) or {})
+        for cm in by_kind.get("ConfigMap", [])
+        if cm.get("metadata", {}).get("name") in envfrom_cm_names
+    )
+    r.check(
+        sec,
+        "MLFLOW_TRACKING_URI configured (env override or envFrom ConfigMap)",
+        "MLFLOW_TRACKING_URI" in env or envfrom_has_uri,
+        "no MLFLOW_TRACKING_URI in container env or referenced ConfigMap",
+    )
 
     return r.render()
 

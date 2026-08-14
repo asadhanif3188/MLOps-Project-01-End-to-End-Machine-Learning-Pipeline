@@ -16,6 +16,7 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - configmap.yaml
+  - dvc-config.yaml
   - job.yaml
   # secret.example.yaml is intentionally NOT a resource: it is a committed
   # *template* with placeholder values, never applied. The real Secret is created

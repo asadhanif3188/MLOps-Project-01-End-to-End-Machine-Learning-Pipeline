@@ -1,0 +1,52 @@
+# DVC runtime configuration — the no-SCM contract for the containerized pipeline.
+#
+# Why this exists (Sprint 5, PR 8 — Kubernetes Runtime Execution). The runtime
+# image is a lean, run-to-completion batch executor: it intentionally ships NO
+# `.git` (excluded by `.dockerignore`; ADR-005). But `dvc repro` constructs a DVC
+# `Repo`, which by default requires an SCM (Git) and aborts immediately with
+# `ERROR: /app is not a git repository` — before evaluating a single stage. That
+# was the material proof gap at the end of PR 7.
+#
+# The fix is DVC's first-class, supported no-SCM mode (`dvc init --no-scm` writes
+# exactly this key): with `core.no_scm = true`, DVC uses its `NoSCM` manager and
+# skips all Git integration (the `.gitignore` bookkeeping it would otherwise do for
+# tracked outputs). Stage execution, dependency/+ output checksumming, the DAG, and
+# the local cache all work unchanged — none of them need Git. The pipeline's
+# reproducibility guarantee does NOT come from Git-in-the-container; it comes from
+# `params.yaml` + pinned dependencies + seeded RNG + the DVC DAG (ADR-006, ADR-008).
+# Git-based *data versioning* still happens in the dev/CI environment, which is a
+# real Git repo; the ephemeral Job is only an executor. See ADR-013.
+#
+# Why a mounted `config.local`, not an edit to the committed `.dvc/config`:
+#   * `.dvc/config` (committed) is shared with the developer/CI environment, which
+#     IS a Git repo and must keep using Git+DVC for versioning. Setting no_scm there
+#     would disable SCM everywhere, including `dvc add`/`dvc status` in dev.
+#   * `.dvc/config.local` is DVC's designated LOCAL override layer (git-ignored,
+#     highest precedence after system/global/repo). Injecting it only inside the
+#     container turns off SCM for the runtime Job alone, leaving dev untouched.
+#
+# It is mounted READ-ONLY at `/app/.dvc/config.local` (subPath, so it lands beside
+# the image's `/app/.dvc/config` without shadowing it). DVC only ever reads this
+# file; its writable state (`/app/.dvc/tmp`, `/app/.dvc/cache`, `/app/dvc.lock`)
+# lives on the container's writable root filesystem, not here.
+#
+# This ConfigMap lives in the BASE because it is environment-INDEPENDENT: no image,
+# in any environment, ships `.git`, so every Kubernetes run of this workload needs
+# the no-SCM contract. What differs per environment (the dataset source, the MLflow
+# backend) is layered in the overlays, not here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlops-pipeline-dvc-config
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: dvc-runtime-config
+    app.kubernetes.io/managed-by: kustomize
+data:
+  # Rendered verbatim into /app/.dvc/config.local. INI format, exactly what
+  # `dvc config --local core.no_scm true` / `dvc init --no-scm` would write.
+  config.local: |
+    [core]
+        no_scm = true

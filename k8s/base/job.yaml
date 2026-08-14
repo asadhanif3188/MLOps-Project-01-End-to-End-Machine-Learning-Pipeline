@@ -26,15 +26,21 @@
 # backoffLimit, activeDeadlineSeconds) and the deliberate absence of health
 # probes. Rationale and the measurements are in
 # docs/decisions/ADR-011-kubernetes-resource-lifecycle.md.
-# It still deliberately does NOT include the following — each lands in a later,
-# focused PR so the reasoning stays reviewable:
-#   * CI manifest validation                                           (PR 6)
-#   * operations runbook & proof                                       (PR 7)
-# A *green* end-to-end run still needs the remaining "make it runnable" work: an
-# SCM in the image (`dvc repro` aborts with "/app is not a git repository") and a
-# mounted dataset (the runtime image excludes data via .dockerignore and expects
-# it mounted). Credentials are injectable via the Secret. Security rationale and
-# the read-only-root decision are in
+# PR 6 added CI manifest validation; PR 7 the operations runbook & proof.
+# PR 8 (Kubernetes Runtime Execution) closes the last proof gap and makes a
+# *green* end-to-end run real. It resolves the two blockers this header used to
+# describe as open:
+#   * SCM — `dvc repro` aborted with "/app is not a git repository". Fixed by
+#     mounting `/app/.dvc/config.local` with `core.no_scm = true` (DVC's supported
+#     no-SCM mode), sourced from the base `mlops-pipeline-dvc-config` ConfigMap.
+#   * Dataset — the runtime image excludes data via `.dockerignore`. The local
+#     overlay mounts it read-only at `/app/data/raw` from a ConfigMap generated
+#     out of the (git-ignored) local dataset file.
+# MLflow credentials remain injectable via the Secret; the local overlay instead
+# points MLFLOW_TRACKING_URI at an in-pod file store so a local run needs no
+# external MLflow or credentials. Verified end to end on Docker Desktop Kubernetes
+# (Job Completed, exit 0, all four stages). Design of record: ADR-013. Security
+# rationale and the read-only-root decision remain in
 # docs/decisions/ADR-010-kubernetes-security-hardening.md; see also
 # docs/kubernetes-architecture.md § "Identity & security boundary".
 apiVersion: batch/v1
@@ -211,6 +217,24 @@ spec:
               # and limits differ deliberately: Burstable QoS — reserve a modest
               # floor, cap the ceiling.)
               memory: 512Mi
+          # Runtime volume mounts (PR 8 — Kubernetes Runtime Execution). Only the
+          # DVC no-SCM config is mounted here in the BASE, because it is the one
+          # runtime input that is environment-INDEPENDENT (no image ships `.git`,
+          # so every environment needs it). The DATASET mount and the MLflow
+          # backend are environment-specific and are layered in the overlays
+          # (see overlays/local): the base does not presume how the data arrives.
+          volumeMounts:
+            # DVC's local config override, mounted read-only BESIDE the image's
+            # own /app/.dvc/config (subPath, so it does not shadow the directory).
+            # It carries `core.no_scm = true`, which is what lets `dvc repro` run
+            # without a Git repo in the image (was: "/app is not a git
+            # repository"). DVC only reads this file; its writable state
+            # (/app/.dvc/tmp, /app/.dvc/cache, /app/dvc.lock) is on the writable
+            # root FS. Full rationale: dvc-config.yaml and ADR-013.
+            - name: dvc-runtime-config
+              mountPath: /app/.dvc/config.local
+              subPath: config.local
+              readOnly: true
           # Externalized configuration (PR 3). The image stays immutable; env-var
           # config is injected from the cluster:
           #   * configMapRef — non-secret config (LOG_LEVEL, MLFLOW_TRACKING_URI),
@@ -221,10 +245,20 @@ spec:
           #     without it the pipeline still runs but the MLflow calls fail with a
           #     clear auth error — the credentials are never baked into the image.
           # Both sources inject env vars whose names match exactly what the code
-          # reads (require_env / logging_config / the MLflow client).
+          # reads (require_env / logging_config / the MLflow client). The local
+          # overlay overrides MLFLOW_TRACKING_URI to an in-pod file store so a
+          # local validation run needs no external MLflow/credentials (ADR-013).
           envFrom:
             - configMapRef:
                 name: mlops-pipeline-config
             - secretRef:
                 name: mlops-pipeline-secret
                 optional: true
+      # Pod-level volumes. The base declares only the DVC no-SCM config source
+      # (environment-independent). The dataset volume is added by the local
+      # overlay, where the dataset provisioning mechanism is chosen and clearly
+      # scoped as a local-validation mechanism (ADR-013).
+      volumes:
+        - name: dvc-runtime-config
+          configMap:
+            name: mlops-pipeline-dvc-config

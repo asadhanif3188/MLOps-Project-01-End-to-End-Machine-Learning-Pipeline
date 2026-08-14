@@ -32,17 +32,25 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > [security document](../docs/kubernetes-security.md), and a
 > [Sprint 5 Proof-Impact Assessment](../docs/proof/sprint-05-proof-impact.md) — and
 > re-executes the local deployment path from a clean state as evidence.
-> The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
-> lifecycle, hardened context, and resource enforcement verified end to end (see
-> [§ Execution record](#execution-record-pr-2),
-> [§ Security hardening](#security-hardening-pr-4), and
-> [§ Resource & lifecycle management](#resource--lifecycle-management-pr-5)), but
-> the pipeline does **not** complete yet: `dvc repro` aborts with `/app is not a
-> git repository`, and a *green* run additionally needs the PR 3 data/credential
-> wiring. **CI validation is static** (plus opt-in admission) — it does **not**
-> deploy or run the workload. Nothing here has been applied to a production cluster;
-> the resource values are **not production-certified** and **restricted Pod Security
-> Standard compliance is not claimed**.
+>
+> **Update — Kubernetes Runtime Execution (Sprint 5, PR 8).** The last proof gap is
+> now closed: the **complete pipeline runs to completion inside the Job**. On a
+> local Docker Desktop cluster (2026-08-14) the Job reached **`Complete`**, the pod
+> **`Succeeded`** with **exit code 0** on the first attempt, and all four stages ran
+> (preprocess 768 rows → split 614/154 → train acc 0.7398 → evaluate acc 0.7078).
+> The three PR 1–7 blockers were resolved as a minimal runtime contract (design of
+> record: [ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)):
+> DVC no-SCM mode (`core.no_scm = true`, mounted `config.local`) replaces the
+> `/app is not a git repository` abort; the dataset is mounted read-only at
+> `/app/data/raw` from an out-of-band ConfigMap; and the local overlay points MLflow
+> at an in-pod file store so a local run needs no external MLflow or credentials. The
+> earlier lifecycle/security/resource evidence (below) remains valid.
+> **CI validation is still static** (plus opt-in admission) — it does **not** deploy
+> or run the workload. Nothing here has been applied to a production cluster; the
+> dataset ConfigMap and MLflow file store are **local-validation mechanisms, not
+> production storage**; the resource values are **not production-certified** and
+> **restricted Pod Security Standard compliance is not claimed** (read-only root is
+> still deferred — [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)).
 
 For the full rationale — why Kubernetes, why a `Job` and not a `Deployment`, the
 workload lifecycle, and the local-vs-production boundary — see
@@ -62,13 +70,15 @@ k8s/
 │   ├── namespace.yaml        # the `mlops` namespace (environment boundary)
 │   ├── serviceaccount.yaml   # least-privilege identity, token automount off
 │   ├── configmap.yaml        # non-secret runtime config (LOG_LEVEL, MLFLOW_TRACKING_URI)
+│   ├── dvc-config.yaml       # DVC no-SCM runtime config (config.local: core.no_scm=true) — PR 8
 │   ├── secret.example.yaml   # Secret TEMPLATE (placeholders; excluded from kustomize)
 │   ├── job.yaml              # the pipeline as a run-to-completion batch Job
 │   └── kustomization.yaml    # aggregates the base, applies common labels
 ├── overlays/
 │   └── local/                # specialization for a local cluster (kind/minikube)
-│       └── kustomization.yaml # pins the image to the locally built ml-pipeline:local
-└── validate.py              # static validation (security + required fields) — PR 6
+│       ├── job-runtime.yaml   # PR 8: dataset mount + offline MLflow file-store env
+│       └── kustomization.yaml # pins the image to ml-pipeline:local; applies the patch
+└── validate.py              # static validation (security + required + runtime) — PR 6/8
 ```
 
 Why Kustomize (and not raw `kubectl apply -f`): a single base is specialized per
@@ -100,10 +110,12 @@ kustomize build k8s/overlays/local
 | **`kubectl`** | Apply/inspect/log/delete | Point it at the local context: `kubectl config current-context` should be `docker-desktop`, `kind-*`, or `minikube`. |
 | **`kustomize`** (optional) | Render the manifests standalone | `kubectl` has it built in (`kubectl kustomize …` / `kubectl apply -k …`), so a separate binary is optional. |
 
-No registry, no cloud account, and no credentials are required to render, apply, or
-inspect the workload. MLflow/DagsHub credentials are only needed for a *green*
-pipeline run (which also needs the SCM + data work — see
-[§ Execution record](#execution-record-pr-2)).
+No registry, no cloud account, and no credentials are required to render, apply,
+inspect, **or run** the workload: a local green run uses the mounted dataset
+(step 3) and the local overlay's in-pod MLflow **file store**, so no MLflow/DagsHub
+credentials are needed. Credentials are only needed to exercise the real DagsHub
+tracking path (see [§ Runtime execution record](#runtime-execution-record-pr-8) and
+[ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)).
 
 ### Local cluster setup
 
@@ -133,14 +145,15 @@ Secret, updating config, the full failure-mode playbook, and the complete
 troubleshooting matrix — see the
 [Kubernetes Operations runbook](../docs/kubernetes-operations.md).
 
-> **Executed on 2026-08-12** against Docker Desktop Kubernetes (v1.34.3). The Job
-> lifecycle was verified end to end (see [§ Execution record](#execution-record-pr-2)):
-> namespace + Job created, image resolved with no registry pull, 3 attempts (the
-> initial pod + `backoffLimit: 2`), then a terminal `Failed`. The pipeline itself
-> does **not** complete yet — `dvc repro` aborts with `/app is not a git
-> repository`. A *green* run needs the PR 3 "make it runnable" work: an SCM in the
-> image (`git init` or `core.no_scm=true`), a mounted dataset (the runtime image
-> ships **no** data by design), and MLflow/DagsHub credentials.
+> **Executed green on 2026-08-14** against Docker Desktop Kubernetes (v1.34.3): the
+> Job reached **`Complete`**, the pod **`Succeeded`** with **exit 0** on the first
+> attempt, and the full pipeline ran (preprocess → split → train → evaluate) — see
+> [§ Runtime execution record (PR 8)](#runtime-execution-record-pr-8). This uses the
+> PR 8 runtime contract ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)):
+> DVC no-SCM (mounted `config.local`), a dataset mounted out-of-band at
+> `/app/data/raw`, and an in-pod MLflow file store. The earlier PR 2 run (2026-08-12)
+> verified the Job *lifecycle* and terminated at the then-open SCM blocker; it is
+> kept below as the historical baseline that PR 8 closes.
 
 ### 1. Build the image locally
 
@@ -156,53 +169,100 @@ docker build \
 
 ### 2. Make the image available to the cluster
 
-**Docker Desktop** shares the host Docker daemon with its Kubernetes, so the image
-is visible with **no** extra step. **kind** and **minikube** run their own
-container runtime and must be side-loaded:
+**kind** and **minikube** run their own container runtime and must be side-loaded:
 
 ```bash
 kind load docker-image ml-pipeline:local          # kind
 # or:
 minikube image load ml-pipeline:local             # minikube
-# Docker Desktop Kubernetes: nothing to do — it shares the daemon.
 ```
 
-### 3. (Optional) create the credential Secret
+**Docker Desktop.** Older Docker Desktop shared the Docker daemon with its
+Kubernetes, so no load step was needed. On newer Docker Desktop the Kubernetes node
+(`desktop-control-plane`) runs on **containerd**, whose image store is **separate**
+from the `docker build` daemon — so a freshly built image can be *invisible* to the
+kubelet, and pods silently run a **stale** cached image (symptom: the pod behaves
+like old code even though `docker images` shows your new build). Build without an
+attestation manifest and import into the node's `k8s.io` containerd namespace:
 
-Only needed for MLflow/DagsHub tracking; the workload applies and runs without it
-(the `secretRef` is `optional: true`). Created **out-of-band** so nothing is
-committed — full rationale in [§ Secrets](#secrets--creation-lifecycle-and-why-nothing-is-committed):
+```bash
+docker build --provenance=false --sbom=false -t ml-pipeline:local .
+docker save ml-pipeline:local \
+  | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+# verify the node now has YOUR digest:
+docker exec desktop-control-plane ctr -n k8s.io images ls | grep ml-pipeline:local
+```
+
+> If a run misbehaves, confirm the pod is on the fresh image:
+> `kubectl -n mlops exec <pod> -- md5sum dvc.yaml` should match
+> `docker run --rm --entrypoint md5sum ml-pipeline:local dvc.yaml`.
+
+### 3. Provide the runtime dataset (required for a green run)
+
+The runtime image ships **no** dataset by design (`.dockerignore`; the raw file is
+DVC-tracked). The local overlay mounts it read-only at `/app/data/raw` from a
+ConfigMap you create **out-of-band** from the local, git-ignored `data/raw/data.csv`
+— the same out-of-band pattern as the Secret, so the dataset never enters git or a
+rendered manifest. Fetch the dataset first if you don't have it (`dvc pull`, or the
+public DagsHub raw URL), then:
+
+```bash
+kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -   # if not yet applied
+kubectl create configmap mlops-pipeline-dataset --namespace mlops \
+  --from-file=data.csv=data/raw/data.csv
+```
+
+> **Local validation only, not production storage.** A ConfigMap caps at 1 MiB; a
+> real dataset would come from a PVC / object store / `dvc pull`
+> ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)). The volume
+> is `optional: true`: if you skip this step the Job still starts, then fails fast at
+> preprocess with `Dataset not found: 'data/raw/data.csv'` (the intended missing-input
+> failure).
+
+### 4. (Optional) create the credential Secret
+
+**Not needed for a local green run:** the local overlay overrides
+`MLFLOW_TRACKING_URI` to an in-pod file store, so tracking works offline with no
+credentials. The Secret is only for exercising the **real DagsHub** path locally
+(create it, then drop the overlay's `MLFLOW_*` override). It is created
+**out-of-band** so nothing is committed — full rationale in
+[§ Secrets](#secrets--creation-lifecycle-and-why-nothing-is-committed):
 
 ```bash
 kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -   # if not yet applied
 kubectl create secret generic mlops-pipeline-secret --namespace mlops --from-env-file=.env
 ```
 
-### 4. Apply the workload
+### 5. Apply the workload
 
 ```bash
 kubectl apply -k k8s/overlays/local
 ```
 
 This creates the `mlops` namespace and the `mlops-pipeline` Job (plus the
-ServiceAccount and ConfigMap).
+ServiceAccount and ConfigMaps). With the dataset ConfigMap from step 3 in place, the
+Job runs the full pipeline to completion (exit 0).
 
-### 5. Inspect it
+### 6. Inspect it
 
 ```bash
 kubectl -n mlops get jobs,pods                    # high-level status
 kubectl -n mlops describe job/mlops-pipeline      # events, completions, backoff
-kubectl -n mlops get job/mlops-pipeline -o wide
+kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=300s
+# exit code of the (first) pod — expect 0:
+pod=$(kubectl -n mlops get pods -l app.kubernetes.io/name=mlops-pipeline -o jsonpath='{.items[0].metadata.name}')
+kubectl -n mlops get pod "$pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}{"\n"}'
 ```
 
-### 6. Retrieve logs
+### 7. Retrieve logs
 
 ```bash
 kubectl -n mlops logs job/mlops-pipeline          # logs from the Job's pod
 kubectl -n mlops logs -f job/mlops-pipeline       # follow while it runs
+# Expect the four stages: preprocess -> split -> train -> evaluate.
 ```
 
-### 7. Delete / re-run
+### 8. Delete / re-run
 
 A Job's pod template is immutable, so re-running means delete-then-apply (this is
 expected for batch Jobs — you are starting a fresh run, not mutating a live one):
@@ -227,10 +287,13 @@ secret/config, admission, RBAC) is in the
 
 | Symptom | Likely cause | Investigation | Remediation |
 |---|---|---|---|
-| `ImagePullBackOff` / `ErrImagePull` | Cluster can't see `ml-pipeline:local` — not built, or not side-loaded (kind/minikube). | `kubectl -n mlops describe pod <pod>` → `Events`. | Build it, then side-load for kind/minikube (`kind load docker-image …` / `minikube image load …`); Docker Desktop needs no load — see [§ Step 2](#2-make-the-image-available-to-the-cluster). |
+| `ImagePullBackOff` / `ErrImagePull` | Cluster can't see `ml-pipeline:local` — not built, or not side-loaded (kind/minikube). | `kubectl -n mlops describe pod <pod>` → `Events`. | Build it, then side-load for kind/minikube (`kind load docker-image …` / `minikube image load …`); on Docker Desktop import into the node's containerd — see [§ Step 2](#2-make-the-image-available-to-the-cluster). |
+| Pod runs **stale code** (e.g. an old `dvc.yaml`; DVC errors about stages/params that don't match the repo) | Docker Desktop k8s uses a containerd store separate from `docker build`; the kubelet is running an **old cached** `ml-pipeline:local`. | `kubectl -n mlops exec <pod> -- md5sum dvc.yaml` vs `docker run --rm --entrypoint md5sum ml-pipeline:local dvc.yaml` (differ ⇒ stale). | Import the fresh image into the node's `k8s.io` containerd namespace ([§ Step 2](#2-make-the-image-available-to-the-cluster)); then delete + re-apply the Job. |
 | Pod `Pending`, never schedules | Node lacks CPU/memory for the `requests` (250m/256Mi). | `describe pod` → `FailedScheduling`. | Raise the local cluster's resources (Docker Desktop → Settings → Resources). |
 | `CreateContainerConfigError` — "runAsNonRoot and image has non-numeric user" | The explicit numeric `runAsUser: 10001` was removed (the image's `USER` is a name). | `describe pod` → container state. | Keep `runAsUser: 10001` — it is **required** ([ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)). |
-| Pod `Error`, exit `255`, log `/app is not a git repository` | **Expected today** — `dvc repro` needs an SCM the runtime image ships none. | `kubectl -n mlops logs job/mlops-pipeline`. | Not a deploy fault; the documented "make it runnable" gap ([§ Execution record](#execution-record-pr-2)). |
+| Pod `Error`, log `/app is not a git repository` | The DVC no-SCM config isn't mounted — `config.local` (`core.no_scm=true`) missing at `/app/.dvc/config.local`. | `kubectl -n mlops exec <pod> -- cat .dvc/config.local`. | Ensure `dvc-config.yaml` is in the base and the Job mounts it (subPath) — [ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md); `python k8s/validate.py` asserts this. |
+| Pod `Error`, log `Dataset not found: 'data/raw/data.csv'` | The dataset ConfigMap wasn't created (volume is `optional: true`, so the pod still starts). | `kubectl -n mlops get configmap mlops-pipeline-dataset`. | Create it out-of-band — see [§ Step 3](#3-provide-the-runtime-dataset-required-for-a-green-run). This is the intended graceful missing-input failure. |
+| Pod `Error`, MLflow "filesystem tracking backend … maintenance mode" | Newer MLflow gates its file store; `MLFLOW_ALLOW_FILE_STORE` not set for the local file-store path. | `kubectl -n mlops logs job/mlops-pipeline` at the tracking boundary. | The local overlay sets `MLFLOW_ALLOW_FILE_STORE=true`; keep it, or point at a real MLflow endpoint + Secret ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)). |
 | Job `Failed`, `BackoffLimitExceeded` | Pod failed all `backoffLimit + 1 = 3` attempts. | `describe job` events, then the **pod logs** for the real cause. | Fix the underlying pod error above; fail-fast is intentional for a deterministic pipeline. |
 | `kubectl apply -k` render/schema error | Malformed or schema-invalid manifest. | `kustomize build k8s/overlays/local` and `python k8s/validate.py`; `kubeconform -strict`. | Fix the manifest; CI's `k8s-validate` catches this class before merge. |
 
@@ -275,6 +338,49 @@ the PR 3 "make it runnable" scope and needs three things, in order:
 3. MLflow/DagsHub credentials for the tracking calls.
 
 The workload *mechanism* is validated here; its *green execution* is not claimed.
+**(Superseded by the PR 8 record below, which achieves the green run.)**
+
+## Runtime execution record (PR 8)
+
+Executed **2026-08-14** against **Docker Desktop Kubernetes v1.34.3**, image
+`ml-pipeline:local` (imported into the node's containerd — see [§ Step 2](#2-make-the-image-available-to-the-cluster)),
+with the dataset ConfigMap created out-of-band and the local overlay's MLflow
+file-store override. Design of record:
+[ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md).
+
+**What was proven — the complete pipeline runs to completion in-cluster:**
+
+```text
+$ kubectl -n mlops get job/mlops-pipeline
+NAME             STATUS     COMPLETIONS   DURATION
+mlops-pipeline   Complete   1/1           41s
+
+$ kubectl -n mlops get pod <pod> -o jsonpath='{.status.phase} {...exitCode}'
+Succeeded  exitCode=0   restarts=0        # first attempt, no retries
+
+$ kubectl -n mlops logs job/mlops-pipeline        # (abridged)
+Running stage 'preprocess':  … Preprocess stage completed: 768 rows written
+Running stage 'split':       … 614 train rows, 154 held-out rows
+Running stage 'train':       … Best model accuracy: 0.7398 … Model saved
+Running stage 'evaluate':    … model accuracy: 0.7078
+```
+
+- **Job** `Complete=True (CompletionsReached)`, `succeeded: 1`.
+- **Pod** `Succeeded`, container **exit code 0**, `RESTARTS: 0` (green on the first
+  attempt — no back-off needed).
+- **All four stages** ran in order: preprocess → split → train → evaluate.
+- **Security unchanged and re-verified on the live pod:** QoS `Burstable`,
+  `runAsUser 10001`, `automountServiceAccountToken: false`; the two added mounts are
+  read-only ConfigMaps (`/app/.dvc/config.local` subPath, `/app/data/raw`).
+
+**Failure test (verifies fail-fast + back-off).** With the dataset ConfigMap
+removed and the Job re-applied, every attempt failed fast at preprocess
+(`ERROR: failed to reproduce 'preprocess': [Errno 2] No such file or directory:
+'/app/data/raw/data.csv'`); the Job ran its **3 fresh-pod attempts** (`RESTARTS: 0`
+each), then settled into terminal **`Failed: BackoffLimitExceeded`** (`failed: 3`).
+Restoring the ConfigMap returned the Job to green. This confirms the intended
+missing-input path: application fails → non-zero exit → Job fails → back-off →
+terminal `Failed` (ADR-011).
 
 ## Configuration, secrets & identity (PR 3)
 
@@ -580,7 +686,8 @@ see [§ Execution record](#execution-record-pr-2)).
 | Local run **runbook** (build/load/apply/inspect/logs/re-run) | ✅ this PR | PR 2 |
 | Demonstrated local cluster run (Job lifecycle) | ✅ executed 2026-08-12 (see [§ Execution record](#execution-record-pr-2)) | PR 2 |
 | ConfigMap / Secret template / ServiceAccount + token automount off | ✅ this PR | PR 3 |
-| Green in-cluster `dvc repro` (SCM + data + credentials) | ⬜ deferred | PR 3+ |
+| Green in-cluster `dvc repro` (no-SCM + mounted data + MLflow) | ✅ done ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md); see [§ Runtime execution record](#runtime-execution-record-pr-8)) | PR 8 |
+| Runtime-contract static checks (no-SCM config, dataset mount, MLflow) | ✅ done (`k8s/validate.py` § Runtime execution contract) | PR 8 |
 | Security hardening (securityContext, seccomp, dropped caps) | ✅ done (read-only root deferred, [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)) | PR 4 |
 | CPU/memory resource requests/limits, lifecycle & probe decision, failure modes | ✅ done (measured values, [ADR-011](../docs/decisions/ADR-011-kubernetes-resource-lifecycle.md)) | PR 5 |
 | CI manifest validation (syntax, schema, kustomize, security) | ✅ done (static + opt-in dry-run, [ADR-012](../docs/decisions/ADR-012-kubernetes-manifest-validation.md)) | PR 6 |

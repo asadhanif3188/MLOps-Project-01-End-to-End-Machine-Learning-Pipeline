@@ -20,6 +20,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-010](ADR-010-kubernetes-security-hardening.md) | Kubernetes Workload Security Hardening (Pod/Container `securityContext`) | Accepted | 2026-08-12 |
 | [ADR-011](ADR-011-kubernetes-resource-lifecycle.md) | Kubernetes Resource & Lifecycle Management (Requests/Limits, Backoff, No Probes) | Accepted | 2026-08-12 |
 | [ADR-012](ADR-012-kubernetes-manifest-validation.md) | Automated Kubernetes Manifest Validation in CI (kustomize + kubeconform + project checks) | Accepted | 2026-08-12 |
+| [ADR-013](ADR-013-kubernetes-runtime-execution.md) | Kubernetes Runtime Execution — the DVC/dataset/MLflow runtime contract | Accepted | 2026-08-14 |
 
 ## Template
 
