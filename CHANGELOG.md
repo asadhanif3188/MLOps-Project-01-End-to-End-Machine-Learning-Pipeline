@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Managed EKS Platform** (Sprint 6, PR 4) — provisions the real Kubernetes
+  platform as Terraform, consuming the PR 2 network and PR 3 IAM roles. Design of
+  record: [ADR-017](docs/decisions/ADR-017-eks-platform.md).
+  - **New [`terraform/eks.tf`](terraform/eks.tf)** — an **EKS control plane**
+    (assuming the PR 3 cluster role), one **managed node group** (assuming the PR
+    3 node role), and the **three core addons** (`vpc-cni`, `coredns`,
+    `kube-proxy`). With the defaults a plan adds **5 resources**, taking the full
+    stack to **29** (18 network + 6 IAM + 5 EKS).
+  - **Explicit Kubernetes version** — pinned to **1.35** (`kubernetes_version`)
+    for reproducibility rather than tracking the newest; EKS manages the patch
+    level and addon versions track the control plane.
+  - **Small, cost-conscious nodes** — a **fixed pair of `t3.medium`** on-demand
+    nodes on Amazon Linux 2023 (`min = max = desired = 2`, no Cluster Autoscaler,
+    no GPU, no SSH), in the **private subnets** with egress via NAT. All sizing is
+    variable-driven (`node_instance_types`, `node_capacity_type`, `node_*_size`,
+    `node_disk_size`).
+  - **Sensible endpoint/security** — **both** private and public API access
+    enabled; the public source range (`cluster_endpoint_public_access_cidrs`)
+    defaults open **for first-run validation only** and should be restricted for
+    real use. Access uses **EKS access entries** (`API_AND_CONFIG_MAP`) and
+    bootstraps the creator as cluster admin; control-plane `api`/`audit`/
+    `authenticator` logs ship to CloudWatch (toggleable).
+  - **Non-sensitive EKS outputs** — `eks_cluster_name`, `eks_cluster_endpoint`,
+    `eks_cluster_version`, `eks_cluster_security_group_id`,
+    `eks_cluster_oidc_issuer_url`, `eks_node_group_name`, and a ready-to-run
+    `configure_kubectl` command. No kubeconfig, token, or certificate is emitted.
+  - **Explicit non-goals** — no autoscaling, GPUs, service mesh, ingress stack,
+    observability stack, optional addons, extra AWS services, or workload
+    resources; the `Job` stays in Kustomize. KMS secret envelope encryption and
+    CNI-via-IRSA are documented follow-ups.
+  - **Docs** — [`terraform/README.md`](terraform/README.md) § EKS platform and
+    [`terraform/terraform.tfvars.example`](terraform/terraform.tfvars.example)
+    document the architecture, node sizing, version, endpoint/security decisions,
+    and cost implications.
 - **AWS IAM Foundation** (Sprint 6, PR 3) — adds the least-privilege IAM roles a
   managed EKS cluster needs, building on the PR 2 network. Creates **no EKS,
   EC2, or application resources, and no static credentials**. Design of record:

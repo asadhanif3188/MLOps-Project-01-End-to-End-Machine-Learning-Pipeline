@@ -104,3 +104,46 @@ output "eks_node_role_arn" {
   value       = aws_iam_role.eks_node.arn
   sensitive   = true
 }
+
+# --- EKS platform (Sprint 6, PR 4) --------------------------------------------
+# Connection/inspection details for the provisioned cluster. All are
+# non-sensitive: the cluster name, endpoint URL, version, and the cluster
+# security-group ID are not secrets, and the API endpoint is access-controlled
+# by IAM plus the public-CIDR allow-list — knowing the URL grants nothing. No
+# kubeconfig, token, or certificate is emitted here; operators fetch short-lived
+# credentials with `aws eks update-kubeconfig` (see configure_kubectl below).
+
+output "eks_cluster_name" {
+  description = "Name of the EKS cluster. Used by `aws eks update-kubeconfig` and by the Kubernetes workload PR."
+  value       = aws_eks_cluster.this.name
+}
+
+output "eks_cluster_endpoint" {
+  description = "HTTPS endpoint of the EKS Kubernetes API server. Not a secret: access is gated by IAM and the public-access CIDR allow-list."
+  value       = aws_eks_cluster.this.endpoint
+}
+
+output "eks_cluster_version" {
+  description = "Kubernetes minor version running on the EKS control plane (the explicitly pinned version)."
+  value       = aws_eks_cluster.this.version
+}
+
+output "eks_cluster_security_group_id" {
+  description = "ID of the cluster security group EKS created and manages for control-plane/node communication."
+  value       = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+}
+
+output "eks_cluster_oidc_issuer_url" {
+  description = "OIDC issuer URL of the cluster. The anchor for future IAM Roles for Service Accounts (IRSA), including the deferred CNI-via-IRSA hardening (ADR-016/-017)."
+  value       = aws_eks_cluster.this.identity[0].oidc[0].issuer
+}
+
+output "eks_node_group_name" {
+  description = "Name of the managed node group backing the cluster's worker capacity."
+  value       = aws_eks_node_group.this.node_group_name
+}
+
+output "configure_kubectl" {
+  description = "Ready-to-run command that writes a kubeconfig entry for this cluster using the caller's AWS credentials (fetches a short-lived token; nothing sensitive is stored in Terraform state by this output)."
+  value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}"
+}

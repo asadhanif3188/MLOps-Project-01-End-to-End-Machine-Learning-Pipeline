@@ -27,3 +27,27 @@ owner = "your-name-or-team"
 additional_tags = {
   # CostCenter = "ml-portfolio"
 }
+
+# --- EKS platform (PR 4) ------------------------------------------------------
+# All non-secret. Left commented so the cost-conscious defaults apply; uncomment
+# to override. See terraform/variables.tf and terraform/README.md § EKS platform.
+
+# Explicit Kubernetes version for the control plane + node group.
+# kubernetes_version = "1.35"
+
+# Node group sizing (fixed size; no autoscaler is installed).
+# node_instance_types = ["t3.medium"]
+# node_capacity_type  = "ON_DEMAND"   # or "SPOT" for cheaper, interruptible nodes
+# node_desired_size   = 2
+# node_min_size       = 2
+# node_max_size       = 2
+# node_disk_size      = 20
+
+# API endpoint exposure. RESTRICT the public CIDRs to your operator IP for real
+# use — the default below is open only for first-run validation.
+# cluster_endpoint_public_access       = true
+# cluster_endpoint_private_access      = true
+# cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]   # e.g. ["203.0.113.4/32"]
+
+# Control-plane logs shipped to CloudWatch (small cost). Set to [] to disable.
+# cluster_enabled_log_types = ["api", "audit", "authenticator"]
