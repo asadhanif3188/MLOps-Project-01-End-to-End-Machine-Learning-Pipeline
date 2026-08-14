@@ -70,7 +70,11 @@ Contributors and users should follow these practices:
   [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md)): permissions come from
   the AWS-managed policies EKS requires, with no `AdministratorAccess` and no
   project-authored wildcard. State files and kubeconfigs are git-ignored and
-  never committed.
+  never committed. **CI holds no AWS credentials or cloud identity**: the
+  `terraform-validate` job validates the IaC *statically* (`fmt`/`init
+  -backend=false`/`validate`, TFLint, Trivy) and never runs `terraform
+  plan`/`apply` — real provisioning is a deliberate, operator-driven step against
+  one's own account (see [ADR-019](docs/decisions/ADR-019-terraform-ci-validation.md)).
 
 ---
 

@@ -171,7 +171,12 @@ is unaffected because no `plan`/`apply`/`output` runs in CI.
 - **Trivy was validated on the Linux CI runner, not on the Windows dev host**
   (local endpoint security blocked the scanner binary); `fmt`/`init`/`validate`
   and TFLint were run locally. The `.trivyignore` set was compiled by static
-  review and is finalized/enforced by the runner — new findings there are real.
+  review and finalized on the runner: the first CI run confirmed the anticipated
+  EKS suppressions (`eks.tf` clean) and surfaced one additional HIGH —
+  `AVD-AWS-0164` (public-subnet public IPs) — which was triaged as the intentional
+  [ADR-015](ADR-015-aws-network-architecture.md) public/private split and
+  suppressed with justification. This is the gate working as designed: any *new*
+  finding blocks until it is fixed or explicitly, justifiably suppressed.
 - The suppression list must be **re-triaged when the network/EKS/IAM config
   changes**; it is scoped to the current validation-cluster design.
 
