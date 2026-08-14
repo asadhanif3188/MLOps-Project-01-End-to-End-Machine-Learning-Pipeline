@@ -19,3 +19,27 @@ __pycache__/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# Terraform (Sprint 6, terraform/). Never commit provider caches, state, or
+# real variable values — state can contain resolved account IDs and secrets.
+# The committed terraform.tfvars.example (placeholders only) is intentionally
+# NOT ignored.
+.terraform/
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored — the dependency lock
+# file is committed so the provider version and checksums are reproducible.
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Terraform plan output artifacts (may contain sensitive values)
+*.tfplan
+tfplan
+.terraformrc
+terraform.rc

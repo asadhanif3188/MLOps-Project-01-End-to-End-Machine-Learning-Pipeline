@@ -1,0 +1,29 @@
+# Example Terraform variable values for the MLOps AWS foundation.
+#
+# HOW TO USE
+#   cp terraform.tfvars.example terraform.tfvars   # then edit as needed
+#
+# `terraform.tfvars` is gitignored (see the repository .gitignore). This example
+# file is committed and MUST contain placeholders only.
+#
+# SECURITY — read before editing
+#   Never put AWS access keys, secret keys, session tokens, account IDs, or any
+#   other secret in this file or in terraform.tfvars. Credentials come from your
+#   AWS CLI profile / environment, NOT from Terraform variables
+#   (see terraform/README.md § Authentication & § Security). Everything below is
+#   non-secret configuration.
+
+# AWS region to operate in.
+aws_region = "us-east-1"
+
+# Naming/tagging prefix and environment.
+project_name = "mlops-pipeline"
+environment  = "dev"
+
+# Owner recorded in the "Owner" tag (a name or team, NOT a credential).
+owner = "your-name-or-team"
+
+# Optional extra tags merged into the common tag set.
+additional_tags = {
+  # CostCenter = "ml-portfolio"
+}
