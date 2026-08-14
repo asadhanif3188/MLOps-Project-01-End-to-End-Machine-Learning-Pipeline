@@ -1,0 +1,66 @@
+# Local-overlay runtime patch (Sprint 5, PR 8 — Kubernetes Runtime Execution).
+#
+# The BASE Job is environment-independent: it mounts only the DVC no-SCM config
+# (needed in every environment) and points MLflow at the production DagsHub
+# endpoint via the ConfigMap. This patch layers the two things that are specific
+# to a LOCAL validation run:
+#
+#   1. The runtime DATASET, mounted read-only at /app/data/raw from a ConfigMap
+#      the operator creates OUT-OF-BAND from the local, git-ignored dataset file
+#      — exactly like the credential Secret. The dataset is therefore never
+#      committed and never baked into the image. `optional: true` means the Job
+#      still applies (and starts) when the dataset ConfigMap is absent; the
+#      pipeline then fails fast at the preprocess stage with a clear DataError
+#      ("Dataset not found: 'data/raw/data.csv'"), which is the intended,
+#      graceful missing-input failure mode (see the failure test in ADR-013).
+#
+#      >> This is a LOCAL VALIDATION mechanism and is NOT presented as production
+#      >> storage. A ConfigMap caps at 1 MiB and is the wrong carrier for a real
+#      >> dataset; production would use a PVC / object store / `dvc pull` from the
+#      >> DVC remote. It is used here because it is the simplest, most portable,
+#      >> non-root-friendly way to hand a small dataset to a local Job (works
+#      >> identically on Docker Desktop / kind / minikube, needs no node-path
+#      >> coupling like hostPath, and no network/credentials).
+#
+#   2. The MLflow backend, overridden to an in-pod FILE STORE so a local run is
+#      fully offline — no external MLflow server and no DagsHub credentials. `env`
+#      entries take precedence over the `envFrom` ConfigMap value for the same
+#      key, so MLFLOW_TRACKING_URI here wins over the base ConfigMap's DagsHub
+#      URI. MLFLOW_ALLOW_FILE_STORE opts in to MLflow's filesystem backend (newer
+#      MLflow gates it behind this flag). The store is written under /app/mlruns
+#      on the container's writable root filesystem.
+#
+#      >> DagsHub/MLflow connectivity is therefore CONFIGURATION-VALIDATED for the
+#      >> base (the Secret + envFrom wiring is correct), NOT connectivity-tested,
+#      >> in the local run. To exercise the real DagsHub path locally, create the
+#      >> Secret out-of-band and drop this MLFLOW_* override.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlops-pipeline
+  namespace: mlops
+spec:
+  template:
+    spec:
+      containers:
+        - name: pipeline
+          # `env` overrides same-named keys coming from `envFrom` (base ConfigMap).
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: "file:///app/mlruns"
+            - name: MLFLOW_ALLOW_FILE_STORE
+              value: "true"
+          # Appended to the base container's volumeMounts (merge key: mountPath).
+          volumeMounts:
+            - name: dataset
+              mountPath: /app/data/raw
+              readOnly: true
+      # Appended to the base pod's volumes (merge key: name).
+      volumes:
+        - name: dataset
+          configMap:
+            name: mlops-pipeline-dataset
+            # Apply/start succeed even before the dataset ConfigMap exists; the
+            # pipeline then fails fast at preprocess (missing input) rather than
+            # the pod being stuck unschedulable.
+            optional: true

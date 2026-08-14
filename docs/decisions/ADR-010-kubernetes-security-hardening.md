@@ -91,6 +91,17 @@ then flipping `readOnlyRootFilesystem: true` and validating a real run against i
 Until that exists, the honest state is: control evaluated, incompatibility proven,
 deferred — recorded here rather than silently skipped.
 
+> **Update (PR 8, [ADR-013](ADR-013-kubernetes-runtime-execution.md)).** The
+> *green in-cluster run* half of that future work is now **done**: the SCM blocker
+> is resolved via DVC no-SCM mode (`core.no_scm = true` in a mounted
+> `config.local`), the dataset is mounted, and the full pipeline completes with
+> exit 0 on a live cluster. The DVC writable paths (`/app/.dvc/tmp`, `.dvc/cache`,
+> `dvc.lock`) still live at the `/app` repo root, so `readOnlyRootFilesystem`
+> remains `false` — it is now the **only** outstanding item of this deferral.
+> Relocating that DVC state onto declared writable volumes and then enabling
+> read-only root is the tracked next step; ADR-013 deliberately did not bundle it,
+> to keep the green-run proof minimal and reviewable.
+
 ### Not added (least privilege by omission)
 
 - **No `Role`/`RoleBinding`/`ClusterRole`.** The workload makes no Kubernetes API

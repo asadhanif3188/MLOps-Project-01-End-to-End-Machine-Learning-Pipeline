@@ -1,16 +1,27 @@
 # Sprint 5 — Proof-Impact Assessment (Kubernetes Platform Engineering)
 
-- **Date:** 2026-08-12
+- **Date:** 2026-08-12 (updated 2026-08-14 for PR 8)
 - **Status:** Unreleased (Sprint 5). **No release tag is cut in this PR** — this
   assessment covers the work staged under `[Unreleased]` in the
   [CHANGELOG](../../CHANGELOG.md); a version tag is a separate release step.
+- **Headline (updated, PR 8):** The Kubernetes workload has now been **executed
+  successfully** on Docker Desktop Kubernetes (v1.34.3, 2026-08-14). The Job
+  **completed with exit code 0** and ran **preprocess → split → training →
+  evaluation** end to end. A **controlled missing-dataset failure** was also
+  validated, demonstrating the Job's retry (back-off) and terminal-failure
+  behaviour. Earlier Sprint 5 records that said the workload *mechanism* was proven
+  but a *green pipeline run was not claimed* are **superseded** by this evidence —
+  the green run is now claimed, and bounded to a **local** cluster with a
+  local-validation dataset and an in-pod MLflow file store (see
+  [§5](#5-what-still-cannot-be-claimed)).
 - **Related:** [Kubernetes Architecture](../kubernetes-architecture.md),
   [Kubernetes Operations](../kubernetes-operations.md),
   [Kubernetes Security](../kubernetes-security.md), [`k8s/README.md`](../../k8s/README.md),
   [ADR-009](../decisions/ADR-009-kubernetes-workload-model.md),
   [ADR-010](../decisions/ADR-010-kubernetes-security-hardening.md),
   [ADR-011](../decisions/ADR-011-kubernetes-resource-lifecycle.md),
-  [ADR-012](../decisions/ADR-012-kubernetes-manifest-validation.md)
+  [ADR-012](../decisions/ADR-012-kubernetes-manifest-validation.md),
+  [ADR-013](../decisions/ADR-013-kubernetes-runtime-execution.md)
 
 > This document answers one question with evidence:
 > **What can this project credibly claim after Sprint 5 that it could not after
@@ -26,7 +37,7 @@
 | | Claim licensed by the repository |
 |-|----------------------------------|
 | **After Sprint 4** | "I built a correct, reproducible, containerized ML pipeline validated in CI (lint, types, tests, DVC integrity, a fixture `dvc repro`, and an image build) — offline, with no credentials." |
-| **After Sprint 5** | "I additionally expressed that containerized pipeline as a **Kubernetes-native batch workload** with an honest workload model (a `Job`, not a fake service), a least-privilege identity, an **enforced** hardened security context, **measured** resource requests/limits, and **automated static manifest validation in CI** — executed on a local cluster to verify the lifecycle and enforcement end to end, while documenting exactly what is not yet green." |
+| **After Sprint 5** | "I additionally expressed that containerized pipeline as a **Kubernetes-native batch workload** with an honest workload model (a `Job`, not a fake service), a least-privilege identity, an **enforced** hardened security context, **measured** resource requests/limits, and **automated static manifest validation in CI** — then **ran the complete pipeline to completion (exit 0) as a secured Job on a local cluster**, diagnosing and fixing the runtime-integration failures (DVC SCM, dataset, MLflow, image staleness) along the way, with the local-vs-production boundary stated explicitly." |
 
 The Sprint 4 claim is about the **correctness of the pipeline**. The Sprint 5 claim
 is about **platform-engineering judgment** applied to that pipeline: modelling the
@@ -98,6 +109,21 @@ Each row was **not** defensible after Sprint 4 and **is** after Sprint 5.
   [kubernetes-security.md](../kubernetes-security.md), and
   [§3](#3-proof--evidence) below.
 
+### 2.8 "I ran the complete pipeline to completion as a secured Kubernetes Job, and diagnosed the runtime-integration failures to get there." (PR 8)
+- Defined a minimal runtime contract — DVC no-SCM (`core.no_scm=true` via a mounted
+  `config.local`), a dataset mounted out-of-band at `/app/data/raw`, an in-pod
+  MLflow file store — and drove the Job to **`Complete`**, pod **exit 0**, all four
+  stages, **without weakening any security control**. Diagnosed and fixed the SCM
+  abort, the missing dataset, the MLflow file-store gate, and a Docker-Desktop
+  **containerd stale-image** trap. Verified the failure path (missing dataset →
+  fail-fast → back-off → `Failed`).
+- **Evidence:** [ADR-013](../decisions/ADR-013-kubernetes-runtime-execution.md),
+  [`k8s/base/dvc-config.yaml`](../../k8s/base/dvc-config.yaml),
+  [`k8s/overlays/local/job-runtime.yaml`](../../k8s/overlays/local/job-runtime.yaml),
+  [k8s/README § Runtime execution record](../../k8s/README.md#runtime-execution-record-pr-8),
+  and [§3](#3-proof--evidence) below. `python k8s/validate.py` → **43/43** (incl. the
+  runtime-contract section).
+
 ---
 
 ## 3. Proof / evidence
@@ -113,14 +139,23 @@ clean-state run on **Docker Desktop Kubernetes v1.34.3, 2026-08-12**, image
 | **Security controls** | pod/container `securityContext`, SA + token automount off ([ADR-010](../decisions/ADR-010-kubernetes-security-hardening.md)) | Live pod enforced `{runAsNonRoot, 10001, seccomp RuntimeDefault}` + `{allowPrivilegeEscalation:false, drop[ALL], readOnlyRootFilesystem:false}`; **empty** volumes (no API token). |
 | **Resource management** | measured `requests`/`limits` ([ADR-011](../decisions/ADR-011-kubernetes-resource-lifecycle.md)) | Live pod: QoS `Burstable`, `resources` exactly `{250m/256Mi, 1/512Mi}`; `--memory=64m` → `OOMKilled` (137). |
 | **Configuration management** | `ConfigMap` + out-of-band `Secret` template ([kubernetes-security.md](../kubernetes-security.md)) | ConfigMap holds only `LOG_LEVEL`/`MLFLOW_TRACKING_URI`; Secret template **not** rendered; pod started with the optional Secret absent. |
-| **Validation** | `k8s-validate` CI job ([ADR-012](../decisions/ADR-012-kubernetes-manifest-validation.md)) | `python k8s/validate.py` → **34/34**; `kubeconform -strict` clean (base + overlay); negative tests caught by both tools. |
-| **Operational procedures** | deployment guide + ops runbook + troubleshooting matrix | Executed deploy → observe (`get`/`describe`) → logs (`/app is not a git repository`) → cleanup (`delete -k`, ns `NotFound`). |
+| **Validation** | `k8s-validate` CI job ([ADR-012](../decisions/ADR-012-kubernetes-manifest-validation.md)) | `python k8s/validate.py` → **43/43** (incl. runtime-contract checks); `kubeconform -strict` clean (base + overlay); negative tests caught by both tools. |
+| **Runtime execution** *(PR 8)* | no-SCM config + dataset mount + file-store MLflow ([ADR-013](../decisions/ADR-013-kubernetes-runtime-execution.md)) | Job `Complete`, pod **exit 0**, first attempt; 4 stages (preprocess 768 → split 614/154 → train 0.7398 → evaluate 0.7078); failure test → `Failed: BackoffLimitExceeded`. |
+| **Operational procedures** | deployment guide + ops runbook + troubleshooting matrix | Executed deploy → observe (`get`/`describe`) → logs (all 4 stages, exit 0) → cleanup (`delete -k`, ns `NotFound`). |
 
-**The one honest negative that runs through all of it:** every attempt terminated at
-the pre-existing SCM blocker (`ERROR: /app is not a git repository`, exit 255). The
-Job **mechanism** and the **enforcement** of every control are proven on a real
-cluster; a **green pipeline run** is **not** claimed — it needs an SCM in the image,
-a mounted dataset, and credentials.
+**Update — the honest negative is now closed (PR 8,
+[ADR-013](../decisions/ADR-013-kubernetes-runtime-execution.md)).** The PR 1–7
+records above terminated at the pre-existing SCM blocker
+(`ERROR: /app is not a git repository`, exit 255). PR 8 resolves it with a minimal
+runtime contract — DVC no-SCM (`core.no_scm=true` via a mounted `config.local`), a
+dataset mounted out-of-band at `/app/data/raw`, and an in-pod MLflow file store — so
+the **complete pipeline now runs to completion in-cluster**: Job `Complete`, pod
+`Succeeded`, **exit 0**, first attempt, all four stages (preprocess 768 → split
+614/154 → train 0.7398 → evaluate 0.7078), on Docker Desktop Kubernetes v1.34.3
+(2026-08-14). A controlled failure test (dataset removed) confirmed fail-fast →
+back-off → terminal `Failed`. What remains **not** claimed is *production* dataset
+storage, *production* MLflow connectivity (the local run uses a file store), and any
+production/cloud deployment — see [§5](#5-what-still-cannot-be-claimed).
 
 ---
 
@@ -139,7 +174,8 @@ artifact **and** the evidence; "⬜" where deferred; "❌" where not attempted/c
 | Measured resource requests/limits + lifecycle/probe decisions | ❌ | ✅ (not production-certified) |
 | Automated **static** manifest validation in CI | ❌ | ✅ |
 | Executed local-cluster run (lifecycle + enforcement verified) | ❌ | ✅ |
-| **Green** in-cluster `dvc repro` | ❌ | ⬜ deferred (SCM + data + creds) |
+| **Green** in-cluster `dvc repro` (all 4 stages, exit 0) | ❌ | ✅ (PR 8, local dataset + file-store MLflow — [ADR-013](../decisions/ADR-013-kubernetes-runtime-execution.md)) |
+| Controlled failure test (missing dataset → back-off → `Failed`) | ❌ | ✅ (PR 8) |
 | Restricted PSS **certification** | ❌ | ❌ not claimed |
 | Production cloud deployment / GitOps / HA / serving / prod observability | ❌ | ❌ not claimed (roadmap v5–v6) |
 
@@ -149,8 +185,11 @@ artifact **and** the evidence; "⬜" where deferred; "❌" where not attempted/c
 
 Documented so none is accidentally implied:
 
-- **❌ A green in-cluster pipeline run.** `dvc repro` aborts at the SCM check; the
-  mechanism is proven, the completed run is not.
+- **✅ A green in-cluster pipeline run (local).** Achieved in PR 8 — but with a
+  **local-validation** dataset (out-of-band ConfigMap) and an **in-pod MLflow file
+  store**. What is still **❌ not** claimed: *production* dataset storage,
+  *production* MLflow connectivity (configuration-validated, not connectivity-tested
+  locally), and read-only-root (still deferred, [ADR-010](../decisions/ADR-010-kubernetes-security-hardening.md)).
 - **❌ Restricted Pod Security Standard compliance.** Controls applied and
   cluster-admitted, but no admission label/policy engine ratifies the profile, and
   read-only root is deferred.
@@ -196,8 +235,12 @@ Documented so none is accidentally implied:
 > limits from **measured** usage, and **gated the manifests in CI** with static
 > schema/Kustomize/security validation plus an opt-in cluster admission dry-run. I
 > executed the whole path on a local cluster and verified the lifecycle and the
-> enforcement end to end. Deliberately, I do **not** claim a green in-cluster run
-> (the image lacks an SCM), restricted-PSS certification, or any production/cloud
+> enforcement end to end — and then **ran the complete pipeline to completion
+> (exit 0)** by defining a minimal runtime contract (DVC no-SCM, a mounted dataset,
+> an in-pod MLflow file store), diagnosing runtime-integration failures (including a
+> Docker-Desktop containerd stale-image trap) to get there. Deliberately, I do
+> **not** claim *production* dataset storage or MLflow connectivity (the local run
+> uses a file store), restricted-PSS certification, or any production/cloud
 > deployment — each is documented as deferred or out of scope. The claim is about
 > **platform-engineering judgment on a local cluster**, evidenced and bounded, not
 > about production Kubernetes operation.

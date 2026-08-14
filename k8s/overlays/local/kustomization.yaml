@@ -23,3 +23,12 @@ resources:
 images:
   - name: ml-pipeline
     newTag: local
+
+# Runtime-execution patch (PR 8). Layers the LOCAL-specific runtime inputs onto
+# the base Job: the dataset volume/mount (out-of-band ConfigMap, mounted at
+# /app/data/raw) and the offline MLflow file-store env override. The base already
+# provides the environment-independent DVC no-SCM config. Rationale and the
+# "local validation, not production storage" scoping are inline in the patch and
+# in ADR-013.
+patches:
+  - path: job-runtime.yaml

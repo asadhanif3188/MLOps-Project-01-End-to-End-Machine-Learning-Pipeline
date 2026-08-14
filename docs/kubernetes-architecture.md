@@ -430,10 +430,14 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
 
 ## 8. What This Does *Not* Claim
 
-- It does not claim a **green** in-cluster pipeline run. The Job *mechanism* and
-  the config/identity wiring are demonstrated on a local cluster, but `dvc repro`
-  does not complete (it aborts at the SCM check); an end-to-end green run needs the
-  remaining "make it runnable" work (SCM in the image + mounted data).
+- A **green** in-cluster pipeline run is now achieved (PR 8,
+  [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)): `dvc repro` runs the
+  full pipeline to **exit 0** as a secured Job, via a minimal runtime contract (DVC
+  no-SCM, a mounted dataset, an in-pod MLflow file store). It is **bounded to a local
+  cluster**: the dataset comes from an out-of-band ConfigMap (a local-validation
+  mechanism, not production storage) and MLflow uses an in-pod file store (DagsHub is
+  configuration-validated, not connectivity-tested). Production dataset/MLflow and
+  read-only-root remain future work.
 - It does not claim **restricted Pod Security Standard compliance**. PR 4 applies
   the individual `securityContext` controls that are compatible (non-root, no
   privilege escalation, all capabilities dropped, seccomp `RuntimeDefault`) and
