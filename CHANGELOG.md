@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Terraform Foundation** (Sprint 6, PR 1) — introduces a professional
+  Infrastructure-as-Code foundation for the project's AWS platform, declaring
+  **no billable AWS resources yet**. Design of record:
+  [ADR-014](docs/decisions/ADR-014-terraform-architecture.md).
+  - **New [`terraform/`](terraform/) root module** with the conventional split:
+    [`versions.tf`](terraform/versions.tf) (Terraform `>= 1.6.0, < 2.0.0`, AWS
+    provider `~> 5.60`), [`providers.tf`](terraform/providers.tf) (region +
+    `default_tags`, no hard-coded credentials),
+    [`variables.tf`](terraform/variables.tf) (validated `aws_region`,
+    `project_name`, `environment`, `owner`, `repository_url`, `additional_tags`),
+    [`main.tf`](terraform/main.tf) (`name_prefix` + `common_tags` locals and
+    account/region context data sources), [`outputs.tf`](terraform/outputs.tf)
+    (region, sensitive account ID, name prefix, common tags), and
+    [`terraform.tfvars.example`](terraform/terraform.tfvars.example) (placeholders
+    only).
+  - **Naming & tagging strategy** — a `"<project>-<environment>"` name prefix and
+    a common tag set (`Project`, `Environment`, `ManagedBy`, `Owner`,
+    `Repository`) applied globally via the provider's `default_tags`, inherited by
+    every resource added in later PRs.
+  - **No premature `modules/`** — a single small root module is the honest shape
+    for a resource-free foundation; modules are extracted only when a real
+    boundary (network, EKS) exists.
+  - **Local-state posture, remote-ready** — the default local backend is used for
+    controlled single-operator validation; `.gitignore` blocks `.terraform/`,
+    `*.tfstate*`, `*.tfvars` (except the committed `*.tfvars.example`), crash
+    logs, plan artifacts, and override files. The remote S3 + locking + KMS +
+    least-privilege upgrade path for team/production use is documented.
+  - **Security posture** — the repository stays safe to publish: no credentials,
+    state, or account IDs are committed; the `aws_account_id` output is marked
+    `sensitive`; authentication is delegated to the standard AWS credential chain.
+  - **Docs** — [`terraform/README.md`](terraform/README.md) (purpose, structure,
+    authentication, init/validate/plan, state handling, security rules, and what
+    later Sprint 6 PRs provision) and
+    [ADR-014](docs/decisions/ADR-014-terraform-architecture.md) added to the
+    [ADR index](docs/decisions/README.md). Scope is strictly foundation: no VPC,
+    IAM, or EKS yet, and the existing CI workflow is unchanged (Terraform CI gates
+    are Sprint 6, PR 6).
 - **Kubernetes Runtime Execution** (Sprint 5, PR 8) — closes the last Sprint 5 proof
   gap: the **complete ML pipeline now runs to completion inside the secured
   Kubernetes Job**. Design of record:
