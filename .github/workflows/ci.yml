@@ -479,10 +479,10 @@ jobs:
       # exposure, missing encryption, over-broad IAM, …). Reads only the source —
       # no AWS access. Fails the job on CRITICAL/HIGH. The few intentional,
       # ADR-ratified exposures for this SHORT-LIVED validation cluster (the open
-      # default API CIDR, no KMS envelope encryption) are suppressed WITH
-      # justification in terraform/.trivyignore (read from the job's working
-      # directory), so any NEW critical/high is a real, blocking regression rather
-      # than expected noise.
+      # default API CIDR, no KMS envelope encryption, public-subnet public IPs)
+      # are suppressed WITH justification in terraform/.trivyignore (read from the
+      # job's working directory), so any NEW critical/high is a real, blocking
+      # regression rather than expected noise.
       - name: Trivy IaC security scan (Terraform misconfiguration)
         run: |
           set -euo pipefail

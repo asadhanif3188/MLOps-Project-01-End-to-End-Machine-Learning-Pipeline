@@ -35,3 +35,15 @@ AVD-AWS-0040
 #   after evidence capture. Adding a CMK is the documented hardening step for a
 #   persistent/production cluster. See ADR-017 and ADR-019.
 AVD-AWS-0039
+
+# AVD-AWS-0164 (HIGH) — "Subnet associates public IP address."
+#   Flags map_public_ip_on_launch = true on the two PUBLIC subnets
+#   (aws_subnet.public). This is intentional and correct: public subnets exist to
+#   host the NAT gateway and future public load balancers and must auto-assign
+#   public IPs by definition. The EKS WORKER NODES — the actual workload — run in
+#   the PRIVATE subnets (aws_subnet.private), which leave this unset (false) and
+#   have NO public IPs; nodes reach the internet outbound only via NAT. This is
+#   the standard EKS public/private VPC split ratified in ADR-015, not exposure of
+#   the workload. Remediating would mean rearchitecting PR 2's network — out of
+#   scope for a CI-validation PR.
+AVD-AWS-0164

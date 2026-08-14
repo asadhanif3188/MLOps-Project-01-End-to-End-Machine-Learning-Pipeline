@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     [docs/ci-cd.md](docs/ci-cd.md)).
   - **Trivy suppressions are a justified triage record** — the few intentional,
     ADR-ratified validation-cluster exposures (open default API CIDR, no KMS
-    envelope encryption) are suppressed **with rationale** in
+    envelope encryption, public-subnet public IPs) are suppressed **with
+    rationale** in
     [`terraform/.trivyignore`](terraform/.trivyignore); any **new** critical/high
     finding blocks the merge.
   - **All existing CI jobs preserved** — `quality`, `docker`, `k8s-validate`, and

@@ -133,9 +133,10 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 
 > **Trivy suppressions are a triage record, not a mute.** The handful of
 > intentional, ADR-ratified exposures for the short-lived validation cluster (the
-> open default API CIDR, no KMS envelope encryption) are suppressed **with written
-> justification** in [`terraform/.trivyignore`](../terraform/.trivyignore); any
-> *new* CRITICAL/HIGH the scanner finds is a real, blocking regression.
+> open default API CIDR, no KMS envelope encryption, public-subnet public IPs) are
+> suppressed **with written justification** in
+> [`terraform/.trivyignore`](../terraform/.trivyignore); any *new* CRITICAL/HIGH
+> the scanner finds is a real, blocking regression.
 
 ### Job 5 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
 

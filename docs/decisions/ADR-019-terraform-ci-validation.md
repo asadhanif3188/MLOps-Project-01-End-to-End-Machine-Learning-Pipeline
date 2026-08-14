@@ -81,9 +81,12 @@ over with credentials. `apply` is never run by CI under any trigger.
 **Trivy suppressions are a justified triage record, not a blanket mute.** This
 config intentionally carries a few exposures that suit a **short-lived,
 single-operator validation cluster** — the EKS public API endpoint defaulting to
-an open CIDR for first-run `kubectl` access, and no customer-managed KMS envelope
-encryption of secrets. Each is ratified in [ADR-017](ADR-017-eks-platform.md) and
-is suppressed **with written justification and an ADR cross-reference** in
+an open CIDR for first-run `kubectl` access, no customer-managed KMS envelope
+encryption of secrets, and the auto-assigned public IPs on the **public** subnets
+(which host NAT / future public LBs; the EKS nodes themselves are in the private
+subnets with no public IPs — [ADR-015](ADR-015-aws-network-architecture.md)). Each
+is ratified in [ADR-017](ADR-017-eks-platform.md)/[ADR-015](ADR-015-aws-network-architecture.md)
+and is suppressed **with written justification and an ADR cross-reference** in
 [`terraform/.trivyignore`](../../terraform/.trivyignore). Any **new** CRITICAL/HIGH
 the scanner surfaces is therefore a real, blocking regression — not expected
 noise. For a persistent/production cluster the correct action is to **remediate**
