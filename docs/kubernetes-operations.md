@@ -296,6 +296,7 @@ Explicitly, so nothing here is over-read:
 ## Related documentation
 
 - [`k8s/README.md`](../k8s/README.md) — manifests + first-run deployment guide
+- [Cloud Operations](cloud-operations.md) — the AWS/EKS lifecycle runbook (this doc covers **local** day-2 ops; that one covers the cloud provision → prove → destroy lifecycle, cost, and teardown)
 - [Kubernetes Architecture](kubernetes-architecture.md) — workload model and boundaries
 - [Kubernetes Security](kubernetes-security.md) — the security posture in depth
 - [Sprint 5 — Proof Impact](proof/sprint-05-proof-impact.md) — evidence-based claims

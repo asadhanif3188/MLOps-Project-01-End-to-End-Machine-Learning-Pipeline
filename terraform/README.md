@@ -8,6 +8,15 @@ provisioned by later Sprint 6 PRs on top of this foundation.
 
 Design of record: [ADR-014 — Terraform Architecture & Foundation](../docs/decisions/ADR-014-terraform-architecture.md).
 
+> **The full stack is now provisioned and proven.** As of Sprint 6 PR 7, this
+> configuration was `apply`-ed in the operator's own account, the MLOps `Job` ran to
+> completion on the resulting EKS cluster (exit 0), and the environment was then
+> **destroyed and verified clean** — see the [runtime evidence](../docs/proof/sprint-06-runtime-evidence.md).
+> For the end-to-end operator runbook, the **AWS cost drivers**, and the **safe
+> teardown** procedure, see [docs/cloud-operations.md](../docs/cloud-operations.md)
+> and [ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md). This
+> README is the Terraform *reference*; that runbook is the *lifecycle*.
+
 > **Separation of concerns.** Terraform owns **cloud infrastructure** (VPC, IAM,
 > EKS, node capacity). Kubernetes workload configuration stays in
 > [`k8s/`](../k8s/) (Kustomize). Application/ML logic stays in [`src/`](../src/).
@@ -277,7 +286,9 @@ single batch `Job` plus EKS system pods (CoreDNS ×2, and the `aws-node`/
 GPUs (sprint non-goal) and no oversizing. `min = max = desired = 2` and **no
 Cluster Autoscaler is installed**, so the group is effectively fixed-size; all
 sizes are variables (`node_instance_types`, `node_desired_size`, …) for easy
-resize.
+resize. (The **PR 7 validation run used a single node** — `node_*_size = 1` via a
+git-ignored `terraform.tfvars` — which comfortably hosted the one batch `Job` plus
+the EKS system pods; the default of 2 leaves scheduling headroom.)
 
 **Endpoint & security.** Both **private and public** API access are enabled: the
 private endpoint keeps in-VPC traffic off the public path, while the public
@@ -310,11 +321,13 @@ credentials with:
 aws eks update-kubeconfig --region <region> --name <eks_cluster_name>
 ```
 
-**Cost.** The EKS **control plane bills at a flat hourly rate** and the **two
-on-demand nodes bill per hour**; together with the NAT gateway these are the
+**Cost.** The EKS **control plane bills at a flat hourly rate** and the
+**on-demand node(s) bill per hour**; together with the NAT gateway these are the
 meaningful line items. The cluster is **short-lived by design** — provision,
-verify, capture evidence, then `terraform destroy` (PR 8). Cheaper knobs:
-`node_capacity_type = "SPOT"`, fewer/smaller nodes, or `node_desired_size = 1`.
+verify, capture evidence, then `terraform destroy`. Cheaper knobs:
+`node_capacity_type = "SPOT"`, fewer/smaller nodes, or `node_desired_size = 1`
+(the PR 7 run used 1). The ranked cost drivers and the destroy-then-verify teardown
+are in [docs/cloud-operations.md](../docs/cloud-operations.md#4-aws-cost-drivers).
 
 ## State handling
 
@@ -363,12 +376,14 @@ verify, capture evidence, then `terraform destroy` (PR 8). Cheaper knobs:
 | **PR 3** | Least-privilege IAM — EKS cluster role, node role, policy attachments, trust relationships. |
 | **PR 4** | Managed EKS cluster + node group, three core addons, non-sensitive connection outputs. |
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
-| **PR 6 (this PR)** | Terraform CI validation gates — `fmt`/`init -backend=false`/`validate`, TFLint, Trivy IaC scan. **No** `plan`/`apply`, no AWS credentials in CI (in [`ci.yml`](../.github/workflows/ci.yml); see [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md)). |
-| **PR 7** | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. |
-| **PR 8** | Cost controls, teardown (`terraform destroy`), and lifecycle documentation. |
+| **PR 6** | Terraform CI validation gates — `fmt`/`init -backend=false`/`validate`, TFLint, Trivy IaC scan. **No** `plan`/`apply`, no AWS credentials in CI (in [`ci.yml`](../.github/workflows/ci.yml); see [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md)). |
+| **PR 7** ✅ | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. **Executed 2026-08-15** ([runtime evidence](../docs/proof/sprint-06-runtime-evidence.md)); 29 resources applied, Job `Complete` (exit 0), then destroyed and verified clean. |
+| **PR 8 (this PR)** | Cost controls, teardown, and lifecycle documentation — the [cloud-operations runbook](../docs/cloud-operations.md), ranked [cost drivers](../docs/cloud-operations.md#4-aws-cost-drivers), the [safe-teardown](../docs/cloud-operations.md#5-safe-teardown) sequence, and [ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md). No new infrastructure. |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
-EKS platform** — the control plane and two on-demand nodes bill hourly, on top
+EKS platform** — the control plane and the on-demand node(s) bill hourly, on top
 of the NAT gateway (PR 3's IAM roles remain free). Provision deliberately and run
-`terraform destroy` promptly after evidence capture — see the cost notes above
-and the teardown procedure in PR 8.
+`terraform destroy` promptly after evidence capture — the full runbook, the ranked
+cost drivers, and the **destroy-then-verify** teardown procedure are in
+[docs/cloud-operations.md](../docs/cloud-operations.md)
+([ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).

@@ -13,7 +13,7 @@ prescribing implementation details. Concrete technical decisions are captured as
 | [v2](#version-2--engineering-improvements) | Engineering Improvements | 🚧 |
 | [v3](#version-3--cicd) | CI/CD | 🚧 |
 | [v4](#version-4--kubernetes) | Kubernetes | 🚧 |
-| [v5](#version-5--production-cloud-platform) | Production Cloud Platform | ⬜ |
+| [v5](#version-5--production-cloud-platform) | Production Cloud Platform | 🚧 |
 | [v6](#version-6--enterprise-mlops) | Enterprise MLOps | ⬜ |
 
 ---
@@ -252,18 +252,45 @@ infrastructure defined as code.
 
 **Objectives:**
 
-- **Infrastructure as Code** with Terraform (versioned, reviewable).
-- **AWS** as the target cloud provider.
-- **Remote state** management for Terraform (e.g., S3 backend with locking).
-- **IAM** roles and least-privilege access for pipeline and storage.
-- **CI/CD** integration to plan/apply infrastructure changes.
-- **Monitoring** and centralized logging for pipeline and infrastructure health.
+- ✅ **Infrastructure as Code** with Terraform (versioned, reviewable) — delivered
+  in **Sprint 6** as a structured Terraform root module (VPC, IAM, EKS) with pinned
+  providers and a committed lock, gated statically in CI
+  ([`terraform/`](../terraform/), [ADR-014](decisions/ADR-014-terraform-architecture.md),
+  [ADR-019](decisions/ADR-019-terraform-ci-validation.md)). Scoped to a **validation**
+  environment, not yet a production module structure.
+- ✅ **AWS** as the target cloud provider — VPC + IAM + managed **EKS** provisioned in
+  Sprint 6 ([ADR-015](decisions/ADR-015-aws-network-architecture.md)…[ADR-017](decisions/ADR-017-eks-platform.md)).
+- ⬜ **Remote state** management for Terraform (e.g., S3 backend with locking) —
+  deliberately deferred; Sprint 6 uses **local state** for a single-operator,
+  short-lived environment ([ADR-014](decisions/ADR-014-terraform-architecture.md)).
+- ✅ **IAM** roles and least-privilege access — two dedicated, single-trust EKS roles
+  with AWS-managed policies only, no `AdministratorAccess`
+  ([ADR-016](decisions/ADR-016-aws-iam-foundation.md)).
+- 🚧 **CI/CD** integration for infrastructure — CI **validates** the IaC statically
+  with **no AWS credentials** and never runs `plan`/`apply`
+  ([ADR-019](decisions/ADR-019-terraform-ci-validation.md)); credentialed
+  plan/apply (e.g. via OIDC) is future work. Provisioning today is a deliberate,
+  operator-driven, own-account step.
+- ⬜ **Monitoring** and centralized logging for pipeline and infrastructure health —
+  not implemented; diagnosis is `kubectl` + structured logs (roadmap v6).
 
 **Expected outcome:** Production-deployable infrastructure, provisioned
 reproducibly from code with clear separation of environments.
 
-> **TODO:** Ratify the cloud provider, Terraform module structure, and serving
-> mechanism as ADRs before implementation.
+> **Status (Sprint 6).** The IaC foundation and a **real, evidenced EKS run** landed:
+> the pipeline was provisioned onto managed EKS, run to completion (exit 0), had its
+> Sprint 5 security controls verified on the live pod, and the environment was
+> **destroyed and verified clean** ([Sprint 6 Proof-Impact](proof/sprint-06-proof-impact.md),
+> [runtime evidence](proof/sprint-06-runtime-evidence.md),
+> [Cloud Operations](cloud-operations.md)). This is a **short-lived, single-operator
+> validation environment** — **not** production: no remote state, no credentialed
+> CI/CD apply, no HA, no multi-region, no disaster recovery, and no production
+> monitoring. Those remain the path from "validated on cloud" to "production cloud
+> platform" and are why v5 is 🚧, not ✅.
+>
+> **TODO:** Ratify remote-state, credentialed CI/CD (OIDC), a production module
+> structure, monitoring, and the serving mechanism as ADRs before a production
+> deployment.
 
 ---
 

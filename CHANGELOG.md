@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloud cost controls, teardown & lifecycle documentation** (Sprint 6, PR 8 —
+  the final Sprint 6 PR) — completes the cloud lifecycle documentation and prepares
+  the repository for the Sprint 6 release gate. **Adds no new infrastructure and
+  makes no production claims.** Design of record:
+  [ADR-020](docs/decisions/ADR-020-cloud-lifecycle-cost-control.md).
+  - **New [`docs/cloud-operations.md`](docs/cloud-operations.md)** — the operator's
+    cloud runbook: prerequisites, AWS authentication, `init` → `plan` → `apply`, EKS
+    verification, `kubectl` configuration, ECR publish, workload execution, evidence
+    capture, and **`terraform destroy` with three-angle cleanup verification**. It
+    documents the **AWS cost drivers** (EKS control-plane and EC2 node per-hour, NAT
+    per-hour + per-GB, minor EBS/CloudWatch/ECR, free IAM/VPC/addons) with
+    **time-alive named as the dominant lever**, and **why the environment is
+    intentionally small** (1–2 nodes, single NAT, two AZs, short-lived, local state).
+  - **Ephemeral `provision → prove → destroy` lifecycle ratified** — the environment
+    is a short-lived, single-operator **validation** environment; teardown is the
+    mandatory final step, and cleanup is *verified* (Terraform state empty + AWS API
+    shows no cluster/NAT + ECR repo absent), never claimed from the destroy line
+    alone.
+  - **Honest limitations documented** — not production, single environment, limited
+    scale, **no GitOps, no HA proof, no production observability, no multi-region, no
+    disaster-recovery proof** — in the runbook and the new proof assessment.
+  - **New [`docs/proof/sprint-06-proof-impact.md`](docs/proof/sprint-06-proof-impact.md)**
+    — an evidence-based before/after of what the project can credibly claim after
+    Sprint 6 (cloud IaC, least-privilege cloud identity, credential-free CI gate, a
+    **green run on real EKS**, live-pod security verification, verified teardown) that
+    it could not after Sprint 5, with a conservative capability table and an explicit
+    "what still cannot be claimed" section.
+  - **Docs refreshed for factual consistency** — [`terraform/README.md`](terraform/README.md)
+    (PR 7 executed / PR 8 lifecycle pointers, node-count note), [`docs/architecture.md`](docs/architecture.md)
+    (Kubernetes now runs green locally **and on EKS**; new Cloud Platform section),
+    the docs/ADR/roadmap indices, and [`SECURITY.md`](SECURITY.md).
+  - **Final validation re-run green** — `terraform fmt -check -recursive` clean,
+    `terraform validate` **Success**, `python k8s/validate.py` **45/45**, both
+    Kustomize overlays render, `pytest` **100 passed / 1 skipped**. Repository
+    security scan clean: no committed state, tfvars, kubeconfig, secrets, or account
+    identifiers (the ECR image stays a `000000000000` placeholder).
+
+- **Real cloud integration test — runtime proof on Amazon EKS** (Sprint 6, PR 7) —
+  provisioned the Terraform-defined platform in the operator's **own** AWS account
+  and ran the existing MLOps `Job` on **real managed EKS** to completion, then
+  destroyed and verified the environment. Redacted evidence:
+  [`docs/proof/sprint-06-runtime-evidence.md`](docs/proof/sprint-06-runtime-evidence.md).
+  - **Infrastructure applied** — `terraform apply` created exactly the plan:
+    **29 resources added, 0 changed, 0 destroyed** (VPC, IAM, EKS, a 1-node group).
+  - **Green run on EKS** — EKS **ACTIVE** (control plane **v1.35.6-eks**, 1 node
+    Ready in a private subnet); image pulled from **Amazon ECR** via the node role
+    (no pod credential); Job **`Complete`** (1/1, **52s**), pod **`Succeeded`, exit
+    0**, all four stages (preprocess 768 → split 614/154 → train **0.7398** →
+    evaluate **0.7078**, matching the Sprint 5 local metrics).
+  - **Sprint 5 security controls verified on the LIVE pod** — all six (non-root,
+    uid/gid `10001`, seccomp `RuntimeDefault`, no privilege escalation, `drop:[ALL]`,
+    measured requests/limits) read directly from the running pod; token automount
+    off; Burstable QoS. Inherited **verbatim** from the committed base — the overlay
+    weakened nothing.
+  - **Honest deviation recorded** — the run used a **transient offline MLflow file
+    store** (DagsHub credentials not supplied), so real tracking connectivity was
+    **not** exercised; the patch was **not committed** and was reverted at teardown.
+  - **Torn down and verified clean** — `terraform destroy` → **"Destroy complete!
+    Resources: 29 destroyed."**, local state **empty**, ECR repository deleted,
+    working tree clean. **No ongoing cost, no leftover diff.**
+  - **No credentials/secrets/account IDs committed** — evidence redacts the account
+    ID and operator IP; no kubeconfig, token, state, or tfvars entered git.
+
 - **Terraform CI validation gates** (Sprint 6, PR 6) — a new
   **`terraform-validate`** job in [`ci.yml`](.github/workflows/ci.yml) that
   statically validates the `terraform/` IaC on every push/PR, **in parallel** with
