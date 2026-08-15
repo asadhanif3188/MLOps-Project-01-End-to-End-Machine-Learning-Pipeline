@@ -1,6 +1,6 @@
 # ADR-016: AWS IAM Foundation for EKS (Cluster & Node Roles)
 
-- **Status:** Accepted (design)
+- **Status:** Accepted (validated) — design ratified, then provisioned, exercised, and torn down in the [Sprint 6 PR 7 runtime test](../proof/sprint-06-runtime-evidence.md) (2026-08-15)
 - **Date:** 2026-08-14
 - **Deciders:** Asad Hanif
 - **Related:** [`terraform/iam.tf`](../../terraform/iam.tf),

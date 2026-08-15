@@ -21,12 +21,18 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-011](ADR-011-kubernetes-resource-lifecycle.md) | Kubernetes Resource & Lifecycle Management (Requests/Limits, Backoff, No Probes) | Accepted | 2026-08-12 |
 | [ADR-012](ADR-012-kubernetes-manifest-validation.md) | Automated Kubernetes Manifest Validation in CI (kustomize + kubeconform + project checks) | Accepted | 2026-08-12 |
 | [ADR-013](ADR-013-kubernetes-runtime-execution.md) | Kubernetes Runtime Execution — the DVC/dataset/MLflow runtime contract | Accepted | 2026-08-14 |
-| [ADR-014](ADR-014-terraform-architecture.md) | Terraform Architecture & Foundation (structure, versions, tagging, local state) | Accepted (design) | 2026-08-14 |
-| [ADR-015](ADR-015-aws-network-architecture.md) | AWS Network Architecture (VPC, Subnets, AZs, NAT) | Accepted (design) | 2026-08-14 |
-| [ADR-016](ADR-016-aws-iam-foundation.md) | AWS IAM Foundation for EKS (Cluster & Node Roles) | Accepted (design) | 2026-08-14 |
-| [ADR-017](ADR-017-eks-platform.md) | Amazon EKS Platform (Cluster, Managed Node Group, Core Addons) | Accepted (design) | 2026-08-14 |
-| [ADR-018](ADR-018-aws-eks-deployment-overlay.md) | AWS EKS Deployment Overlay (Cloud Runtime Integration) | Accepted (design) | 2026-08-14 |
+| [ADR-014](ADR-014-terraform-architecture.md) | Terraform Architecture & Foundation (structure, versions, tagging, local state) | Accepted (validated) | 2026-08-14 |
+| [ADR-015](ADR-015-aws-network-architecture.md) | AWS Network Architecture (VPC, Subnets, AZs, NAT) | Accepted (validated) | 2026-08-14 |
+| [ADR-016](ADR-016-aws-iam-foundation.md) | AWS IAM Foundation for EKS (Cluster & Node Roles) | Accepted (validated) | 2026-08-14 |
+| [ADR-017](ADR-017-eks-platform.md) | Amazon EKS Platform (Cluster, Managed Node Group, Core Addons) | Accepted (validated) | 2026-08-14 |
+| [ADR-018](ADR-018-aws-eks-deployment-overlay.md) | AWS EKS Deployment Overlay (Cloud Runtime Integration) | Accepted (validated) | 2026-08-14 |
 | [ADR-019](ADR-019-terraform-ci-validation.md) | Terraform CI Validation (fmt/init/validate/lint/IaC scan, no AWS) | Accepted | 2026-08-14 |
+| [ADR-020](ADR-020-cloud-lifecycle-cost-control.md) | Cloud Environment Lifecycle & Cost Control (Ephemeral, Provision → Prove → Destroy) | Accepted | 2026-08-15 |
+
+> **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
+> **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and
+> then torn down — they are no longer design-only. See the
+> [runtime evidence](../proof/sprint-06-runtime-evidence.md).
 
 ## Template
 

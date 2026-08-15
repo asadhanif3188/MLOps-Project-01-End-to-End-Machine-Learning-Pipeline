@@ -1,6 +1,6 @@
 # ADR-015: AWS Network Architecture (VPC, Subnets, AZs, NAT)
 
-- **Status:** Accepted (design)
+- **Status:** Accepted (validated) — design ratified, then provisioned, exercised, and torn down in the [Sprint 6 PR 7 runtime test](../proof/sprint-06-runtime-evidence.md) (2026-08-15)
 - **Date:** 2026-08-14
 - **Deciders:** Asad Hanif
 - **Related:** [`terraform/network.tf`](../../terraform/network.tf),

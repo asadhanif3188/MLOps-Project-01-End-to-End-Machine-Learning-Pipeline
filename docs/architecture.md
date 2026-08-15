@@ -50,7 +50,8 @@ classification of the `Outcome` column.
 | Packaging | Multi-stage Docker image (non-root `runtime`) — [Containerization](containerization.md) |
 | Local dev environment | Docker Compose (`dev` service) — [Docker Development](docker-development.md) |
 | Continuous integration | GitHub Actions: lint, test, image build/validate — [CI/CD](ci-cd.md) |
-| Kubernetes orchestration | 🚧 Foundation only — `mlops` namespace + `batch/v1` **Job** (Kustomize, [`k8s/`](../k8s/)); renders locally, not yet cluster-run — [Kubernetes Architecture](kubernetes-architecture.md), [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
+| Kubernetes orchestration | ✅ `mlops` namespace + hardened `batch/v1` **Job** (Kustomize, [`k8s/`](../k8s/)); run green to completion on a **local** cluster (Sprint 5) **and on real Amazon EKS** (Sprint 6) — [Kubernetes Architecture](kubernetes-architecture.md), [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
+| Cloud platform (IaC) | ✅ AWS VPC + least-privilege IAM + managed **EKS** as **Terraform** ([`terraform/`](../terraform/)); provisioned, run, and torn down as a short-lived validation environment — [§8](#8-cloud-platform-terraform--eks), [terraform/README.md](../terraform/README.md) |
 | Serving | ❌ Not implemented — see [roadmap](roadmap.md) |
 
 ---
@@ -208,7 +209,8 @@ disjoint held-out evaluation path.
 | Lint/format/type/test toolchain | Ruff + mypy + pytest + pre-commit | [ADR-004](decisions/ADR-004-python-quality-toolchain.md) |
 | Containerization | Multi-stage Docker (`python:3.12-slim`) | [ADR-005](decisions/ADR-005-containerization-strategy.md) |
 | Continuous integration | GitHub Actions | [CI/CD](ci-cd.md) |
-| Kubernetes workload model (🚧 foundation) | `batch/v1` Job + Kustomize | [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
+| Kubernetes workload model | `batch/v1` Job + Kustomize (base + local/aws overlays) | [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
+| Cloud platform (IaC) | Terraform → AWS VPC/IAM + managed EKS | [ADR-014](decisions/ADR-014-terraform-architecture.md)…[ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md) |
 
 For the reasoning behind these choices, see [Design Principles](design-principles.md).
 Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
@@ -290,18 +292,23 @@ quality gates. Both are **implemented and in the repository today**.
 > [`diagrams/cicd-flow/`](diagrams/cicd-flow/),
 > [`diagrams/deployment-architecture/`](diagrams/deployment-architecture/)
 
-### Kubernetes orchestration (foundation)
+### Kubernetes orchestration
 
-Sprint 5 begins expressing the containerized pipeline as a Kubernetes workload.
-The **foundation** exists today under [`k8s/`](../k8s/): an `mlops` namespace and
-the pipeline modelled as a run-to-completion **`batch/v1` Job** (not a
-Deployment — the workload is finite batch, so it has no service to keep alive),
-structured with Kustomize (`base/` + `overlays/local/`). The manifests render via
-`kustomize build`; a demonstrated local cluster run and the config/secrets,
-security, resource, and CI layers are deferred to later PRs. The rationale is in
-[Kubernetes Architecture](kubernetes-architecture.md) and
-[ADR-009](decisions/ADR-009-kubernetes-workload-model.md), with the batch-workload
-diagram under [`diagrams/kubernetes-architecture/`](diagrams/kubernetes-architecture/).
+Sprint 5 expressed the containerized pipeline as a Kubernetes workload, and it is
+now **runnable and proven**. Under [`k8s/`](../k8s/): an `mlops` namespace and the
+pipeline modelled as a run-to-completion **`batch/v1` Job** (not a Deployment — the
+workload is finite batch, so it has no service to keep alive), structured with
+Kustomize (`base/` + `overlays/local/` + `overlays/aws/`). The base carries the
+enforced security context, externalized config, an out-of-band credential Secret, a
+least-privilege ServiceAccount with no API token, and measured resource
+requests/limits; the manifests are validated statically in CI. The complete pipeline
+**runs green to completion (exit 0)** as a secured Job — on a **local** cluster
+(Sprint 5, [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)) and on
+**real Amazon EKS** (Sprint 6, [runtime evidence](proof/sprint-06-runtime-evidence.md)).
+The rationale is in [Kubernetes Architecture](kubernetes-architecture.md) and
+[ADR-009](decisions/ADR-009-kubernetes-workload-model.md)…[ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md),
+with the batch-workload diagram under
+[`diagrams/kubernetes-architecture/`](diagrams/kubernetes-architecture/).
 
 ---
 
@@ -340,6 +347,58 @@ for the hierarchy, propagation rules, and user-facing error contract.
 
 ---
 
+## 8. Cloud Platform (Terraform + EKS)
+
+Sprint 6 defines the managed cloud platform the pipeline runs on **entirely as
+Infrastructure as Code** under [`terraform/`](../terraform/), and integrates the
+existing workload with it — **no application logic changes**. The Terraform stops at
+infrastructure; the Kubernetes workload stays in Kustomize
+([ADR-014](decisions/ADR-014-terraform-architecture.md)).
+
+```text
+   Terraform (terraform/)                          Kubernetes (k8s/overlays/aws)
+   ─────────────────────                           ─────────────────────────────
+   VPC 10.0.0.0/16                                 Namespace + ServiceAccount
+     ├─ 2 public + 2 private subnets (2 AZs)       ConfigMap(s) + out-of-band Secret
+     ├─ IGW + 1 shared NAT + EIP                   hardened batch/v1 Job (base, verbatim)
+     ├─ 2 IAM roles (cluster + node,                 ├─ image ← Amazon ECR (node-role pull)
+     │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
+     └─ EKS control plane (K8s 1.35)  ◀── node ───▶  └─ security context unchanged
+         └─ 1 managed node group (t3.medium, AL2023, private subnets)
+```
+
+- **What it provisions.** 29 resources (18 network + 6 IAM + 5 EKS) — a VPC with
+  public/private subnets across two AZs, a single shared NAT gateway, two
+  least-privilege IAM roles, and a managed EKS control plane + one small node group +
+  the three core addons. No GPUs, no autoscaler, no ingress/mesh/observability stack,
+  no unrelated services ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
+  [ADR-016](decisions/ADR-016-aws-iam-foundation.md),
+  [ADR-017](decisions/ADR-017-eks-platform.md)).
+- **How the workload attaches.** A thin `k8s/overlays/aws` reuses the base unchanged
+  and layers only the three genuine cloud differences (ECR image, `imagePullPolicy:
+  Always`, dataset mount); every security field is byte-identical to the local
+  overlay ([ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md)).
+- **Validated, not just written.** The IaC is gated in CI **statically and without
+  AWS credentials** (`fmt`/`validate`/TFLint/Trivy — never `plan`/`apply`,
+  [ADR-019](decisions/ADR-019-terraform-ci-validation.md)); the real provisioning is
+  an operator-driven, own-account step.
+- **Proven, then destroyed.** The platform was provisioned in the operator's own
+  account, the Job ran to completion on real EKS (exit 0, 52s, all four stages,
+  security controls verified live), and the environment was **destroyed and verified
+  clean** — a short-lived `provision → prove → destroy` validation environment, not a
+  production deployment ([runtime evidence](proof/sprint-06-runtime-evidence.md),
+  [Cloud Operations](cloud-operations.md),
+  [ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md)).
+
+> **Honestly bounded.** This is a **validation environment**: single node, single
+> NAT, two AZs, one region, local Terraform state. It is **not** production, **not**
+> HA, **not** multi-region, has **no** GitOps, **no** disaster-recovery, and **no**
+> production observability. See [Cloud Operations §7](cloud-operations.md#7-limitations)
+> and the [Sprint 6 Proof-Impact](proof/sprint-06-proof-impact.md) for the full,
+> explicit limits and the credible-claims boundary.
+
+---
+
 ## Related Documentation
 
 - [Project Structure](project-structure.md)
@@ -354,3 +413,6 @@ for the hierarchy, propagation rules, and user-facing error contract.
 - [Containerization Strategy](containerization.md)
 - [Docker Development Workflow](docker-development.md)
 - [CI/CD](ci-cd.md)
+- [Kubernetes Architecture](kubernetes-architecture.md) · [Kubernetes Operations](kubernetes-operations.md)
+- [Cloud Operations (AWS/EKS runbook, cost, teardown)](cloud-operations.md) · [terraform/README.md](../terraform/README.md)
+- [Sprint 6 — Proof Impact](proof/sprint-06-proof-impact.md) · [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md)

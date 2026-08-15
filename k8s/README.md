@@ -122,7 +122,7 @@ Design of record: [ADR-018](../docs/decisions/ADR-018-aws-eks-deployment-overlay
 | **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
 | **`imagePullPolicy`** | unset (side-loaded) | `Always` | Guarantees the node runs exactly the image just pushed to ECR; avoids the stale-image failure mode. |
 | **Dataset** | out-of-band ConfigMap → `/app/data/raw` | same mechanism | Dataset provisioning is per-environment by design; the tiny dataset fits the ConfigMap. **Validation mechanism, not production storage** (S3/PVC/`dvc pull` is the follow-up). |
-| **MLflow backend** | overridden to in-pod file store (offline) | **not overridden** → base DagsHub endpoint + out-of-band Secret | The cloud run exercises the **real** MLflow tracking path. |
+| **MLflow backend** | overridden to in-pod file store (offline) | **not overridden** → base DagsHub endpoint + out-of-band Secret | The overlay **targets** the real MLflow tracking path (the recorded PR 7 run used a transient offline file store — connectivity is config-validated, see the [runtime evidence](../docs/proof/sprint-06-runtime-evidence.md#limitations)). |
 
 Everything else — Namespace, ServiceAccount (token automount off), ConfigMaps, the
 DVC no-SCM config, and the hardened `Job` (`runAsNonRoot` + uid/gid `10001`,
@@ -144,12 +144,19 @@ kustomize edit set image \
 The committed `newName` uses a `000000000000` / `us-east-1` **placeholder** so no
 real account ID is stored in git.
 
-> **Static only in this PR.** PR 5 delivers a **validated, admissible** overlay
-> (`kustomize build`, `kubeconform -strict`, `k8s/validate.py`, and the opt-in
-> server-side dry-run all cover it). The **real** EKS execution — `terraform apply`
-> → `aws eks update-kubeconfig` → `kubectl apply -k k8s/overlays/aws` → a green
-> `Job` — and its evidence are **PR 7** (Real Cloud Integration Test), run on the
-> operator's own AWS account. Nothing here has been deployed to a cloud cluster.
+> **Delivered static (PR 5), executed for real (PR 7).** PR 5 delivered a
+> **validated, admissible** overlay (`kustomize build`, `kubeconform -strict`,
+> `k8s/validate.py`, and the opt-in server-side dry-run all cover it). The **real**
+> EKS execution — `terraform apply` → `aws eks update-kubeconfig` → `kubectl apply
+> -k k8s/overlays/aws` → a green `Job` — was then carried out in **PR 7** on the
+> operator's own AWS account: Job **`Complete`**, pod **exit 0**, 52s, all four
+> stages, with the Sprint 5 security controls verified on the **live** pod, after
+> which the environment was **destroyed and verified clean**. See the
+> [runtime evidence](../docs/proof/sprint-06-runtime-evidence.md), and the
+> [Cloud Operations runbook](../docs/cloud-operations.md) for the full provision →
+> prove → **destroy** lifecycle, cost drivers, and teardown. (The PR 7 run used a
+> transient **offline** MLflow file store — real DagsHub connectivity was not
+> exercised; see the evidence's limitations.)
 
 ## Prerequisites
 

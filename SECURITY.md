@@ -75,6 +75,15 @@ Contributors and users should follow these practices:
   -backend=false`/`validate`, TFLint, Trivy) and never runs `terraform
   plan`/`apply` — real provisioning is a deliberate, operator-driven step against
   one's own account (see [ADR-019](docs/decisions/ADR-019-terraform-ci-validation.md)).
+- **Ephemeral cloud environment & verified teardown.** The AWS/EKS environment is
+  **short-lived** — provisioned to capture evidence, then **destroyed and verified
+  clean** (Terraform state empty + AWS API shows no cluster/NAT + ECR repo absent),
+  never assumed clean from the `destroy` line alone. The API endpoint is restricted
+  to the operator's own IP, not `0.0.0.0/0`, and no AWS account identifier is
+  committed (the ECR image reference stays a `000000000000` placeholder). The full
+  lifecycle, cost drivers, and teardown procedure are in
+  [docs/cloud-operations.md](docs/cloud-operations.md)
+  ([ADR-020](docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).
 
 ---
 
