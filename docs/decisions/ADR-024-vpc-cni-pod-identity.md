@@ -92,6 +92,18 @@ CNI role → `AmazonEKS_CNI_Policy`.**
    the CNI, so ECR read access correctly stays on the node. No other component
    (kube-proxy, CoreDNS, the workload `Job`) depends on `AmazonEKS_CNI_Policy`.
 
+   > **`AmazonEKSWorkerNodePolicy` is load-bearing for Pod Identity, not just for
+   > "joining."** The pod-identity-agent runs as a hostNetwork DaemonSet under the
+   > **node instance profile** and calls `eks-auth:AssumeRoleForPodIdentity` to
+   > mint credentials for associated pods; AWS ships that action **inside
+   > `AmazonEKSWorkerNodePolicy`**. So keeping it on the node role is what lets the
+   > agent deliver the CNI role to `aws-node` in the first place. A future
+   > "harden the node role to a custom join-only policy" change would silently
+   > break Pod Identity credential delivery cluster-wide — do **not** replace
+   > `AmazonEKSWorkerNodePolicy` without preserving `eks-auth:AssumeRoleForPodIdentity`.
+   > (The contract test asserts the node role still carries `AmazonEKSWorkerNodePolicy`
+   > by name, so such a swap fails CI.)
+
 6. **Networking cannot deadlock — ordering is explicit.** `aws-node` and the
    pod-identity-agent are **both hostNetwork** DaemonSets, so neither needs the CNI
    to obtain a pod IP: the agent starts, serves credentials to `aws-node`,
@@ -202,6 +214,21 @@ mechanisms are **not** both added — only Pod Identity.
   addon; agent **not** gated on the node group) is deliberate and documented in
   `eks.tf`; a naive "make the addon depend on the node group for consistency" edit
   would reintroduce a deadlock. The contract tests and comments guard against it.
+- **In-place apply on an already-running cluster needs a manual `aws-node` roll.**
+  The bootstrap ordering above makes a *fresh* `apply` safe (the normal flow for
+  this ephemeral provision-→-prove-→-destroy environment, ADR-020). Applying the
+  change **in place** on a cluster whose `aws-node` is already running under the
+  node profile detaches `AmazonEKS_CNI_Policy` and creates the association, but
+  Terraform — having no `kubernetes`/`helm` provider — does **not** restart the
+  running `aws-node` pods, which keep their old (now-insufficient) node-profile
+  credentials until rolled: `kubectl -n kube-system rollout restart ds/aws-node`.
+  New pods may fail to get IPs in that window. Documented at
+  `terraform/README.md` § VPC CNI identity; prefer a fresh cluster.
+- **Partition availability.** EKS Pod Identity and the `eks-pod-identity-agent`
+  addon are available in the commercial and GovCloud partitions but have **not**
+  historically been available in the China (`aws-cn`) partitions. The ARNs are
+  still partition-resolved (correct where the feature exists); this module targets
+  a commercial-region validation cluster, so this is a caveat, not a blocker.
 - **Live-validation note.** The isolation is asserted offline by the contract
   suite; confirming it on a running cluster (`aws iam list-attached-role-policies`
   on both roles, `aws eks list-pod-identity-associations`, and inspecting the

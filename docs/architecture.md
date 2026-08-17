@@ -361,7 +361,7 @@ infrastructure; the Kubernetes workload stays in Kustomize
    VPC 10.0.0.0/16                                 Namespace + ServiceAccount
      ├─ 2 public + 2 private subnets (2 AZs)       ConfigMap(s) + out-of-band Secret
      ├─ IGW + 1 shared NAT + EIP                   hardened batch/v1 Job (base, verbatim)
-     ├─ 2 IAM roles (cluster + node,                 ├─ image ← Amazon ECR (node-role pull)
+     ├─ 3 IAM roles (cluster + node + CNI,           ├─ image ← Amazon ECR (node-role pull)
      │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
      ├─ ECR repository + lifecycle policy            └─ security context unchanged
      └─ EKS control plane (K8s 1.35)  ◀── node ───▶

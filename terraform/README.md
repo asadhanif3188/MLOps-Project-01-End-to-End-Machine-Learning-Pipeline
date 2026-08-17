@@ -311,11 +311,25 @@ not chosen) is in [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md).
 **Networking is not broken.** `aws-node` and the pod-identity-agent are **both
 hostNetwork** DaemonSets, so neither needs the CNI to start: the agent comes up,
 serves credentials to `aws-node`, `aws-node` wires the CNI, and the node becomes
-Ready. Terraform ordering guarantees this without a dependency cycle — the
-association (a control-plane call) is created before nodes launch, the agent addon
-depends on the association, and the node group depends on the association;
-crucially the agent addon is **not** gated on the node group (that would
+Ready. Terraform ordering guarantees this without a dependency cycle
+(**association → agent addon → node group**): the association (a control-plane
+call) is created before nodes launch; the agent addon depends on the association
+and reaches `ACTIVE` with zero nodes; and the node group depends on **both** the
+association and the agent addon, so nodes launch only once credentials can be
+served. Crucially the agent addon is **not** gated on the node group (that would
 deadlock). See the comments in [`eks.tf`](eks.tf).
+
+**Applying to an already-running cluster.** The ordering above makes a *fresh*
+`apply` safe, which is the normal flow for this ephemeral, provision-→-prove-→
+-destroy environment ([ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).
+If you instead apply this change **in place** on a cluster whose `aws-node` is
+already running under the node instance profile, Terraform detaches
+`AmazonEKS_CNI_Policy` from the node role and creates the association, but — having
+no `kubernetes`/`helm` provider — it does **not** restart the running `aws-node`
+pods, so they keep using their old (now-insufficient) node-profile credentials
+until the DaemonSet is rolled: `kubectl -n kube-system rollout restart ds/aws-node`.
+New pods may fail to get IPs in that window. Prefer a fresh cluster; otherwise
+roll `aws-node` immediately after `apply`.
 
 **Verifying on a live cluster.** After `apply`:
 

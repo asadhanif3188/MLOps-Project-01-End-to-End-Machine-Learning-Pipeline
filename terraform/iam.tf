@@ -108,6 +108,11 @@ locals {
   eks_node_managed_policies = {
     # Lets the kubelet describe the cluster and EC2/Auto Scaling resources needed
     # to join the node to the cluster. A node-level permission — stays on the node.
+    # ALSO LOAD-BEARING FOR POD IDENTITY: AWS ships eks-auth:AssumeRoleForPodIdentity
+    # inside this managed policy, and the pod-identity agent (running under this node
+    # profile) uses it to mint the VPC CNI credentials for aws-node. Do NOT replace
+    # this with a narrower custom "join-only" policy without preserving that action,
+    # or Pod Identity credential delivery breaks cluster-wide (see ADR-024).
     worker_node = "AmazonEKSWorkerNodePolicy"
 
     # READ-ONLY pull access to Amazon ECR so the container runtime can fetch

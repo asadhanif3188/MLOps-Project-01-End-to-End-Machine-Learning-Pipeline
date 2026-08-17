@@ -53,12 +53,17 @@ run "cni_policy_is_not_on_the_node_role" {
 
 # The node role KEEPS the permissions the node itself needs. Removing CNI must not
 # collaterally strip the kubelet/runtime permissions other components depend on.
+# AmazonEKSWorkerNodePolicy is doubly load-bearing: besides letting the kubelet
+# join, it carries eks-auth:AssumeRoleForPodIdentity, which the pod-identity agent
+# needs (under the node profile) to deliver the CNI credentials to aws-node — so
+# swapping it for a narrower "join-only" policy would break Pod Identity. This
+# by-name assertion fails such a swap in CI (see ADR-024).
 run "node_role_keeps_its_own_permissions" {
   command = plan
 
   assert {
     condition     = strcontains(aws_iam_role_policy_attachment.eks_node["worker_node"].policy_arn, "AmazonEKSWorkerNodePolicy")
-    error_message = "The node role must retain AmazonEKSWorkerNodePolicy so the kubelet can join the cluster."
+    error_message = "The node role must retain AmazonEKSWorkerNodePolicy so the kubelet can join the cluster AND the pod-identity agent can call eks-auth:AssumeRoleForPodIdentity to serve the VPC CNI credentials."
   }
 
   assert {
