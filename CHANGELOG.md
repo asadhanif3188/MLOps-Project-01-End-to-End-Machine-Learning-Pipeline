@@ -219,7 +219,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Sensible endpoint/security** — **both** private and public API access
     enabled; the public source range (`cluster_endpoint_public_access_cidrs`)
     defaults open **for first-run validation only** and should be restricted for
-    real use. Access uses **EKS access entries** (`API_AND_CONFIG_MAP`) and
+    real use. _(Superseded within this same release by the secure-by-default EKS
+    API posture — see the **Security** entry above (H-02): the endpoint now
+    defaults to private-only and can never be `0.0.0.0/0`.)_ Access uses **EKS
+    access entries** (`API_AND_CONFIG_MAP`) and
     bootstraps the creator as cluster admin; control-plane `api`/`audit`/
     `authenticator` logs ship to CloudWatch (toggleable).
   - **Non-sensitive EKS outputs** — `eks_cluster_name`, `eks_cluster_endpoint`,
