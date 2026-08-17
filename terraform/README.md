@@ -45,13 +45,15 @@ terraform/
 ├── main.tf                   # locals (name prefix + common tags) + context data sources
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
 ├── iam.tf                     # EKS cluster + node roles, dedicated VPC CNI role, trust, policy attachments (Sprint 6 PR 3; CNI role Sprint 7 PR 4)
-├── eks.tf                     # EKS cluster, node group, core addons, access entries, VPC CNI Pod Identity (Sprint 6 PR 4; Sprint 7 PR 3–4)
+├── eks.tf                     # EKS cluster (+ secrets encryption_config), node group, core addons, access entries, VPC CNI Pod Identity (Sprint 6 PR 4; Sprint 7 PR 3–5)
 ├── ecr.tf                     # ECR repository + lifecycle policy (Sprint 7, PR 1 — closes H-01)
+├── kms.tf                     # customer-managed KMS key + alias for EKS Secret envelope encryption (Sprint 7, PR 5 — closes M-02)
 ├── tests/                     # offline `terraform test` contract suite (mock_provider, no AWS)
-│   ├── ecr.tftest.hcl              # asserts the ECR security + lifecycle contract (H-01)
-│   ├── eks_api_security.tftest.hcl # asserts the secure-by-default EKS API posture (H-02)
-│   ├── eks_access_control.tftest.hcl  # asserts explicit EKS access entries (H-03)
-│   └── eks_cni_identity.tftest.hcl    # asserts VPC CNI identity isolation via Pod Identity (M-01)
+│   ├── ecr.tftest.hcl                    # asserts the ECR security + lifecycle contract (H-01)
+│   ├── eks_api_security.tftest.hcl       # asserts the secure-by-default EKS API posture (H-02)
+│   ├── eks_access_control.tftest.hcl     # asserts explicit EKS access entries (H-03)
+│   ├── eks_cni_identity.tftest.hcl       # asserts VPC CNI identity isolation via Pod Identity (M-01)
+│   └── eks_secrets_encryption.tftest.hcl # asserts EKS Secret KMS envelope encryption (M-02)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -143,9 +145,11 @@ resources with the defaults), the **IAM foundation** (three EKS roles — cluste
 node, and the dedicated VPC CNI role — and their four managed-policy attachments —
 7 resources, incl. Sprint 7 PR 4), the **EKS platform** (one cluster, one managed
 node group, three core addons, the `eks-pod-identity-agent` addon, and the VPC CNI
-Pod Identity association — 7 resources), and the **container registry** (one ECR
-repository + its lifecycle policy — 2 resources, Sprint 7 PR 1): **34 resources**
-in total. Each configured operator identity in `cluster_access_entries` adds
+Pod Identity association — 7 resources), the **container registry** (one ECR
+repository + its lifecycle policy — 2 resources, Sprint 7 PR 1), and the
+**EKS-secrets KMS key** (one customer-managed CMK + its alias — 2 resources,
+Sprint 7 PR 5): **36 resources** in total. Each configured operator identity in
+`cluster_access_entries` adds
 **2 more** (an access entry + its policy association, Sprint 7 PR 3); the default
 empty map adds none. The **EKS control
 plane and worker nodes are now the dominant hourly cost**, alongside the NAT
@@ -588,6 +592,84 @@ Design of record: [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md).
 contract is pinned by the offline `terraform test` suite
 ([`tests/ecr.tftest.hcl`](tests/ecr.tftest.hcl)).
 
+## Secrets encryption (closes M-02)
+
+PR 5 gives the cluster **customer-managed KMS envelope encryption of Kubernetes
+Secrets** ([`kms.tf`](kms.tf) + the `encryption_config` block in [`eks.tf`](eks.tf)).
+By default EKS encrypts etcd at rest with an **AWS-owned** key — Secrets get a
+baseline, but nothing the operator can audit, scope, or revoke. A dedicated CMK
+adds a second, customer-controlled layer: the API server envelope-encrypts each
+Secret with a data key that the CMK wraps.
+
+```text
+kube Secret ──▶ API server envelope-encrypts with a data key
+                        │
+                        ▼
+             AWS KMS wraps the data key with the
+             dedicated CMK  (alias/<project>-<env>-eks-secrets)
+                        ▲
+      key policy grants ONLY: account root (admin) + the
+      EKS cluster role (Encrypt/Decrypt/DescribeKey/ListGrants
+      + a GrantIsForAWSResource-constrained CreateGrant)
+```
+
+**"Key exists" ≠ "Secrets use it."** The finding closes only because the cluster's
+`encryption_config` (`resources = ["secrets"]`, `provider.key_arn` = the CMK) tells
+EKS to actually use the key. A key sitting unused next to the cluster would change
+nothing — so the contract test and the evidence output both check the *cluster*,
+not just the key.
+
+- **Least privilege.** The key policy has three statements: the AWS-canonical
+  account-root administration statement (the one justified `kms:*`, present in every
+  default KMS policy to prevent lock-out), an explicit use-grant to the EKS cluster
+  role (no `kms:*`), and a `CreateGrant` constrained by `kms:GrantIsForAWSResource`.
+  No bare `"*"` principal, no cross-account access. Permissions are granted through
+  the **key policy** (authoritative for same-account KMS), so **no extra IAM policy**
+  is attached to the cluster role — the grant stays scoped to this one key.
+- **Rotation** is always on (`enable_key_rotation = true`) — annual, no-cost.
+- **One knob:** `kms_key_deletion_window_days` (default `7`, the minimum) keeps a
+  torn-down validation cluster from leaving a pending-deletion key lingering. There
+  is **no toggle to disable encryption** — that switch is exactly what M-02 is about.
+- **One-way:** once enabled, secrets encryption can't be disabled and the key can't
+  be swapped without replacing the cluster. Intended here — the ephemeral cluster is
+  created with it on from the first `apply`.
+
+**Live verification** (after `terraform apply`, proving the cluster — not just the
+key — is configured):
+
+```bash
+# 1. The cluster reports the CMK in its encryption config (the M-02 proof):
+aws eks describe-cluster --name "$(terraform output -raw eks_cluster_name)" \
+  --query 'cluster.encryptionConfig' --output json
+#   → [{"resources":["secrets"],"provider":{"keyArn":"arn:aws:kms:...:key/..."}}]
+
+# 2. It matches the key Terraform manages (the two ARNs are equal):
+terraform output -raw eks_secrets_encryption_key_arn   # read off the cluster
+terraform output -raw eks_secrets_kms_key_arn          # the CMK resource
+
+# 3. The key is customer-managed with rotation on:
+aws kms get-key-rotation-status --key-id "$(terraform output -raw eks_secrets_kms_key_id)"
+#   → {"KeyRotationEnabled": true}
+
+# 4. (Optional) create a Secret, then confirm its etcd bytes are KMS-wrapped —
+#    a plaintext read is impossible without the CMK. See ADR-025.
+```
+
+> **Fresh-apply note.** The key policy names the just-created EKS cluster role as a
+> principal, and the cluster's `encryption_config` names the just-created key. The
+> Terraform dependency order (cluster role → key → cluster) is correct, but AWS IAM
+> is eventually consistent, so a brand-new role ARN can occasionally surface a
+> transient `MalformedPolicyDocumentException` (on the key) or `AccessDenied` (on
+> cluster create) on the very first apply. It fails **closed and loud**, and a
+> simple `terraform apply` re-run succeeds because the role/key already exist by
+> then. This is a generic AWS+KMS timing quirk, not a defect in the configuration.
+
+Design of record: [ADR-025](../docs/decisions/ADR-025-eks-secrets-kms-encryption.md).
+The contract is pinned by the offline `terraform test` suite
+([`tests/eks_secrets_encryption.tftest.hcl`](tests/eks_secrets_encryption.tftest.hcl)),
+and the obsolete `AVD-AWS-0039` Trivy suppression has been **removed** (with real
+encryption configured, the scanner passes on its own).
+
 ## State handling
 
 - **Local state for now.** This first implementation uses Terraform's default
@@ -648,7 +730,8 @@ contract is pinned by the offline `terraform test` suite
 | **PR 1** | Terraform-managed **ECR** — the private repository + lifecycle policy that were previously created out-of-band, closing finding **H-01**. Immutable tags, scan-on-push, encrypted, retention-capped, `force_delete` for clean teardown; sensitive URL/ARN outputs; offline `terraform test` contract suite. See [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). |
 | **PR 2** | **Secure-by-default EKS API access**, closing finding **H-02**. The control-plane endpoint is **private by default** (public off, CIDR list empty); public access is a scoped, explicit opt-in that **can never be `0.0.0.0/0`** — enforced by variable validation and cluster preconditions, and pinned by a new offline `terraform test` suite. The two obsolete Trivy suppressions for the old open endpoint are **removed**, not re-justified. See [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md). |
 | **PR 3** | **Explicit EKS access entries**, closing finding **H-03**. Replaces the automatic *"cluster creator becomes cluster-admin"* bootstrap with declared, scoped access entries (`API` auth by default, creator-admin `false` and rejected by a tripwire validation, scoped `AmazonEKSAdminPolicy` default). Identities come from a git-ignored `terraform.tfvars`; pinned by an offline `terraform test` suite. See [ADR-023](../docs/decisions/ADR-023-eks-access-control.md). |
-| **PR 4 (this PR)** | **VPC CNI identity isolation**, closing finding **M-01**. Moves `AmazonEKS_CNI_Policy` off the worker-node instance profile onto a **dedicated VPC CNI role** assumed only by the `aws-node` service account via **EKS Pod Identity** (`eks-pod-identity-agent` addon + association); the node role keeps only its own (join + ECR-pull) permissions. Pinned by a new offline `terraform test` suite. See [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md). |
+| **PR 4** | **VPC CNI identity isolation**, closing finding **M-01**. Moves `AmazonEKS_CNI_Policy` off the worker-node instance profile onto a **dedicated VPC CNI role** assumed only by the `aws-node` service account via **EKS Pod Identity** (`eks-pod-identity-agent` addon + association); the node role keeps only its own (join + ECR-pull) permissions. Pinned by a new offline `terraform test` suite. See [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md). |
+| **PR 5 (this PR)** | **EKS Secret KMS envelope encryption**, closing finding **M-02**. Adds a dedicated, rotated, **customer-managed KMS key** (+ alias) with a least-privilege key policy and wires it into the cluster's `encryption_config` (`resources = ["secrets"]`), so Kubernetes Secrets are envelope-encrypted with a key the operator controls, audits, and can revoke — not just the AWS-owned etcd default. The obsolete `AVD-AWS-0039` Trivy suppression is **removed**, not re-justified; pinned by a new offline `terraform test` suite. See [ADR-025](../docs/decisions/ADR-025-eks-secrets-kms-encryption.md). |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
 EKS platform** — the control plane and the on-demand node(s) bill hourly, on top

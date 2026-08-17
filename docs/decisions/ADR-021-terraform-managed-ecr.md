@@ -127,7 +127,11 @@ from the runbook and from [ADR-020](ADR-020-cloud-lifecycle-cost-control.md).
 3. **Add a customer-managed KMS CMK for the registry now.**
    - *Deferred* — AES256 (the AWS-managed default) already encrypts at rest, and a CMK
      is the same hardening decision as KMS-encrypting EKS secrets (M-02). Bundling it
-     here would widen H-01's scope; it is tracked as a follow-up.
+     here would widen H-01's scope; it is tracked as a follow-up. *(The EKS-secrets
+     side of that decision is now settled by
+     [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — a dedicated CMK closes M-02.
+     ECR keeps the AES256 default: a **separate**, still-open follow-up if a
+     persistent registry ever warrants its own CMK — each key stays single-purpose.)*
 4. **`force_delete = false` (protect against accidental image loss).**
    - *Rejected for this scope* — the environment is ephemeral and destroyed after
      evidence capture ([ADR-020](ADR-020-cloud-lifecycle-cost-control.md)); a repo that

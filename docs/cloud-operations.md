@@ -132,10 +132,12 @@ terraform -chdir=terraform plan -out=tfplan
 ```
 
 `plan` **contacts AWS** (to resolve caller identity and AZ data sources), so valid
-credentials are required. With the defaults it proposes **31 resources** — 18
-network + 6 IAM + 5 EKS + 2 ECR (repository + lifecycle policy, Sprint 7 PR 1).
-Review the plan; the EKS control plane, the node, and the NAT gateway are the
-resources that will start billing on apply.
+credentials are required. With the defaults it proposes **36 resources** — 18
+network + 7 IAM + 7 EKS + 2 ECR + 2 KMS (the ECR repository + lifecycle policy from
+Sprint 7 PR 1, the VPC-CNI role + Pod Identity association + agent addon from PR 4,
+and the customer-managed KMS key + alias for Secret encryption from PR 5). Review
+the plan; the EKS control plane, the node, and the NAT gateway are the resources
+that will start billing on apply.
 
 ### 3.4 `terraform apply`
 
@@ -145,9 +147,11 @@ terraform -chdir=terraform apply tfplan
 
 Creates the environment (~10–15 min, dominated by EKS control-plane provisioning).
 **Billing starts now** — start a mental clock; the sooner you destroy, the cheaper
-the run. Expect `Apply complete! Resources: 31 added, 0 changed, 0 destroyed.` (The
-original PR 7 integration run predated Terraform-managed ECR and applied 29; the two
-ECR resources this sprint adds bring a fresh apply to 31.)
+the run. Expect `Apply complete! Resources: 36 added, 0 changed, 0 destroyed.` (The
+original PR 7 integration run predated the Sprint 7 hardening PRs and applied 29;
+Sprint 7 adds the ECR repository + lifecycle policy (PR 1), the VPC-CNI role + Pod
+Identity association + agent addon (PR 4), and the KMS key + alias (PR 5), bringing
+a fresh apply to 36.)
 
 ### 3.5 Verify EKS
 

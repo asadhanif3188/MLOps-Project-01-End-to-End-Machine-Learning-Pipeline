@@ -364,31 +364,37 @@ infrastructure; the Kubernetes workload stays in Kustomize
      ├─ 3 IAM roles (cluster + node + CNI,           ├─ image ← Amazon ECR (node-role pull)
      │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
      ├─ ECR repository + lifecycle policy            └─ security context unchanged
+     ├─ KMS CMK (+ alias) — Secret envelope encryption
      └─ EKS control plane (K8s 1.35)  ◀── node ───▶
          │   API endpoint: PRIVATE by default (public = scoped opt-in, never 0.0.0.0/0)
+         │   Secrets: KMS-envelope-encrypted (customer-managed CMK)
          └─ 1 managed node group (t3.medium, AL2023, private subnets)
 ```
 
-- **What it provisions.** 34 resources (18 network + 7 IAM + 7 EKS + 2 ECR) — a VPC
-  with public/private subnets across two AZs, a single shared NAT gateway, three
-  least-privilege IAM roles (cluster, node, and a dedicated VPC CNI role), a managed
-  EKS control plane + one small node group + the three core addons + the
-  `eks-pod-identity-agent` addon, and a Terraform-managed **ECR** repository with a
-  lifecycle policy (Sprint 7 PR 1, closing finding H-01). The EKS API endpoint is
+- **What it provisions.** 36 resources (18 network + 7 IAM + 7 EKS + 2 ECR + 2 KMS)
+  — a VPC with public/private subnets across two AZs, a single shared NAT gateway,
+  three least-privilege IAM roles (cluster, node, and a dedicated VPC CNI role), a
+  managed EKS control plane + one small node group + the three core addons + the
+  `eks-pod-identity-agent` addon, a Terraform-managed **ECR** repository with a
+  lifecycle policy (Sprint 7 PR 1, closing finding H-01), and a customer-managed
+  **KMS key** (+ alias) that envelope-encrypts Kubernetes Secrets (Sprint 7 PR 5,
+  closing finding M-02). The EKS API endpoint is
   **secure by default** — private-only, with public access only as a scoped opt-in
   that can never be `0.0.0.0/0` (Sprint 7 PR 2, closing finding H-02); **cluster
   access is via explicit, scoped EKS access entries**, not automatic creator-admin
   (Sprint 7 PR 3, closing finding H-03); and the **VPC CNI runs under its own role
   via EKS Pod Identity**, off the node instance profile (Sprint 7 PR 4, closing
-  finding M-01). No GPUs, no autoscaler,
-  no ingress/mesh/observability stack, no unrelated services
+  finding M-01); and **Kubernetes Secrets are envelope-encrypted with a
+  customer-managed KMS key** (Sprint 7 PR 5, closing finding M-02). No GPUs, no
+  autoscaler, no ingress/mesh/observability stack, no unrelated services
   ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
   [ADR-016](decisions/ADR-016-aws-iam-foundation.md),
   [ADR-017](decisions/ADR-017-eks-platform.md),
   [ADR-021](decisions/ADR-021-terraform-managed-ecr.md),
   [ADR-022](decisions/ADR-022-eks-secure-api-access.md),
   [ADR-023](decisions/ADR-023-eks-access-control.md),
-  [ADR-024](decisions/ADR-024-vpc-cni-pod-identity.md)).
+  [ADR-024](decisions/ADR-024-vpc-cni-pod-identity.md),
+  [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md)).
 - **How the workload attaches.** A thin `k8s/overlays/aws` reuses the base unchanged
   and layers only the three genuine cloud differences (ECR image, `imagePullPolicy:
   Always`, dataset mount); every security field is byte-identical to the local

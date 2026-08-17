@@ -135,13 +135,18 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 > and the boundary below.
 
 > **Trivy suppressions are a triage record, not a mute.** The remaining
-> intentional, ADR-ratified trade-offs for the short-lived validation cluster (no
-> KMS envelope encryption, public-subnet public IPs) are suppressed **with written
-> justification** in [`terraform/.trivyignore`](../terraform/.trivyignore); any
-> *new* CRITICAL/HIGH the scanner finds is a real, blocking regression. The two EKS
-> API-exposure suppressions (open public CIDR, public access enabled) were
-> **removed** in Sprint 7 PR 2: the API is now private by default, so the scanner
-> passes on its own rather than being told to ignore an exposure ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
+> intentional, ADR-ratified trade-off for the short-lived validation cluster
+> (public-subnet public IPs — the standard EKS public/private split) is suppressed
+> **with written justification** in [`terraform/.trivyignore`](../terraform/.trivyignore);
+> any *new* CRITICAL/HIGH the scanner finds is a real, blocking regression. Two sets
+> of suppressions have since been **removed** rather than re-justified, because the
+> configuration was actually fixed: the EKS API-exposure ones (open public CIDR,
+> public access enabled) in Sprint 7 PR 2 — the API is now private by default
+> ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)) — and the EKS
+> secrets-encryption one (`AVD-AWS-0039`) in Sprint 7 PR 5 — Kubernetes Secrets are
+> now envelope-encrypted with a customer-managed KMS key
+> ([ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md)). In each case the
+> scanner now passes on its own rather than being told to ignore a real gap.
 
 ### Job 5 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
 

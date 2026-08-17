@@ -68,6 +68,14 @@ additional_tags = {
 # Control-plane logs shipped to CloudWatch (small cost). Set to [] to disable.
 # cluster_enabled_log_types = ["api", "audit", "authenticator"]
 
+# --- EKS Secret encryption / KMS (PR 5) ---------------------------------------
+# Kubernetes Secrets are envelope-encrypted with a dedicated customer-managed KMS
+# key (finding M-02). Encryption is UNCONDITIONAL — there is no toggle to disable
+# it. The only knob is how long the key waits in PendingDeletion after `destroy`;
+# it defaults to the 7-day minimum (right for a short-lived validation cluster). A
+# persistent key would use a longer window as an accidental-deletion safety net.
+# kms_key_deletion_window_days = 7   # 7-30; AWS KMS limits
+
 # --- EKS access management (PR 3) ---------------------------------------------
 # EXPLICIT access entries replace the removed cluster-creator-admin bootstrap
 # (finding H-03). Access is: AWS identity -> access entry -> scoped EKS access

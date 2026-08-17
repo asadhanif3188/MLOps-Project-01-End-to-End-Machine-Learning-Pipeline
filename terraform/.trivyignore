@@ -8,8 +8,16 @@
 # .github/workflows/ci.yml § terraform-validate and ADR-019).
 #
 # Re-triage this list whenever the network / EKS / IAM configuration changes.
-# For a persistent or production cluster, the correct action is to REMEDIATE the
-# remaining trade-offs (add a KMS CMK) rather than to keep suppressing them.
+# For a persistent or production cluster, the correct action is to REMEDIATE any
+# remaining trade-off rather than to keep suppressing it.
+#
+# RESOLVED (Sprint 7, PR 5 — closes finding M-02): the EKS secrets-encryption
+# suppression that used to live here — AVD-AWS-0039 ("EKS should have secrets
+# encryption enabled") — has been REMOVED, not re-justified. Kubernetes Secrets are
+# now envelope-encrypted with a customer-managed KMS key (terraform/kms.tf +
+# aws_eks_cluster.encryption_config in eks.tf); with real CMK encryption configured,
+# Trivy no longer raises the finding, so the suppression is gone. See ADR-025 and
+# terraform/README.md § Secrets encryption.
 #
 # RESOLVED (Sprint 7, PR 2 — closes finding H-02): the two EKS API-exposure
 # suppressions that used to live here — AVD-AWS-0041 ("open public access CIDRs")
@@ -21,14 +29,6 @@
 # those findings, so the suppressions are gone. Public access is an explicit,
 # CIDR-scoped opt-in that CANNOT be unrestricted. See ADR-022 and
 # terraform/eks.tf § Endpoint/security.
-
-# AVD-AWS-0039 (HIGH) — "EKS should have secrets encryption (KMS envelope) enabled."
-#   No customer-managed KMS envelope encryption of Kubernetes secrets is
-#   configured on this validation cluster: it stores no production secrets (the
-#   MLflow credential is delivered out-of-band at run time), and it is destroyed
-#   after evidence capture. Adding a CMK is the documented hardening step for a
-#   persistent/production cluster. See ADR-017 and ADR-019.
-AVD-AWS-0039
 
 # AVD-AWS-0164 (HIGH) — "Subnet associates public IP address."
 #   Flags map_public_ip_on_launch = true on the two PUBLIC subnets

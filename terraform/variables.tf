@@ -252,6 +252,24 @@ variable "cluster_enabled_log_types" {
   }
 }
 
+# --- EKS Secret encryption / KMS (Sprint 7, PR 5) -----------------------------
+# The customer-managed KMS key that envelope-encrypts Kubernetes Secrets stored in
+# the cluster (closes finding M-02). Encryption itself is unconditional — there is
+# deliberately NO "enable" toggle, because a switch to turn a security control off
+# is exactly what M-02 is about. See ADR-025 and terraform/README.md § Secrets
+# encryption. Only the key's deletion window is tunable.
+
+variable "kms_key_deletion_window_days" {
+  description = "Waiting period (in days) before the EKS-secrets KMS key is permanently deleted after `terraform destroy` schedules its deletion. Defaults to the 7-day minimum because this is a short-lived, single-operator validation cluster (ADR-020): a torn-down environment should not leave a pending-deletion key (and its charge) lingering. A persistent/production key would use a longer window as an accidental-deletion safety net. AWS permits 7-30."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.kms_key_deletion_window_days >= 7 && var.kms_key_deletion_window_days <= 30
+    error_message = "kms_key_deletion_window_days must be between 7 and 30 (the range AWS KMS allows)."
+  }
+}
+
 # --- EKS access management (Sprint 7, PR 3) -----------------------------------
 # Explicit, access-entry-based cluster access, replacing the old
 # "whoever ran apply becomes cluster-admin" bootstrap (closes finding H-03).
