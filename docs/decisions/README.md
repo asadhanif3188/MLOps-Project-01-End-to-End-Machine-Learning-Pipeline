@@ -28,6 +28,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-018](ADR-018-aws-eks-deployment-overlay.md) | AWS EKS Deployment Overlay (Cloud Runtime Integration) | Accepted (validated) | 2026-08-14 |
 | [ADR-019](ADR-019-terraform-ci-validation.md) | Terraform CI Validation (fmt/init/validate/lint/IaC scan, no AWS) | Accepted | 2026-08-14 |
 | [ADR-020](ADR-020-cloud-lifecycle-cost-control.md) | Cloud Environment Lifecycle & Cost Control (Ephemeral, Provision → Prove → Destroy) | Accepted | 2026-08-15 |
+| [ADR-021](ADR-021-terraform-managed-ecr.md) | Terraform-Managed Container Registry (Amazon ECR) — closes H-01 | Accepted (design) | 2026-08-17 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and

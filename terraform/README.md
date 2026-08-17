@@ -46,6 +46,9 @@ terraform/
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
 ├── iam.tf                     # EKS cluster + node IAM roles, trust, policy attachments (Sprint 6, PR 3)
 ├── eks.tf                     # EKS cluster, managed node group, core addons (Sprint 6, PR 4)
+├── ecr.tf                     # ECR repository + lifecycle policy (Sprint 7, PR 1 — closes H-01)
+├── tests/                     # offline `terraform test` contract suite (mock_provider, no AWS)
+│   └── ecr.tftest.hcl        # asserts the ECR security + lifecycle contract
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -98,16 +101,20 @@ gitignored.
 terraform fmt -recursive -check   # formatting is canonical
 terraform init -backend=false     # providers only — no backend, no state, no AWS
 terraform validate                # configuration is internally consistent
+terraform test                    # offline contract suite (mock_provider — no AWS)
 tflint --init && tflint           # language preset + AWS ruleset (.tflint.hcl)
 trivy config .                    # IaC misconfiguration scan (CRITICAL/HIGH gate)
 ```
 
 Every command above performs **no AWS API calls** and needs **no credentials** —
-they check formatting, syntax, types, references, provider schema, lint rules, and
-insecure configuration purely from the source. `validate` is the primary
-correctness gate; `fmt`/`init -backend=false`/`validate`/TFLint/Trivy are the same
-checks CI runs on every push and PR in the **`terraform-validate`** job, so passing
-them locally guarantees that gate is green. Design of record:
+they check formatting, syntax, types, references, provider schema, contract
+assertions, lint rules, and insecure configuration purely from the source.
+`validate` is the primary correctness gate; `terraform test` runs the
+`tests/*.tftest.hcl` suite with a **mocked AWS provider** (`command = plan`, nothing
+provisioned) to pin the ECR security/lifecycle contract; `fmt`/`init
+-backend=false`/`validate`/`test`/TFLint/Trivy are the same checks CI runs on every
+push and PR in the **`terraform-validate`** job, so passing them locally guarantees
+that gate is green. Design of record:
 [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md) and
 [docs/ci-cd.md § Job 4](../docs/ci-cd.md).
 
@@ -125,14 +132,15 @@ terraform plan
 ```
 
 `plan` **does** contact AWS (to resolve the context and Availability-Zone data
-sources), so valid credentials are required. As of **PR 4** a plan proposes the
+sources), so valid credentials are required. A plan proposes the
 **network** (VPC, subnets, internet gateway, NAT gateway, route tables — 18
 resources with the defaults), the **IAM foundation** (two EKS roles and their
-four managed-policy attachments — 6 resources), and the **EKS platform** (one
-cluster, one managed node group, three core addons — 5 resources): **29
-resources** in total. The **EKS control plane and worker nodes are now the
-dominant hourly cost**, alongside the NAT gateway; IAM is free. `validate` alone
-contacts nothing.
+four managed-policy attachments — 6 resources), the **EKS platform** (one
+cluster, one managed node group, three core addons — 5 resources), and the
+**container registry** (one ECR repository + its lifecycle policy — 2 resources,
+Sprint 7 PR 1): **31 resources** in total. The **EKS control plane and worker nodes
+are now the dominant hourly cost**, alongside the NAT gateway; IAM and ECR are
+effectively free at this scale. `validate` alone contacts nothing.
 
 > CI never runs `terraform plan` **or** `apply`: `plan` needs the AWS credentials
 > above (to resolve the data sources), which CI deliberately does not hold, so the
@@ -329,6 +337,47 @@ verify, capture evidence, then `terraform destroy`. Cheaper knobs:
 (the PR 7 run used 1). The ranked cost drivers and the destroy-then-verify teardown
 are in [docs/cloud-operations.md](../docs/cloud-operations.md#4-aws-cost-drivers).
 
+## Container registry (ECR)
+
+`ecr.tf` provisions the private **Amazon ECR** repository that stores the workload
+image the EKS nodes pull at run time (Sprint 7, PR 1 — closes Sprint 6 finding
+**H-01**). Through Sprint 6 this repository was created and destroyed **out-of-band**
+with `aws ecr create-repository` / `aws ecr delete-repository --force`, leaving one
+live AWS resource outside Terraform state. It is now managed like everything else —
+provisioned, tagged, versioned, and torn down by `terraform apply`/`destroy`.
+
+- **Name.** Defaults to `project_name` (`mlops-pipeline`), not the environment-scoped
+  `name_prefix`: the registry is a per-project artifact store and the name must match
+  the image reference committed in [`k8s/overlays/aws`](../k8s/overlays/aws). Override
+  with `ecr_repository_name` if needed.
+- **Immutable tags** (`image_tag_mutability = "IMMUTABLE"`) — a version tag such as
+  `1.3.1` can never be repointed, so a deployed digest is reproducible and the
+  overlay's static image-pinning contract holds. This matches the "explicit,
+  immutable version, never `:latest`" convention the AWS overlay already relies on.
+- **Scan on push** (`scan_on_push = true`) — image vulnerability scanning stays on; it
+  is a security feature, not disabled to simplify.
+- **Private** — no repository policy granting public or cross-account access is
+  authored, so the repository is reachable only by the account's own principals (the
+  node role's `AmazonEC2ContainerRegistryReadOnly` from ADR-016). ECR is **never
+  public**.
+- **Encrypted at rest** with the AWS-managed key (`AES256`, ECR's default). A
+  customer-managed **KMS CMK** is the documented hardening follow-up (tracked with the
+  EKS-secrets KMS work), deliberately out of this PR's H-01 scope.
+- **Lifecycle policy** — retains the most recent `ecr_max_image_count` images
+  (default **10**) and expires older ones, so registry storage cannot grow unbounded
+  across repeated validation pushes.
+- **`force_delete = true`** — `terraform destroy` removes the repository (and any
+  images it still holds) in the same pass, which is what replaces the old manual
+  `aws ecr delete-repository --force` teardown step for this ephemeral environment.
+- **Outputs.** `ecr_repository_url` and `ecr_repository_arn` are marked **`sensitive`**
+  (they embed the account ID, treated as sensitive project-wide); read them with
+  `terraform output -raw ecr_repository_url` when pushing the image or pointing the
+  Kustomize overlay at the registry. `ecr_repository_name` is non-sensitive.
+
+Design of record: [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). The
+contract is pinned by the offline `terraform test` suite
+([`tests/ecr.tftest.hcl`](tests/ecr.tftest.hcl)).
+
 ## State handling
 
 - **Local state for now.** This first implementation uses Terraform's default
@@ -367,7 +416,9 @@ are in [docs/cloud-operations.md](../docs/cloud-operations.md#4-aws-cost-drivers
   needed.
 - Run a secret scan before pushing and inspect the diff for any of the above.
 
-## What later Sprint 6 PRs will provision
+## What each PR provisions
+
+**Sprint 6 — AWS platform foundation**
 
 | PR | Adds |
 |----|------|
@@ -378,7 +429,13 @@ are in [docs/cloud-operations.md](../docs/cloud-operations.md#4-aws-cost-drivers
 | **PR 5** | Kubernetes AWS overlay wiring the existing workload to EKS (in [`k8s/`](../k8s/), not here). |
 | **PR 6** | Terraform CI validation gates — `fmt`/`init -backend=false`/`validate`, TFLint, Trivy IaC scan. **No** `plan`/`apply`, no AWS credentials in CI (in [`ci.yml`](../.github/workflows/ci.yml); see [ADR-019](../docs/decisions/ADR-019-terraform-ci-validation.md)). |
 | **PR 7** ✅ | Real cloud integration test — apply → run the MLOps Job on EKS → capture evidence. **Executed 2026-08-15** ([runtime evidence](../docs/proof/sprint-06-runtime-evidence.md)); 29 resources applied, Job `Complete` (exit 0), then destroyed and verified clean. |
-| **PR 8 (this PR)** | Cost controls, teardown, and lifecycle documentation — the [cloud-operations runbook](../docs/cloud-operations.md), ranked [cost drivers](../docs/cloud-operations.md#4-aws-cost-drivers), the [safe-teardown](../docs/cloud-operations.md#5-safe-teardown) sequence, and [ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md). No new infrastructure. |
+| **PR 8** | Cost controls, teardown, and lifecycle documentation — the [cloud-operations runbook](../docs/cloud-operations.md), ranked [cost drivers](../docs/cloud-operations.md#4-aws-cost-drivers), the [safe-teardown](../docs/cloud-operations.md#5-safe-teardown) sequence, and [ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md). No new infrastructure. |
+
+**Sprint 7 — Cloud-native hardening**
+
+| PR | Adds |
+|----|------|
+| **PR 1 (this PR)** | Terraform-managed **ECR** — the private repository + lifecycle policy that were previously created out-of-band, closing finding **H-01**. Immutable tags, scan-on-push, encrypted, retention-capped, `force_delete` for clean teardown; sensitive URL/ARN outputs; offline `terraform test` contract suite. See [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
 EKS platform** — the control plane and the on-demand node(s) bill hourly, on top

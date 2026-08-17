@@ -5,14 +5,15 @@
 # same AWS provider, so a `plan` means the same thing everywhere.
 #
 #   - required_version pins the Terraform CLI to the 1.x line. The lower bound
-#     guarantees features we rely on (native `default_tags`, input validation);
-#     the `< 2.0.0` upper bound keeps a future breaking major from silently
-#     changing behaviour.
+#     guarantees features we rely on (native `default_tags`, input validation,
+#     and `mock_provider` for the offline `terraform test` contract suite, added
+#     in 1.7); the `< 2.0.0` upper bound keeps a future breaking major from
+#     silently changing behaviour.
 #   - The AWS provider is pinned with a pessimistic `~> 5.x` constraint so we
 #     get patch/minor fixes but never an unreviewed major bump.
 
 terraform {
-  required_version = ">= 1.6.0, < 2.0.0"
+  required_version = ">= 1.7.0, < 2.0.0"
 
   required_providers {
     aws = {

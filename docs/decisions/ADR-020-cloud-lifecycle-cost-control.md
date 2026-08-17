@@ -64,10 +64,16 @@ deliberate cost envelope, and document it as the operator's runbook
 2. **Teardown is mandatory and the primary operation** — `terraform destroy` **plus
    verification that AWS resources are gone**, never the destroy line alone.
    Verification is checked from three angles: Terraform state empty, the AWS API
-   showing no cluster/NAT/EIP, and the ECR repository absent (the ECR repo is created
-   out-of-band, so it is deleted separately). Cleanup must not be *claimed* until
-   verification passes; a *delayed* teardown must be stated as still-billing, not
-   reported as clean.
+   showing no cluster/NAT/EIP, and the ECR repository absent. Cleanup must not be
+   *claimed* until verification passes; a *delayed* teardown must be stated as
+   still-billing, not reported as clean.
+
+   > **Update (Sprint 7, PR 1 — [ADR-021](ADR-021-terraform-managed-ecr.md)):** the
+   > ECR repository is now **Terraform-managed** with `force_delete`, so
+   > `terraform destroy` removes it in the same pass — the separate
+   > `aws ecr delete-repository --force` step is gone. The three-angle verification
+   > (including confirming the repository is absent) still stands; only the deletion
+   > mechanism changed from out-of-band to Terraform-owned.
 
 3. **Small by construction — the minimum that still proves the claim.** Time-alive is
    the dominant cost lever, and every sizing knob is set to the cheapest value that
@@ -130,10 +136,11 @@ a one-off.
      no new infrastructure." Documented as a follow-up for any longer-lived
      environment.
 4. **Trust `terraform destroy`'s success line as proof of cleanup.**
-   - *Rejected* — `destroy` can partially fail, and the out-of-band ECR repo is not
-     in Terraform's state at all. Independent verification (state empty + AWS API +
-     ECR) is required precisely because the cost of a false "clean" is ongoing
-     silent billing.
+   - *Rejected* — `destroy` can partially fail. Independent verification (state empty
+     + AWS API + ECR) is required precisely because the cost of a false "clean" is
+     ongoing silent billing. (At the time of this ADR the ECR repo was also outside
+     Terraform state entirely; Sprint 7 PR 1 brought it under management, but the
+     verification discipline is unchanged.)
 5. **Use a remote state backend (S3 + DynamoDB) from the start.**
    - *Rejected here, ratified in [ADR-014](ADR-014-terraform-architecture.md)* — it
      would add billable AWS resources whose only purpose is a single-operator
@@ -171,6 +178,9 @@ a one-off.
   (v5–v6), where a remote backend, budgets, and monitoring would all be revisited.
 - **The out-of-band ECR repository is a manual teardown step** (outside Terraform
   state); the runbook calls it out explicitly so it is not forgotten.
+  > **Resolved (Sprint 7, PR 1 — [ADR-021](ADR-021-terraform-managed-ecr.md)):** the
+  > ECR repository is now Terraform-managed and removed by `terraform destroy`
+  > (`force_delete`), eliminating this manual step.
 
 ## What This Decision Does *Not* Imply
 

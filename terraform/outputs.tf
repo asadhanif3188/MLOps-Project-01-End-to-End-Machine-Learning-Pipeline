@@ -147,3 +147,27 @@ output "configure_kubectl" {
   description = "Ready-to-run command that writes a kubeconfig entry for this cluster using the caller's AWS credentials (fetches a short-lived token; nothing sensitive is stored in Terraform state by this output)."
   value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}"
 }
+
+# --- Container registry / ECR (Sprint 7, PR 1) --------------------------------
+# The registry URI/ARN embed the AWS account ID, which this project treats as
+# sensitive (see the aws_account_id output). They are therefore marked `sensitive`
+# so the account identifier stays out of console/CI logs; retrieve them explicitly
+# with `terraform output -raw <name>` when pushing the image or pointing the
+# Kustomize overlay at the registry. The repository *name* is non-sensitive.
+
+output "ecr_repository_name" {
+  description = "Name of the Terraform-managed ECR repository holding the workload image."
+  value       = aws_ecr_repository.this.name
+}
+
+output "ecr_repository_url" {
+  description = "Registry URI of the ECR repository (<account>.dkr.ecr.<region>.amazonaws.com/<name>). Tag/push the image here and set it on the k8s AWS overlay. Sensitive: the URI contains the AWS account ID."
+  value       = aws_ecr_repository.this.repository_url
+  sensitive   = true
+}
+
+output "ecr_repository_arn" {
+  description = "ARN of the ECR repository. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_ecr_repository.this.arn
+  sensitive   = true
+}
