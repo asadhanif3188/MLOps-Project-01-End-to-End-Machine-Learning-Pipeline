@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Explicit EKS access entries — closes finding H-03** (Sprint 7, PR 3) — replaces
+  the automatic *"whoever ran `apply` becomes cluster-admin"* bootstrap with an
+  **explicit, scoped access model**: AWS identity → EKS access entry → scoped EKS
+  access policy → Kubernetes permissions. The creating principal no longer receives
+  implicit cluster-admin. Design of record:
+  [ADR-023](docs/decisions/ADR-023-eks-access-control.md).
+  - **Secure defaults** — in [`variables.tf`](terraform/variables.tf),
+    `cluster_bootstrap_creator_admin_permissions` defaults to **`false`** (was
+    `true`) and `cluster_authentication_mode` to **`API`** (access entries only, no
+    `aws-auth` backdoor; `CONFIG_MAP`-only is rejected). A new
+    `cluster_access_entries` map defaults to **`{}`** — no ARNs committed.
+  - **Explicit, scoped grants** — [`eks.tf`](terraform/eks.tf) adds an
+    `aws_eks_access_entry` + `aws_eks_access_policy_association` per configured
+    identity. The per-entry `policy` defaults to **`AmazonEKSAdminPolicy`** (scoped
+    admin, **not** `system:masters`) and can be narrowed to View/Edit and
+    namespace-scoped; `AmazonEKSClusterAdminPolicy` is a documented last resort.
+    Validation restricts policies to the AWS-managed EKS access-policy set and
+    requires valid IAM principal ARNs. Identities come from a **git-ignored**
+    `terraform.tfvars` (placeholders only in
+    [`terraform.tfvars.example`](terraform/terraform.tfvars.example)); no account
+    IDs or personal ARNs are committed.
+  - **Tripwire on the old setting** — `cluster_bootstrap_creator_admin_permissions`
+    validation **rejects `true`**, so the insecure creator-admin bootstrap cannot be
+    reintroduced without failing `plan`/`apply`/`terraform test`.
+  - **Contract tests** — new [`terraform/tests/eks_access_control.tftest.hcl`](terraform/tests/eks_access_control.tftest.hcl)
+    runs offline under `mock_provider "aws"` (`command = plan`, **no AWS, no
+    credentials**) and asserts no creator-admin by default, `API` auth by default,
+    the bootstrap tripwire, rejected `CONFIG_MAP`/invalid-ARN/unknown-policy/
+    empty-namespace-scope inputs, and clean plans for scoped cluster- and
+    namespace-level entries. Wired into the existing `terraform test` CI step.
+  - **Docs** — [ADR-017](docs/decisions/ADR-017-eks-platform.md) access decision
+    superseded by ADR-023; [`terraform/README.md`](terraform/README.md) gains an
+    **EKS access management** section (how access is granted, what is granted, how
+    it is revoked), and [SECURITY.md](SECURITY.md) updated. Terraform/CI needs **no**
+    cluster access entry (no `kubernetes`/`helm` provider) — documented explicitly.
 - **Secure-by-default EKS API access — closes finding H-02** (Sprint 7, PR 2) — the
   EKS control-plane endpoint is now **private by default** and public access can
   **never be unrestricted**, fixing an insecure default where the Kubernetes API

@@ -35,12 +35,20 @@
 # a scoped public_access_cidrs allow-list: an unrestricted 0.0.0.0/0 (any /0) is
 # rejected by the variable's validation, and the preconditions below reject both
 # "public on with an empty CIDR list" (EKS would silently fall back to 0.0.0.0/0)
-# and "both endpoints off" (an unreachable API). Access uses EKS access entries
-# (API_AND_CONFIG_MAP) and bootstraps the creating principal as cluster admin so
-# kubectl works without hand-editing the aws-auth ConfigMap. Reaching a
-# private-only endpoint requires in-VPC access (bastion/VPN/SSM/in-VPC runner);
-# for a workstation validation run, opt into public access scoped to your own IP.
-# See ADR-022 and terraform/README.md § EKS platform.
+# and "both endpoints off" (an unreachable API). Reaching a private-only endpoint
+# requires in-VPC access (bastion/VPN/SSM/in-VPC runner); for a workstation
+# validation run, opt into public access scoped to your own IP. See ADR-022 and
+# terraform/README.md § EKS platform.
+#
+# Access model: EXPLICIT ACCESS ENTRIES (closes finding H-03). authentication_mode
+# defaults to API (access entries only — no aws-auth ConfigMap backdoor) and
+# bootstrap_cluster_creator_admin_permissions is FALSE, so the principal that runs
+# `apply` gets NO implicit cluster-admin. Human/automation access is granted only
+# by the aws_eks_access_entry + aws_eks_access_policy_association resources below,
+# driven by var.cluster_access_entries — declared, scoped, and independent of who
+# created the cluster. The managed node group's access entry is created by EKS
+# automatically and is deliberately NOT declared here. See ADR-023 and
+# terraform/README.md § EKS access management.
 resource "aws_eks_cluster" "this" {
   name     = "${local.name_prefix}-eks"
   version  = var.kubernetes_version
@@ -69,8 +77,8 @@ resource "aws_eks_cluster" "this" {
   }
 
   access_config {
-    authentication_mode                         = "API_AND_CONFIG_MAP"
-    bootstrap_cluster_creator_admin_permissions = true
+    authentication_mode                         = var.cluster_authentication_mode
+    bootstrap_cluster_creator_admin_permissions = var.cluster_bootstrap_creator_admin_permissions
   }
 
   enabled_cluster_log_types = var.cluster_enabled_log_types
@@ -171,3 +179,77 @@ resource "aws_eks_addon" "this" {
   # addon reconciliation deterministic.
   depends_on = [aws_eks_node_group.this]
 }
+
+# --- EKS access entries (Sprint 7, PR 3) --------------------------------------
+# Explicit cluster access, replacing the removed cluster-creator-admin bootstrap
+# (closes finding H-03). Each map entry in var.cluster_access_entries becomes an
+# access entry (registers the IAM principal with the cluster) plus a policy
+# association (grants it a scoped AWS-managed EKS access policy). Nothing here is
+# tied to the creating principal, and no personal ARN is committed — the map is
+# populated from a git-ignored terraform.tfvars.
+#
+# Why Terraform/CI needs NO admin entry of its own: this root module manages only
+# AWS-API resources (there is no kubernetes/helm provider), so Terraform never
+# calls the Kubernetes API. It therefore does not need — and is not granted — a
+# cluster access entry. Access entries exist purely for the humans/automation that
+# run kubectl against the cluster.
+#
+# The managed node group's access entry (type EC2_LINUX for the node role) is
+# created automatically by EKS for managed node groups; declaring it here would
+# collide with that AWS-managed entry, so it is intentionally omitted.
+resource "aws_eks_access_entry" "this" {
+  for_each = var.cluster_access_entries
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
+  type          = "STANDARD"
+
+  tags = {
+    Name = "${local.name_prefix}-access-${each.key}"
+  }
+}
+
+# Associates the scoped AWS-managed EKS access policy with each principal. The
+# policy ARN is an EKS cluster-access-policy ARN (service "eks", not "iam"); the
+# partition is resolved (data.aws_partition, from iam.tf) so it is correct in any
+# AWS partition. access_scope narrows an entry to specific namespaces when
+# requested; cluster scope is the default for an operator that manages the whole
+# validation cluster.
+resource "aws_eks_access_policy_association" "this" {
+  for_each = var.cluster_access_entries
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
+  policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/${each.value.policy}"
+
+  access_scope {
+    type       = each.value.access_scope
+    namespaces = each.value.access_scope == "namespace" ? each.value.namespaces : null
+  }
+
+  # The principal must be registered as an access entry before a policy can be
+  # associated with it.
+  depends_on = [aws_eks_access_entry.this]
+}
+
+# --- Usability & least-privilege notes ----------------------------------------
+# Two related guardrails are handled by SECURE DEFAULTS + DOCS + VALIDATION rather
+# than by resource preconditions/checks, deliberately:
+#
+#   - Not creating an unusable cluster. With creator-admin bootstrap off (H-03), a
+#     cluster with an EMPTY cluster_access_entries has no HUMAN administrator — but
+#     it is NOT broken: the managed node group still gets its EKS-created access
+#     entry and joins, and addons run. An empty map is the safe, secure default;
+#     the operator adds their own principal in a git-ignored terraform.tfvars
+#     before validating (mirroring the empty public-CIDR default of H-02). This is
+#     documented at the variable, in terraform.tfvars.example, and in
+#     terraform/README.md § EKS access management. A precondition/check is NOT used
+#     because "no entries yet" is a legitimate intermediate state and would either
+#     block the private-by-default apply or break the credential-free `terraform
+#     test` gate (check-block failures fail test runs).
+#
+#   - Avoiding cluster-admin for convenience. The DEFAULT policy for an entry is
+#     AmazonEKSAdminPolicy (scoped admin, NOT system:masters); AmazonEKSClusterAdminPolicy
+#     is accepted by validation but called out in the docs as a last resort. The
+#     variable validation restricts policies to the AWS-managed EKS access-policy
+#     set, so an arbitrary broad IAM policy cannot be associated.
