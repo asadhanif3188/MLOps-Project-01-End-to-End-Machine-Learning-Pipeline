@@ -2,8 +2,10 @@
 # (Sprint 7, PR 5).
 #
 # OFFLINE, credential-free `terraform test` runs: `mock_provider "aws"` replaces
-# the real provider so no AWS API is ever called, and every run uses
-# `command = plan`, so nothing is created. The suite pins the ENCRYPTION contract
+# the real provider so no AWS API is ever called. Most runs use `command = plan`
+# (nothing is created); one run uses `command = apply` — still fully mocked and
+# offline — because a couple of assertions depend on computed ARNs that are only
+# known after apply (see that block's comment). The suite pins the ENCRYPTION contract
 # that closes Sprint 6 finding M-02: Kubernetes Secrets are envelope-encrypted with
 # a dedicated customer-managed KMS key, the key is rotated and least-privilege, and
 # — critically — the CLUSTER is actually configured to use it (not merely that a
@@ -81,15 +83,14 @@ run "cluster_encrypts_secrets_with_a_cmk" {
     error_message = "The EKS encryption_config must cover the \"secrets\" resource — that is the Kubernetes object type M-02 requires to be envelope-encrypted."
   }
 
-  # A KMS provider key is wired into the encryption_config (the block is present).
-  # The exact key ARN is a computed value not known until apply, so it cannot be
-  # compared here under `command = plan`; the reference itself — encryption_config's
-  # provider.key_arn = aws_kms_key.eks_secrets.arn — is what `terraform validate`
-  # and the graph confirm, and the eks_secrets_encryption_key_arn output surfaces it
-  # for live post-apply verification (see terraform/README.md § Secrets encryption).
+  # A KMS provider key is wired into the encryption_config. The exact key ARN is a
+  # computed value not known under `command = plan`, so the STRONG check — that the
+  # cluster encrypts with *this* dedicated CMK (not some stray key) — lives in the
+  # `command = apply` block below, where both ARNs resolve. Here we only assert a
+  # provider key is present.
   assert {
     condition     = length(aws_eks_cluster.this.encryption_config[0].provider) == 1
-    error_message = "The EKS encryption_config must specify a KMS provider key (the dedicated EKS-secrets CMK), proving the key is associated with the cluster, not just created alongside it."
+    error_message = "The EKS encryption_config must specify a KMS provider key (the dedicated EKS-secrets CMK)."
   }
 }
 
@@ -134,6 +135,15 @@ run "cmk_has_the_expected_alias" {
 # every statement can be checked.
 run "cmk_key_policy_is_least_privilege" {
   command = apply
+
+  # STRONG linkage (only evaluable post-apply): the ARN the cluster encrypts with is
+  # exactly OUR dedicated CMK — not a stray key or the AWS-managed aws/eks default.
+  # This is the assertion that makes "the cluster uses the key" real rather than
+  # "some provider key is wired"; both sides resolve to the mocked KMS ARN here.
+  assert {
+    condition     = aws_eks_cluster.this.encryption_config[0].provider[0].key_arn == aws_kms_key.eks_secrets.arn
+    error_message = "The cluster's encryption_config must use the dedicated EKS-secrets CMK (aws_kms_key.eks_secrets) — proving Secrets are encrypted with the key this module manages, not merely that some key is configured."
+  }
 
   assert {
     condition     = strcontains(aws_kms_key.eks_secrets.policy, "kms:Decrypt")

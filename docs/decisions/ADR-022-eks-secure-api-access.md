@@ -145,15 +145,17 @@ configuration itself.
   default-public behaviour must now opt in explicitly. This is intended: the
   insecure convenience is removed deliberately.
 - **KMS envelope encryption of secrets still deferred** (AVD-AWS-0039) — unrelated
-  to H-02 and tracked separately (ADR-017 follow-up).
+  to H-02 and tracked separately (ADR-017 follow-up). *(Since closed by
+  [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — finding M-02.)*
 
 ## What This Decision Does *Not* Imply
 
 - It does **not** re-architect the network, IAM, or cluster shape — ADR-015/-016
   and the rest of ADR-017 stand; only the endpoint posture changes.
 - It does **not** claim a production, HA, or hardened-to-completion platform — the
-  cluster is still the short-lived validation environment of ADR-020, and KMS
-  envelope encryption remains a documented follow-up.
+  cluster is still the short-lived validation environment of ADR-020. *(KMS
+  envelope encryption, a documented follow-up when this ADR was written, has since
+  been delivered by [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — M-02.)*
 - It does **not** introduce GitOps, Terraform remote state, or any Kubernetes
   workload change.
 - It does **not** remove the ability to use a public endpoint — it makes that use

@@ -655,6 +655,15 @@ aws kms get-key-rotation-status --key-id "$(terraform output -raw eks_secrets_km
 #    a plaintext read is impossible without the CMK. See ADR-025.
 ```
 
+> **Fresh-apply note.** The key policy names the just-created EKS cluster role as a
+> principal, and the cluster's `encryption_config` names the just-created key. The
+> Terraform dependency order (cluster role → key → cluster) is correct, but AWS IAM
+> is eventually consistent, so a brand-new role ARN can occasionally surface a
+> transient `MalformedPolicyDocumentException` (on the key) or `AccessDenied` (on
+> cluster create) on the very first apply. It fails **closed and loud**, and a
+> simple `terraform apply` re-run succeeds because the role/key already exist by
+> then. This is a generic AWS+KMS timing quirk, not a defect in the configuration.
+
 Design of record: [ADR-025](../docs/decisions/ADR-025-eks-secrets-kms-encryption.md).
 The contract is pinned by the offline `terraform test` suite
 ([`tests/eks_secrets_encryption.tftest.hcl`](tests/eks_secrets_encryption.tftest.hcl)),
