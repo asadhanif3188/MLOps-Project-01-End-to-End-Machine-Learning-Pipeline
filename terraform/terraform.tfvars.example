@@ -67,3 +67,37 @@ additional_tags = {
 
 # Control-plane logs shipped to CloudWatch (small cost). Set to [] to disable.
 # cluster_enabled_log_types = ["api", "audit", "authenticator"]
+
+# --- EKS access management (PR 3) ---------------------------------------------
+# EXPLICIT access entries replace the removed cluster-creator-admin bootstrap
+# (finding H-03). Access is: AWS identity -> access entry -> scoped EKS access
+# policy. SECURE DEFAULTS apply out of the box:
+#   cluster_authentication_mode                 = "API"    (access entries only)
+#   cluster_bootstrap_creator_admin_permissions = false    (no implicit admin)
+# Both are enforced — setting the bootstrap flag to true is REJECTED by validation.
+#
+# You MUST grant access explicitly, or NO ONE can administer the cluster with
+# kubectl (a fresh apply warns about this). Add your operator identity below.
+#
+# SECURITY: never commit a real principal ARN or AWS account ID. Put the block in
+# your git-ignored terraform.tfvars and replace the <placeholders> with your own
+# IAM ROLE (preferred) or user ARN. Use the NARROWEST policy that works:
+#   AmazonEKSViewPolicy  (read-only) | AmazonEKSEditPolicy (edit) |
+#   AmazonEKSAdminPolicy (scoped admin, the default; NOT full cluster-admin) |
+#   AmazonEKSClusterAdminPolicy (full cluster-admin — avoid unless truly needed).
+# Optionally scope to namespaces with access_scope = "namespace" + namespaces=[...].
+#
+# cluster_access_entries = {
+#   operator = {
+#     principal_arn = "arn:aws:iam::<your-account-id>:role/<your-operator-role>"
+#     policy        = "AmazonEKSAdminPolicy"   # scoped admin; narrow further if you can
+#     access_scope  = "cluster"                 # or "namespace" (then set namespaces)
+#     # namespaces  = ["mlops"]                 # required only for namespace scope
+#   }
+#   # ci-observer = {
+#   #   principal_arn = "arn:aws:iam::<your-account-id>:role/<your-ci-readonly-role>"
+#   #   policy        = "AmazonEKSViewPolicy"
+#   #   access_scope  = "namespace"
+#   #   namespaces    = ["mlops"]
+#   # }
+# }

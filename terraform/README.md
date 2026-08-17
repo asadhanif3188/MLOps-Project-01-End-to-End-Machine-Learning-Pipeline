@@ -141,9 +141,12 @@ resources with the defaults), the **IAM foundation** (two EKS roles and their
 four managed-policy attachments — 6 resources), the **EKS platform** (one
 cluster, one managed node group, three core addons — 5 resources), and the
 **container registry** (one ECR repository + its lifecycle policy — 2 resources,
-Sprint 7 PR 1): **31 resources** in total. The **EKS control plane and worker nodes
-are now the dominant hourly cost**, alongside the NAT gateway; IAM and ECR are
-effectively free at this scale. `validate` alone contacts nothing.
+Sprint 7 PR 1): **31 resources** in total. Each configured operator identity in
+`cluster_access_entries` adds **2 more** (an access entry + its policy
+association, Sprint 7 PR 3); the default empty map adds none. The **EKS control
+plane and worker nodes are now the dominant hourly cost**, alongside the NAT
+gateway; IAM, ECR, and access entries are effectively free at this scale.
+`validate` alone contacts nothing.
 
 > CI never runs `terraform plan` **or** `apply`: `plan` needs the AWS credentials
 > above (to resolve the data sources), which CI deliberately does not hold, so the
@@ -324,12 +327,13 @@ These rules are pinned by the offline
 [`tests/eks_api_security.tftest.hcl`](tests/eks_api_security.tftest.hcl) contract
 suite. Design of record: [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md).
 
-Cluster access uses **EKS access entries** (`API_AND_CONFIG_MAP`) and bootstraps
-the creating principal as cluster admin, so `kubectl` works without hand-editing
-`aws-auth`. Control-plane logging ships the **security-relevant** types (`api`,
-`audit`, `authenticator`) to CloudWatch; set `cluster_enabled_log_types = []` to
-remove that small cost. Nodes have **no public IP and no SSH remote-access**
-configured.
+Cluster access uses **explicit EKS access entries** — see
+[§ EKS access management](#eks-access-management) below (closes finding H-03). The
+creating principal gets **no** implicit cluster-admin; access is declared, scoped,
+and independent of who ran `apply`. Control-plane logging ships the
+**security-relevant** types (`api`, `audit`, `authenticator`) to CloudWatch; set
+`cluster_enabled_log_types = []` to remove that small cost. Nodes have **no public
+IP and no SSH remote-access** configured.
 
 **Intentionally not provisioned.** No GPU nodes, no Cluster Autoscaler /
 autoscaling, no service mesh, no ingress controller, no observability stack
@@ -357,6 +361,101 @@ verify, capture evidence, then `terraform destroy`. Cheaper knobs:
 `node_capacity_type = "SPOT"`, fewer/smaller nodes, or `node_desired_size = 1`
 (the PR 7 run used 1). The ranked cost drivers and the destroy-then-verify teardown
 are in [docs/cloud-operations.md](../docs/cloud-operations.md#4-aws-cost-drivers).
+
+## EKS access management
+
+PR 3 replaces the old *"whoever ran `apply` becomes cluster-admin"* bootstrap with
+**explicit EKS access entries** (closes Sprint 6 finding **H-03**). Access is now a
+declared chain — the creating principal receives nothing implicitly:
+
+```text
+AWS IAM identity (role/user)
+        │  cluster_access_entries[<key>].principal_arn
+        ▼
+EKS access entry            aws_eks_access_entry
+        │
+        ▼
+scoped EKS access policy    aws_eks_access_policy_association
+        │  policy (View / Edit / Admin / …) + access_scope (cluster | namespace)
+        ▼
+Kubernetes RBAC permissions
+```
+
+Design of record: [ADR-023](../docs/decisions/ADR-023-eks-access-control.md).
+
+**Secure defaults (enforced, not just documented).**
+
+- `cluster_authentication_mode` defaults to **`API`** — access entries are the
+  *only* path; there is no `aws-auth` ConfigMap backdoor. `API_AND_CONFIG_MAP` is
+  allowed for a migration; `CONFIG_MAP` (aws-auth only) is **rejected** by
+  validation because it bypasses access entries.
+- `cluster_bootstrap_creator_admin_permissions` defaults to **`false`** and is a
+  **tripwire**: its validation **rejects `true`**, so the old insecure
+  creator-admin bootstrap cannot be reintroduced — a `plan`/`apply`/`terraform
+  test` fails if anyone sets it.
+- `cluster_access_entries` defaults to **`{}`** — no ARNs are committed.
+
+**How access is granted.** Add an entry to `cluster_access_entries` in your
+**git-ignored `terraform.tfvars`** (never in the repo — see
+[`terraform.tfvars.example`](terraform.tfvars.example)):
+
+```hcl
+cluster_access_entries = {
+  operator = {
+    principal_arn = "arn:aws:iam::<account-id>:role/<operator-role>"
+    policy        = "AmazonEKSAdminPolicy"   # scoped admin (NOT cluster-admin)
+    access_scope  = "cluster"                # or "namespace" + namespaces = [...]
+  }
+}
+```
+
+`apply` then creates an `aws_eks_access_entry` (registers the principal) and an
+`aws_eks_access_policy_association` (grants the scoped policy). Prefer an **IAM
+role** as the principal over a user.
+
+**What permissions are granted (choose the narrowest that works).**
+
+| `policy` | Grants | Use for |
+|---|---|---|
+| `AmazonEKSViewPolicy` | read-only | auditors, CI observers |
+| `AmazonEKSEditPolicy` | create/update most namespaced resources | deploy-only automation |
+| `AmazonEKSAdminPolicy` **(default)** | scoped admin across namespaces — **not** `system:masters` | the operator who provisions & runs the validation workload |
+| `AmazonEKSAdminViewPolicy` | view incl. sensitive resources | deeper read-only |
+| `AmazonEKSClusterAdminPolicy` | full cluster-admin (`system:masters`) | **avoid** — last resort only |
+
+`access_scope = "namespace"` (with a non-empty `namespaces` list) narrows an entry
+to specific namespaces; `"cluster"` is the default because a single operator that
+stands up and tears down the whole validation cluster needs to create namespaces
+and manage cluster-scoped resources. **Do not reach for
+`AmazonEKSClusterAdminPolicy` for convenience** — the default `AmazonEKSAdminPolicy`
+covers operating the batch `Job`, and the policy set is restricted by validation to
+the AWS-managed EKS access policies (an arbitrary broad IAM policy cannot be
+associated).
+
+**How access is revoked.** Remove the entry from `cluster_access_entries` and
+`apply` — Terraform destroys both the access entry and its policy association, and
+the principal immediately loses cluster access. To change a grant, edit the entry's
+`policy`/`access_scope` and `apply`. (Out-of-band, `aws eks
+disassociate-access-policy` / `delete-access-entry` do the same, but the
+Terraform-managed path keeps state and config in sync.)
+
+**Does Terraform / CI need an admin entry?** **No.** This root module manages only
+AWS-API resources — there is **no `kubernetes`/`helm` provider**, so Terraform never
+calls the Kubernetes API and needs no cluster access entry. CI runs `fmt`/`validate`/
+`test` offline and never touches the cluster. Access entries exist purely for the
+humans/automation that run `kubectl`.
+
+**Not creating an unusable cluster.** An empty `cluster_access_entries` is **safe,
+not broken**: EKS still auto-creates the managed node group's own access entry, so
+nodes join and addons run; only *human* `kubectl` access needs an explicit entry.
+Add your operator principal before validating. This mirrors the empty public-CIDR
+default of [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md).
+
+These rules are pinned by the offline
+[`tests/eks_access_control.tftest.hcl`](tests/eks_access_control.tftest.hcl)
+contract suite: no creator-admin by default, `API` auth by default, the bootstrap
+tripwire, rejected `CONFIG_MAP`/invalid-ARN/unknown-policy/empty-namespace-scope
+inputs, and clean plans for scoped cluster- and namespace-level entries.
 
 ## Container registry (ECR)
 

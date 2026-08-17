@@ -69,7 +69,16 @@ Contributors and users should follow these practices:
   chain. AWS IAM roles are least-privilege and dedicated to purpose (see
   [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md)): permissions come from
   the AWS-managed policies EKS requires, with no `AdministratorAccess` and no
-  project-authored wildcard. State files and kubeconfigs are git-ignored and
+  project-authored wildcard. **Cluster access uses explicit EKS access entries**,
+  not automatic cluster-creator admin (finding **H-03**): the principal that runs
+  `apply` receives **no** implicit cluster-admin, `authentication_mode` defaults to
+  `API` (access entries only), and each identity is granted a **scoped** AWS-managed
+  EKS access policy (default `AmazonEKSAdminPolicy`, never cluster-admin for
+  convenience) via a `cluster_access_entries` map populated from a **git-ignored**
+  `terraform.tfvars` — no personal ARNs or account IDs are committed. Re-enabling the
+  old creator-admin bootstrap is **rejected** by validation and pinned by an offline
+  `terraform test` suite ([ADR-023](docs/decisions/ADR-023-eks-access-control.md)).
+  State files and kubeconfigs are git-ignored and
   never committed. **CI holds no AWS credentials or cloud identity**: the
   `terraform-validate` job validates the IaC *statically* (`fmt`/`init
   -backend=false`/`validate`, an offline `terraform test` contract suite, TFLint,

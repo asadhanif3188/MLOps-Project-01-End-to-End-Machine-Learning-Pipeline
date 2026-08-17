@@ -78,6 +78,14 @@ resource definitions.
   so the creating principal gets cluster-admin without hand-editing `aws-auth`.
   Control-plane logging ships the **security-relevant** types (`api`, `audit`,
   `authenticator`) to CloudWatch, toggleable to `[]`.
+  > **Superseded by [ADR-023](ADR-023-eks-access-control.md) (2026-08-17, closes
+  > H-03).** The automatic creator-admin bootstrap was the H-03 finding. Access is
+  > now **explicit**: `bootstrap_cluster_creator_admin_permissions` defaults **false**
+  > (and validation rejects `true`), `authentication_mode` defaults to **`API`**
+  > (access entries only), and identities are granted scoped EKS access policies via
+  > `cluster_access_entries` (default `AmazonEKSAdminPolicy`, never automatic
+  > cluster-admin), enforced by validation and `tests/eks_access_control.tftest.hcl`.
+  > The rest of this ADR stands.
 
 **Managed node group.**
 

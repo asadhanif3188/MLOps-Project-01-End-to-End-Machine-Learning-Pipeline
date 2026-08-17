@@ -251,3 +251,98 @@ variable "cluster_enabled_log_types" {
     error_message = "cluster_enabled_log_types entries must be from: api, audit, authenticator, controllerManager, scheduler."
   }
 }
+
+# --- EKS access management (Sprint 7, PR 3) -----------------------------------
+# Explicit, access-entry-based cluster access, replacing the old
+# "whoever ran apply becomes cluster-admin" bootstrap (closes finding H-03).
+# Access is now: AWS identity -> EKS access entry -> scoped EKS access policy ->
+# Kubernetes permissions, all declared here and never tied to the creating
+# principal. Personal ARNs are NEVER committed: they come from a git-ignored
+# terraform.tfvars. See ADR-023 and terraform/README.md § EKS access management.
+
+variable "cluster_authentication_mode" {
+  description = "EKS cluster authentication mode. SECURE DEFAULT: \"API\" — access is granted ONLY through EKS access entries (no aws-auth ConfigMap path), which is the explicit model this project standardises on. \"API_AND_CONFIG_MAP\" is allowed for migrating a cluster that still needs the legacy ConfigMap. \"CONFIG_MAP\" (aws-auth only, access entries ignored) is rejected: it bypasses the access-entry model H-03 mandates."
+  type        = string
+  default     = "API"
+
+  validation {
+    condition     = contains(["API", "API_AND_CONFIG_MAP"], var.cluster_authentication_mode)
+    error_message = "cluster_authentication_mode must be \"API\" (recommended; access entries only) or \"API_AND_CONFIG_MAP\". \"CONFIG_MAP\" (aws-auth only) is not permitted because it bypasses EKS access entries."
+  }
+}
+
+variable "cluster_bootstrap_creator_admin_permissions" {
+  description = "Whether EKS automatically grants the IAM principal that CREATED the cluster implicit cluster-admin. SECURE DEFAULT: false (closes finding H-03) — access must instead be declared explicitly via cluster_access_entries. This is a TRIPWIRE variable: the validation below REJECTS true, so the old insecure bootstrap setting cannot be reintroduced (even deliberately) without failing plan/CI. Grant admins explicitly and scoped rather than implicitly to whoever happened to run apply."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = var.cluster_bootstrap_creator_admin_permissions == false
+    error_message = "SECURITY (H-03): cluster_bootstrap_creator_admin_permissions must be false. Automatic cluster-creator cluster-admin is the insecure bootstrap this project removed — grant access explicitly via cluster_access_entries with a scoped EKS access policy instead."
+  }
+}
+
+variable "cluster_access_entries" {
+  description = <<-EOT
+    Explicit EKS access entries: the ONLY way cluster access is granted (H-03). A
+    map keyed by a short, stable operator-chosen label (used only for resource
+    addressing and the Name tag), each value declaring one IAM principal and the
+    scoped EKS managed access policy it receives.
+
+    NEVER commit personal ARNs: leave this empty in the repo and set it in a
+    git-ignored terraform.tfvars (see terraform.tfvars.example). Fields per entry:
+      - principal_arn : ARN of an IAM ROLE (preferred) or user to grant access to.
+      - policy        : short name of an AWS-managed EKS access policy. Narrowest
+                        practical first — AmazonEKSViewPolicy (read-only),
+                        AmazonEKSEditPolicy, AmazonEKSAdminPolicy (default; scoped
+                        admin, NOT system:masters). AmazonEKSClusterAdminPolicy
+                        (full cluster-admin) is allowed but discouraged — do not
+                        use it merely for convenience.
+      - access_scope  : "cluster" (default) or "namespace".
+      - namespaces    : required non-empty list when access_scope = "namespace";
+                        ignored for "cluster" scope.
+
+    The managed node group's own access entry is created automatically by EKS and
+    must NOT be listed here.
+  EOT
+
+  type = map(object({
+    principal_arn = string
+    policy        = optional(string, "AmazonEKSAdminPolicy")
+    access_scope  = optional(string, "cluster")
+    namespaces    = optional(list(string), [])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for k, e in var.cluster_access_entries :
+      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:(role|user)/.+$", e.principal_arn))
+    ])
+    error_message = "Every cluster_access_entries principal_arn must be an IAM role or user ARN (e.g. \"arn:aws:iam::<account-id>:role/<name>\"). Assumed-role session ARNs and non-IAM ARNs are not valid access-entry principals."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, e in var.cluster_access_entries :
+      contains(["AmazonEKSViewPolicy", "AmazonEKSEditPolicy", "AmazonEKSAdminPolicy", "AmazonEKSAdminViewPolicy", "AmazonEKSClusterAdminPolicy"], e.policy)
+    ])
+    error_message = "Every cluster_access_entries policy must be one of the AWS-managed EKS access policies: AmazonEKSViewPolicy, AmazonEKSEditPolicy, AmazonEKSAdminPolicy, AmazonEKSAdminViewPolicy, AmazonEKSClusterAdminPolicy."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, e in var.cluster_access_entries :
+      contains(["cluster", "namespace"], e.access_scope)
+    ])
+    error_message = "Every cluster_access_entries access_scope must be either \"cluster\" or \"namespace\"."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, e in var.cluster_access_entries :
+      e.access_scope == "cluster" || length(e.namespaces) > 0
+    ])
+    error_message = "A namespace-scoped access entry (access_scope = \"namespace\") must list at least one namespace in `namespaces`."
+  }
+}

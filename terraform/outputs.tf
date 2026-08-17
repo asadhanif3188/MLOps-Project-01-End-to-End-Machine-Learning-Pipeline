@@ -148,6 +148,35 @@ output "configure_kubectl" {
   value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}"
 }
 
+# --- EKS access management (Sprint 7, PR 3) -----------------------------------
+# Describe the explicit access model (closes H-03) for inspection/audit. These
+# confirm the secure posture — access-entry auth, no creator-admin bootstrap —
+# and enumerate which access-entry KEYS and policies are configured. The map is
+# keyed by the operator's chosen labels and exposes the scoped POLICY per entry,
+# not the principal ARNs (those embed the AWS account ID; retrieve them from state
+# or the AWS console when auditing).
+
+output "eks_authentication_mode" {
+  description = "EKS cluster authentication mode in effect (\"API\" = access entries only; \"API_AND_CONFIG_MAP\" = access entries plus legacy aws-auth). Confirms the access-entry model that replaced creator-admin bootstrap (H-03)."
+  value       = aws_eks_cluster.this.access_config[0].authentication_mode
+}
+
+output "eks_bootstrap_creator_admin_permissions" {
+  description = "Whether the cluster grants the creating principal implicit cluster-admin. Expected false (finding H-03): access is granted explicitly via access entries, not to whoever ran apply."
+  value       = aws_eks_cluster.this.access_config[0].bootstrap_cluster_creator_admin_permissions
+}
+
+output "eks_access_entry_policies" {
+  description = "Map of configured access-entry label -> scoped EKS access policy granted to that principal. Non-sensitive: shows the shape of granted access (which policy, which scope) without exposing principal ARNs. Empty if no access entries are configured."
+  value = {
+    for k, e in var.cluster_access_entries : k => {
+      policy       = e.policy
+      access_scope = e.access_scope
+      namespaces   = e.access_scope == "namespace" ? e.namespaces : []
+    }
+  }
+}
+
 # --- Container registry / ECR (Sprint 7, PR 1) --------------------------------
 # The registry URI/ARN embed the AWS account ID, which this project treats as
 # sensitive (see the aws_account_id output). They are therefore marked `sensitive`
