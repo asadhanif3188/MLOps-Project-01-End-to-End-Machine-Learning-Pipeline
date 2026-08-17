@@ -121,6 +121,11 @@ needs.
      profile (a real hardening). It depends on the cluster's OIDC provider, which
      does not exist until the EKS PR. Recorded as a follow-up; the standard
      node-role attachment is used now.
+   - **Done in [ADR-024](ADR-024-vpc-cni-pod-identity.md) (2026-08-17), via EKS
+     Pod Identity rather than IRSA** — `AmazonEKS_CNI_Policy` now sits on a
+     dedicated VPC CNI role assumed only by the `aws-node` service account,
+     closing finding **M-01**. Pod Identity was chosen over IRSA because it needs
+     no OIDC provider or TLS-thumbprint bookkeeping (see ADR-024).
 4. **Attach `AmazonEKSVPCResourceController` / `AmazonSSMManagedInstanceCore`
    pre-emptively "in case".**
    - *Rejected* — neither is needed by this workload; adding unused permissions
@@ -146,8 +151,10 @@ needs.
 
 **Trade-offs and follow-ups**
 
-- **CNI permissions sit on the node role** for now; the IRSA hardening is
-  deferred to the EKS PR (OIDC-dependent), as above.
+- **CNI permissions sit on the node role** for now; the hardening is deferred to
+  a later PR, as above. *(Closed 2026-08-17: [ADR-024](ADR-024-vpc-cni-pod-identity.md)
+  moved `AmazonEKS_CNI_Policy` to a dedicated VPC CNI role via EKS Pod Identity —
+  finding M-01.)*
 - **The CNI managed policy contains broad `ec2:*NetworkInterface` actions.** That
   breadth is AWS-owned and required for pod networking, not a project choice — it
   is documented rather than removed.
@@ -164,5 +171,6 @@ needs.
 - It does **not** grant administrative or wildcard permissions authored by this
   project; the only broad actions are inside AWS-maintained managed policies and
   are documented.
-- It does **not** finalize node-level IAM hardening (CNI-via-IRSA) — that is a
-  documented follow-up tied to the EKS OIDC provider.
+- It does **not** finalize node-level IAM hardening — that is a documented
+  follow-up. *(Since closed by [ADR-024](ADR-024-vpc-cni-pod-identity.md) using
+  EKS Pod Identity, not IRSA — finding M-01.)*

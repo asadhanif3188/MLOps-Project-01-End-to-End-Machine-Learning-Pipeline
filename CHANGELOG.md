@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **VPC CNI identity isolation — closes finding M-01** (Sprint 7, PR 4) — moves the
+  Amazon VPC CNI's AWS permissions **off the worker-node IAM role** and onto a
+  **dedicated role assumed only by the `aws-node` service account via EKS Pod
+  Identity**. Previously `AmazonEKS_CNI_Policy` sat on the node instance profile,
+  so **every pod on the node** could reach the CNI's ENI-manipulation permissions
+  through IMDS; now only the CNI can. Design of record:
+  [ADR-024](docs/decisions/ADR-024-vpc-cni-pod-identity.md).
+  - **Dedicated CNI role** — [`iam.tf`](terraform/iam.tf) adds `…-vpc-cni-role`
+    carrying only `AmazonEKS_CNI_Policy` (the same AWS-managed policy, moved
+    verbatim), trusting only `pods.eks.amazonaws.com` with `sts:AssumeRole` +
+    `sts:TagSession`. `AmazonEKS_CNI_Policy` is **removed** from the node role,
+    which keeps only `AmazonEKSWorkerNodePolicy` (join) and
+    `AmazonEC2ContainerRegistryReadOnly` (image pull) — both node-level, unaffected.
+  - **Pod Identity, not IRSA** — [`eks.tf`](terraform/eks.tf) adds the
+    `eks-pod-identity-agent` addon and an `aws_eks_pod_identity_association` binding
+    `kube-system/aws-node` to the CNI role. Pod Identity was chosen over IRSA
+    because it needs **no cluster OIDC provider**, no TLS-thumbprint bookkeeping,
+    and no extra provider, and is consistent with the access-entry model (ADR-023).
+  - **Networking preserved** — `aws-node` and the pod-identity-agent are both
+    hostNetwork, so neither needs the CNI to start; Terraform ordering (association
+    first, node group and agent depend on the association, agent **not** gated on
+    the node group) delivers credentials before nodes go `Ready` without a
+    dependency cycle.
+  - **Outputs** — [`outputs.tf`](terraform/outputs.tf) adds `vpc_cni_role_name`,
+    sensitive `vpc_cni_role_arn`, and `vpc_cni_pod_identity_association_id` for live
+    verification of the isolation.
+  - **Contract tests** — new [`terraform/tests/eks_cni_identity.tftest.hcl`](terraform/tests/eks_cni_identity.tftest.hcl)
+    runs offline under `mock_provider "aws"` (`command = plan`, **no AWS, no
+    credentials**) and asserts the CNI policy is off the node role, the node role
+    keeps its own permissions, the dedicated CNI role carries the CNI policy and
+    trusts only Pod Identity, the association targets `aws-node`, and the agent
+    addon is installed. Wired into the existing `terraform test` CI step.
+  - **Docs** — [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md)'s deferred
+    CNI-via-IRSA follow-up and [ADR-017](docs/decisions/ADR-017-eks-platform.md)'s
+    "CNI runs on the node role" decision are marked closed/superseded by ADR-024;
+    [`terraform/README.md`](terraform/README.md) gains a **VPC CNI identity**
+    section (with live-verification commands), and [SECURITY.md](SECURITY.md) is
+    updated.
 - **Explicit EKS access entries — closes finding H-03** (Sprint 7, PR 3) — replaces
   the automatic *"whoever ran `apply` becomes cluster-admin"* bootstrap with an
   **explicit, scoped access model**: AWS identity → EKS access entry → scoped EKS

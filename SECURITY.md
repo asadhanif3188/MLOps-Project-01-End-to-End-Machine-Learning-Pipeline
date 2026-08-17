@@ -69,7 +69,13 @@ Contributors and users should follow these practices:
   chain. AWS IAM roles are least-privilege and dedicated to purpose (see
   [ADR-016](docs/decisions/ADR-016-aws-iam-foundation.md)): permissions come from
   the AWS-managed policies EKS requires, with no `AdministratorAccess` and no
-  project-authored wildcard. **Cluster access uses explicit EKS access entries**,
+  project-authored wildcard. **The Amazon VPC CNI runs under its own dedicated IAM
+  role** — assumed only by the `aws-node` service account via **EKS Pod Identity**
+  — rather than the worker-node instance profile (finding **M-01**): `AmazonEKS_CNI_Policy`
+  is off the node role, so a pod on the node can no longer reach the CNI's
+  ENI-manipulation permissions through IMDS. Pinned by an offline `terraform test`
+  suite ([ADR-024](docs/decisions/ADR-024-vpc-cni-pod-identity.md)). **Cluster
+  access uses explicit EKS access entries**,
   not automatic cluster-creator admin (finding **H-03**): the principal that runs
   `apply` receives **no** implicit cluster-admin, `authentication_mode` defaults to
   `API` (access entries only), and each identity is granted a **scoped** AWS-managed

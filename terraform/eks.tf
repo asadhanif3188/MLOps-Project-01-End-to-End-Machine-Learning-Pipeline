@@ -136,16 +136,90 @@ resource "aws_eks_node_group" "this" {
     Name = "${local.name_prefix}-ng"
   }
 
-  # Nodes must have their three managed policies (worker, CNI, ECR read-only)
-  # before they launch, or the kubelet/CNI cannot register the node.
-  depends_on = [aws_iam_role_policy_attachment.eks_node]
+  # Nodes must have their node-level managed policies (worker, ECR read-only)
+  # before they launch. CNI permissions are NO LONGER on the node role (M-01);
+  # the VPC CNI gets them from a dedicated role via Pod Identity. So the node
+  # group also depends on BOTH halves of the Pod Identity mechanism being in place
+  # before nodes come up — otherwise aws-node would have no credentials to wire pod
+  # networking and nodes could stall NotReady until the group's health check times
+  # out. Both dependencies are safe (no cycle): the association is a control-plane
+  # call needing no nodes, and the eks-pod-identity-agent addon reaches ACTIVE with
+  # zero nodes (a DaemonSet with 0 desired pods is healthy), so it is installed
+  # first and its hostNetwork pods schedule the instant nodes join. This is the
+  # "before_compute" ordering the upstream EKS tooling uses. The agent addon is
+  # deliberately NOT gated on the node group (that WOULD deadlock). See ADR-024.
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node,
+    aws_eks_pod_identity_association.vpc_cni,
+    aws_eks_addon.pod_identity_agent,
+  ]
+}
+
+# --- VPC CNI identity: Pod Identity agent + association (Sprint 7, PR 4) -------
+# Closes finding M-01 by moving the Amazon VPC CNI's AWS permissions off the node
+# instance profile and onto a dedicated role (iam.tf: aws_iam_role.vpc_cni) that
+# only the aws-node service account can assume, via EKS Pod Identity.
+#
+# Two pieces are required for Pod Identity to deliver credentials to a pod:
+#   1. The eks-pod-identity-agent addon — a hostNetwork DaemonSet that serves
+#      credentials to associated pods on each node.
+#   2. A pod identity association mapping (cluster, namespace, service account)
+#      -> IAM role.
+#
+# Bootstrapping / "do not break EKS networking": aws-node (the VPC CNI) and the
+# pod-identity-agent are BOTH hostNetwork DaemonSets, so neither needs the CNI to
+# obtain a pod IP — they start on a node before pod networking is up. The agent
+# therefore serves credentials to aws-node, aws-node wires the CNI, and the node
+# becomes Ready. To keep this deterministic and cycle-free, the ordering is:
+#   association (control-plane only, no nodes)  ->  agent addon  ->  node group.
+# The association is created first; the agent addon depends on it and reaches
+# ACTIVE with zero nodes (a 0-desired DaemonSet is healthy), so it is installed
+# before any node launches; and the node group (above) depends on BOTH, so nodes
+# only launch once credentials can actually be served. The agent addon is
+# deliberately NOT gated on the node group — that reverse edge WOULD deadlock (the
+# node group's Ready-wait needs the CNI, which needs the agent).
+resource "aws_eks_pod_identity_association" "vpc_cni" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "kube-system"
+  service_account = "aws-node"
+  role_arn        = aws_iam_role.vpc_cni.arn
+
+  tags = {
+    Name = "${local.name_prefix}-vpc-cni-pod-identity"
+  }
+
+  # The role must carry AmazonEKS_CNI_Policy before aws-node assumes it.
+  depends_on = [aws_iam_role_policy_attachment.vpc_cni]
+}
+
+resource "aws_eks_addon" "pod_identity_agent" {
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "eks-pod-identity-agent"
+
+  # As with the core addons, addon_version is omitted so EKS installs the default
+  # version for the pinned cluster version, keeping it in lock-step.
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  tags = {
+    Name = "${local.name_prefix}-addon-eks-pod-identity-agent"
+  }
+
+  # Depends on the association only (a control-plane resource) — NOT on the node
+  # group. Gating this on the node group would deadlock, because the node group
+  # cannot become Ready until aws-node has credentials, which requires this agent.
+  depends_on = [aws_eks_pod_identity_association.vpc_cni]
 }
 
 # --- Core EKS addons ----------------------------------------------------------
 # Only the three addons EKS itself needs to be a functioning cluster:
-#   - vpc-cni    : pod networking (VPC-native pod IPs). Runs with the node role's
-#                  AmazonEKS_CNI_Policy from PR 3 — no separate IRSA role in this
-#                  PR (a documented follow-up; see ADR-016/-017).
+#   - vpc-cni    : pod networking (VPC-native pod IPs). Its aws-node service
+#                  account now draws AWS credentials from the dedicated VPC CNI
+#                  role via EKS Pod Identity (M-01, ADR-024) — NOT from the node
+#                  instance profile. The pod identity association + agent are
+#                  defined above; by the time this managed addon reconciles, the
+#                  association exists and the node group is Ready, so aws-node is
+#                  already authenticating through Pod Identity.
 #   - coredns    : in-cluster DNS. Scheduled on the worker nodes, so it depends
 #                  on the node group existing.
 #   - kube-proxy : service networking on each node.
