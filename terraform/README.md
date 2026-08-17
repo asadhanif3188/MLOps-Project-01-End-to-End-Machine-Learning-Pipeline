@@ -44,12 +44,14 @@ terraform/
 ├── outputs.tf                # outputs (context + network: VPC, subnets, NAT, …)
 ├── main.tf                   # locals (name prefix + common tags) + context data sources
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
-├── iam.tf                     # EKS cluster + node IAM roles, trust, policy attachments (Sprint 6, PR 3)
-├── eks.tf                     # EKS cluster, managed node group, core addons (Sprint 6, PR 4)
+├── iam.tf                     # EKS cluster + node roles, dedicated VPC CNI role, trust, policy attachments (Sprint 6 PR 3; CNI role Sprint 7 PR 4)
+├── eks.tf                     # EKS cluster, node group, core addons, access entries, VPC CNI Pod Identity (Sprint 6 PR 4; Sprint 7 PR 3–4)
 ├── ecr.tf                     # ECR repository + lifecycle policy (Sprint 7, PR 1 — closes H-01)
 ├── tests/                     # offline `terraform test` contract suite (mock_provider, no AWS)
-│   ├── ecr.tftest.hcl        # asserts the ECR security + lifecycle contract (H-01)
-│   └── eks_api_security.tftest.hcl  # asserts the secure-by-default EKS API posture (H-02)
+│   ├── ecr.tftest.hcl              # asserts the ECR security + lifecycle contract (H-01)
+│   ├── eks_api_security.tftest.hcl # asserts the secure-by-default EKS API posture (H-02)
+│   ├── eks_access_control.tftest.hcl  # asserts explicit EKS access entries (H-03)
+│   └── eks_cni_identity.tftest.hcl    # asserts VPC CNI identity isolation via Pod Identity (M-01)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -137,13 +139,15 @@ terraform plan
 `plan` **does** contact AWS (to resolve the context and Availability-Zone data
 sources), so valid credentials are required. A plan proposes the
 **network** (VPC, subnets, internet gateway, NAT gateway, route tables — 18
-resources with the defaults), the **IAM foundation** (two EKS roles and their
-four managed-policy attachments — 6 resources), the **EKS platform** (one
-cluster, one managed node group, three core addons — 5 resources), and the
-**container registry** (one ECR repository + its lifecycle policy — 2 resources,
-Sprint 7 PR 1): **31 resources** in total. Each configured operator identity in
-`cluster_access_entries` adds **2 more** (an access entry + its policy
-association, Sprint 7 PR 3); the default empty map adds none. The **EKS control
+resources with the defaults), the **IAM foundation** (three EKS roles — cluster,
+node, and the dedicated VPC CNI role — and their four managed-policy attachments —
+7 resources, incl. Sprint 7 PR 4), the **EKS platform** (one cluster, one managed
+node group, three core addons, the `eks-pod-identity-agent` addon, and the VPC CNI
+Pod Identity association — 7 resources), and the **container registry** (one ECR
+repository + its lifecycle policy — 2 resources, Sprint 7 PR 1): **34 resources**
+in total. Each configured operator identity in `cluster_access_entries` adds
+**2 more** (an access entry + its policy association, Sprint 7 PR 3); the default
+empty map adds none. The **EKS control
 plane and worker nodes are now the dominant hourly cost**, alongside the NAT
 gateway; IAM, ECR, and access entries are effectively free at this scale.
 `validate` alone contacts nothing.
@@ -238,23 +242,28 @@ resources, and no static credentials**. Design of record:
 | Role | Purpose | Trusted principal | Attached AWS-managed policies |
 |------|---------|-------------------|-------------------------------|
 | `…-eks-cluster-role` | Identity the EKS **control plane** assumes to manage the cluster's AWS resources (cluster ENIs, cluster security group). | `eks.amazonaws.com` | `AmazonEKSClusterPolicy` |
-| `…-eks-node-role` | Instance-profile identity each **EC2 worker node** assumes to join the cluster, run the VPC CNI, and pull images. | `ec2.amazonaws.com` | `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly` |
+| `…-eks-node-role` | Instance-profile identity each **EC2 worker node** assumes to join the cluster and pull images (node-level permissions only). | `ec2.amazonaws.com` | `AmazonEKSWorkerNodePolicy`, `AmazonEC2ContainerRegistryReadOnly` |
+| `…-vpc-cni-role` | Dedicated identity the **Amazon VPC CNI** (`aws-node`) assumes via **EKS Pod Identity** to wire pod networking — isolated from the node role (finding **M-01**). | `pods.eks.amazonaws.com` | `AmazonEKS_CNI_Policy` |
 
 **Least privilege.** Each role is dedicated to one purpose and its trust policy
 names exactly one AWS service principal — nothing else can assume it. Permissions
-come **only** from the AWS-managed policies EKS documents as required; this PR
+come **only** from the AWS-managed policies EKS documents as required; this project
 authors **no inline policy and no wildcard of its own**. The one broad grant —
 the `ec2:*NetworkInterface`/`ec2:Describe*` actions the Amazon VPC CNI needs — is
 inside AWS-owned `AmazonEKS_CNI_Policy`, is AWS-maintained, and is the documented
-minimum for pod networking rather than a project choice.
+minimum for pod networking rather than a project choice. That policy now sits on
+the **dedicated VPC CNI role**, not the node role (finding **M-01**), so only the
+`aws-node` pod — not every workload sharing a node's instance profile — can wield
+it. See **VPC CNI identity** below and
+[ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md).
 
 **Intentionally not permitted.** No `AdministratorAccess` or `PowerUserAccess`;
 no IAM users, groups, or access keys; no static credentials or kubeconfig.
 `AmazonEKSVPCResourceController` (security-groups-for-pods, unused by the
 batch-`Job` workload) and `AmazonSSMManagedInstanceCore` (interactive node
-access) are deliberately omitted. Moving the CNI policy to a dedicated IRSA role
-is a documented hardening deferred to the EKS PR (it depends on the cluster OIDC
-provider). See [ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md).
+access) are deliberately omitted. The CNI-permission-on-the-node-role hardening
+that [ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md) deferred is now
+**done** via EKS Pod Identity (ADR-024) — see below.
 
 **Outputs.** Role **names** are exported plainly; role **ARNs** are marked
 `sensitive` because an IAM role ARN embeds the AWS account ID — consistent with
@@ -263,6 +272,86 @@ the sensitive `aws_account_id` output. Retrieve an ARN with
 
 **Cost.** IAM roles and policy attachments are **free** — they add no billable
 resource to the plan.
+
+## VPC CNI identity (closes M-01)
+
+The Amazon VPC CNI (`aws-node`) needs AWS permissions to attach ENIs and assign
+pod IPs. Attaching `AmazonEKS_CNI_Policy` to the **node role** — the original
+setup — gave those permissions to the EC2 instance profile, so **every pod on the
+node** could reach them through the instance metadata service (IMDS), not just the
+CNI. That over-grant is Sprint 6 finding **M-01**. Design of record:
+[ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md).
+
+**What changed.** `AmazonEKS_CNI_Policy` is **removed from the node role** and
+attached to a **dedicated `…-vpc-cni-role`**, assumed **only** by the `aws-node`
+service account (namespace `kube-system`) through **EKS Pod Identity**:
+
+```text
+  aws-node ServiceAccount (kube-system)
+        │  EKS Pod Identity association
+        ▼
+  …-vpc-cni-role      ── trust: pods.eks.amazonaws.com (sts:AssumeRole + sts:TagSession)
+        │
+        ▼
+  AmazonEKS_CNI_Policy   (the ONLY place this policy is now attached)
+```
+
+The node role keeps only what the **node itself** needs
+(`AmazonEKSWorkerNodePolicy` to join, `AmazonEC2ContainerRegistryReadOnly` to pull
+images); neither is a CNI permission, so removing CNI does not affect them.
+
+**Mechanism — Pod Identity, not IRSA.** EKS Pod Identity is the current AWS-native
+way to bind an IAM role to a Kubernetes service account. It needs **no cluster
+OIDC provider**, no TLS-thumbprint bookkeeping, and no extra Terraform provider —
+just the `eks-pod-identity-agent` addon (a hostNetwork DaemonSet) plus a small
+association resource. It is consistent with the access-entry model this project
+already adopted for cluster access (ADR-023). The IRSA alternative (and why it was
+not chosen) is in [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md).
+
+**Networking is not broken.** `aws-node` and the pod-identity-agent are **both
+hostNetwork** DaemonSets, so neither needs the CNI to start: the agent comes up,
+serves credentials to `aws-node`, `aws-node` wires the CNI, and the node becomes
+Ready. Terraform ordering guarantees this without a dependency cycle
+(**association → agent addon → node group**): the association (a control-plane
+call) is created before nodes launch; the agent addon depends on the association
+and reaches `ACTIVE` with zero nodes; and the node group depends on **both** the
+association and the agent addon, so nodes launch only once credentials can be
+served. Crucially the agent addon is **not** gated on the node group (that would
+deadlock). See the comments in [`eks.tf`](eks.tf).
+
+**Applying to an already-running cluster.** The ordering above makes a *fresh*
+`apply` safe, which is the normal flow for this ephemeral, provision-→-prove-→
+-destroy environment ([ADR-020](../docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).
+If you instead apply this change **in place** on a cluster whose `aws-node` is
+already running under the node instance profile, Terraform detaches
+`AmazonEKS_CNI_Policy` from the node role and creates the association, but — having
+no `kubernetes`/`helm` provider — it does **not** restart the running `aws-node`
+pods, so they keep using their old (now-insufficient) node-profile credentials
+until the DaemonSet is rolled: `kubectl -n kube-system rollout restart ds/aws-node`.
+New pods may fail to get IPs in that window. Prefer a fresh cluster; otherwise
+roll `aws-node` immediately after `apply`.
+
+**Verifying on a live cluster.** After `apply`:
+
+```bash
+# The CNI policy is NOT on the node role (expect: no AmazonEKS_CNI_Policy)
+aws iam list-attached-role-policies --role-name "$(terraform output -raw eks_node_role_name)"
+
+# It IS on the dedicated CNI role (expect: AmazonEKS_CNI_Policy)
+aws iam list-attached-role-policies --role-name "$(terraform output -raw vpc_cni_role_name)"
+
+# The aws-node service account is bound to the CNI role via Pod Identity
+aws eks list-pod-identity-associations \
+  --cluster-name "$(terraform output -raw eks_cluster_name)" --namespace kube-system
+
+# aws-node pods carry the injected Pod Identity credentials (expect AWS_CONTAINER_* env)
+kubectl -n kube-system get pods -l k8s-app=aws-node
+kubectl -n kube-system exec <aws-node-pod> -c aws-node -- env | grep AWS_CONTAINER
+
+# Networking is healthy: nodes Ready, aws-node Running, a test pod gets an IP
+kubectl get nodes
+kubectl -n kube-system get ds aws-node
+```
 
 ## EKS platform
 
@@ -284,7 +373,8 @@ automatically. Design of record:
         fixed size (min = max = desired = 2)     no autoscaler, no GPU, no SSH
                     │
                     ▼
-        Core addons: vpc-cni · coredns · kube-proxy   (no optional addons)
+        Core addons: vpc-cni · coredns · kube-proxy
+        + eks-pod-identity-agent  (delivers the VPC CNI role — M-01)
 ```
 
 **Kubernetes version.** Pinned explicitly to **1.35** (`kubernetes_version`) for
@@ -556,7 +646,9 @@ contract is pinned by the offline `terraform test` suite
 | PR | Adds |
 |----|------|
 | **PR 1** | Terraform-managed **ECR** — the private repository + lifecycle policy that were previously created out-of-band, closing finding **H-01**. Immutable tags, scan-on-push, encrypted, retention-capped, `force_delete` for clean teardown; sensitive URL/ARN outputs; offline `terraform test` contract suite. See [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). |
-| **PR 2 (this PR)** | **Secure-by-default EKS API access**, closing finding **H-02**. The control-plane endpoint is **private by default** (public off, CIDR list empty); public access is a scoped, explicit opt-in that **can never be `0.0.0.0/0`** — enforced by variable validation and cluster preconditions, and pinned by a new offline `terraform test` suite. The two obsolete Trivy suppressions for the old open endpoint are **removed**, not re-justified. See [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md). |
+| **PR 2** | **Secure-by-default EKS API access**, closing finding **H-02**. The control-plane endpoint is **private by default** (public off, CIDR list empty); public access is a scoped, explicit opt-in that **can never be `0.0.0.0/0`** — enforced by variable validation and cluster preconditions, and pinned by a new offline `terraform test` suite. The two obsolete Trivy suppressions for the old open endpoint are **removed**, not re-justified. See [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md). |
+| **PR 3** | **Explicit EKS access entries**, closing finding **H-03**. Replaces the automatic *"cluster creator becomes cluster-admin"* bootstrap with declared, scoped access entries (`API` auth by default, creator-admin `false` and rejected by a tripwire validation, scoped `AmazonEKSAdminPolicy` default). Identities come from a git-ignored `terraform.tfvars`; pinned by an offline `terraform test` suite. See [ADR-023](../docs/decisions/ADR-023-eks-access-control.md). |
+| **PR 4 (this PR)** | **VPC CNI identity isolation**, closing finding **M-01**. Moves `AmazonEKS_CNI_Policy` off the worker-node instance profile onto a **dedicated VPC CNI role** assumed only by the `aws-node` service account via **EKS Pod Identity** (`eks-pod-identity-agent` addon + association); the node role keeps only its own (join + ECR-pull) permissions. Pinned by a new offline `terraform test` suite. See [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md). |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
 EKS platform** — the control plane and the on-demand node(s) bill hourly, on top

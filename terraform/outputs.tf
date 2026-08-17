@@ -105,6 +105,30 @@ output "eks_node_role_arn" {
   sensitive   = true
 }
 
+# --- VPC CNI identity (Sprint 7, PR 4 — closes M-01) --------------------------
+# The dedicated role the Amazon VPC CNI assumes via EKS Pod Identity, isolating
+# its pod-networking permissions from the node instance profile. These let an
+# operator confirm the isolation on a live cluster (e.g. compare the aws-node
+# pod's effective identity to this role, and confirm AmazonEKS_CNI_Policy is NOT
+# on the node role). The role name is non-sensitive; the ARN embeds the account
+# ID and is marked sensitive, consistent with the other role ARN outputs.
+
+output "vpc_cni_role_name" {
+  description = "Name of the dedicated Amazon VPC CNI IAM role (assumed by the aws-node service account via EKS Pod Identity). Carries only AmazonEKS_CNI_Policy; no longer on the node role (M-01)."
+  value       = aws_iam_role.vpc_cni.name
+}
+
+output "vpc_cni_role_arn" {
+  description = "ARN of the dedicated VPC CNI IAM role bound to the aws-node service account via EKS Pod Identity. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_iam_role.vpc_cni.arn
+  sensitive   = true
+}
+
+output "vpc_cni_pod_identity_association_id" {
+  description = "ID of the EKS Pod Identity association that binds the aws-node service account (kube-system) to the VPC CNI role. Confirms the CNI draws credentials via Pod Identity, not the node instance profile (M-01)."
+  value       = aws_eks_pod_identity_association.vpc_cni.association_id
+}
+
 # --- EKS platform (Sprint 6, PR 4) --------------------------------------------
 # Connection/inspection details for the provisioned cluster. All are
 # non-sensitive: the cluster name, endpoint URL, version, and the cluster
@@ -134,7 +158,7 @@ output "eks_cluster_security_group_id" {
 }
 
 output "eks_cluster_oidc_issuer_url" {
-  description = "OIDC issuer URL of the cluster. The anchor for future IAM Roles for Service Accounts (IRSA), including the deferred CNI-via-IRSA hardening (ADR-016/-017)."
+  description = "OIDC issuer URL of the cluster, available for any future IAM Roles for Service Accounts (IRSA) use. Note: the VPC CNI identity hardening (M-01) uses EKS Pod Identity, not IRSA, so it does not consume this issuer (see ADR-024)."
   value       = aws_eks_cluster.this.identity[0].oidc[0].issuer
 }
 

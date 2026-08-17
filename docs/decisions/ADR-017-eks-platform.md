@@ -112,6 +112,13 @@ addons take over the self-managed defaults. The `vpc-cni` addon runs with the
 node role's `AmazonEKS_CNI_Policy` (ADR-016) — no separate IRSA role in this PR.
 CoreDNS needs schedulable nodes, so all three `depend_on` the node group.
 
+> **Superseded by [ADR-024](ADR-024-vpc-cni-pod-identity.md) (2026-08-17).** The
+> VPC CNI no longer runs with the node role's `AmazonEKS_CNI_Policy`. That policy
+> was **moved to a dedicated VPC CNI role** assumed only by the `aws-node` service
+> account via **EKS Pod Identity** (a fourth addon, `eks-pod-identity-agent`, plus
+> a pod identity association), closing finding **M-01**. The rest of this addon
+> decision stands.
+
 **Outputs.** All EKS outputs are **non-sensitive** — cluster name, endpoint URL,
 version, cluster security-group ID, OIDC issuer URL, node-group name, and a
 ready-to-run `configure_kubectl` command. No kubeconfig, token, or certificate is
@@ -207,8 +214,9 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
   > by validation, preconditions, and a contract test rather than left to operator
   > discipline.
 - **CNI runs on the node role**, and **secrets lack KMS envelope encryption** —
-  both recognized hardenings deferred with rationale (OIDC/IRSA and KMS
-  respectively).
+  both recognized hardenings deferred with rationale. *(CNI-on-node-role since
+  closed by [ADR-024](ADR-024-vpc-cni-pod-identity.md) via EKS Pod Identity —
+  finding M-01; KMS remains a follow-up.)*
 - **No HA guarantees beyond the managed control plane** — a single small node
   group across two AZs is a validation cluster, not a production platform.
 
@@ -221,5 +229,7 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
   AWS services, or any application/workload resource.
 - It does **not** create static AWS credentials or store a kubeconfig; access is
   via short-lived, IAM-derived credentials.
-- It does **not** finalize node-level IAM hardening (CNI-via-IRSA) or secret
-  envelope encryption — both are documented follow-ups.
+- It does **not** finalize node-level IAM hardening or secret envelope
+  encryption — both documented follow-ups. *(Node-level CNI hardening since
+  closed by [ADR-024](ADR-024-vpc-cni-pod-identity.md) using EKS Pod Identity —
+  finding M-01; KMS remains open.)*

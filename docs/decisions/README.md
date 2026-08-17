@@ -31,6 +31,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-021](ADR-021-terraform-managed-ecr.md) | Terraform-Managed Container Registry (Amazon ECR) — closes H-01 | Accepted (design) | 2026-08-17 |
 | [ADR-022](ADR-022-eks-secure-api-access.md) | Secure-by-Default EKS API Access (private default, no `0.0.0.0/0`) — closes H-02 | Accepted (design) | 2026-08-17 |
 | [ADR-023](ADR-023-eks-access-control.md) | Explicit EKS Access Entries (scoped policies, no creator-admin) — closes H-03 | Accepted (design) | 2026-08-17 |
+| [ADR-024](ADR-024-vpc-cni-pod-identity.md) | VPC CNI Identity via EKS Pod Identity (dedicated role, off the node role) — closes M-01 | Accepted (design) | 2026-08-17 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and
