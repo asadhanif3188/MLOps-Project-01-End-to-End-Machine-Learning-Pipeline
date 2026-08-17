@@ -146,7 +146,9 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
 - **No customer-managed KMS envelope encryption of secrets** — a recognized
   hardening, deferred to keep the PR minimal and avoid an extra billable
   resource; recorded as a follow-up. EKS still encrypts etcd at rest with an
-  AWS-owned key by default.
+  AWS-owned key by default. *(Since closed by
+  [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — finding M-02 — which adds a
+  dedicated customer-managed KMS key and enables `encryption_config` for secrets.)*
 - **No SSH/remote node access** and **no static credentials or kubeconfig**.
 
 ## Alternatives Considered
@@ -182,6 +184,9 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
    - *Deferred* — it adds a KMS key (a billable resource) and complexity for
      marginal benefit on a short-lived cluster with no real secrets. Documented
      as a follow-up rather than silently omitted.
+   - > **Resolved by [ADR-025](ADR-025-eks-secrets-kms-encryption.md) (M-02):** a
+     > dedicated customer-managed KMS key now envelope-encrypts Kubernetes Secrets
+     > via the cluster's `encryption_config`; the deferral above is closed.
 7. **Add optional addons (EBS CSI, ALB controller) "in case".**
    - *Rejected* — unused addons are footprint and cost the workload does not
      need; they can be added when a workload justifies them.
@@ -214,9 +219,10 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
   > by validation, preconditions, and a contract test rather than left to operator
   > discipline.
 - **CNI runs on the node role**, and **secrets lack KMS envelope encryption** —
-  both recognized hardenings deferred with rationale. *(CNI-on-node-role since
-  closed by [ADR-024](ADR-024-vpc-cni-pod-identity.md) via EKS Pod Identity —
-  finding M-01; KMS remains a follow-up.)*
+  both recognized hardenings deferred with rationale. *(Both since closed:
+  CNI-on-node-role by [ADR-024](ADR-024-vpc-cni-pod-identity.md) via EKS Pod
+  Identity — finding M-01; secrets KMS encryption by
+  [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — finding M-02.)*
 - **No HA guarantees beyond the managed control plane** — a single small node
   group across two AZs is a validation cluster, not a production platform.
 
@@ -230,6 +236,7 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
 - It does **not** create static AWS credentials or store a kubeconfig; access is
   via short-lived, IAM-derived credentials.
 - It does **not** finalize node-level IAM hardening or secret envelope
-  encryption — both documented follow-ups. *(Node-level CNI hardening since
-  closed by [ADR-024](ADR-024-vpc-cni-pod-identity.md) using EKS Pod Identity —
-  finding M-01; KMS remains open.)*
+  encryption — both documented follow-ups. *(Both since closed: node-level CNI
+  hardening by [ADR-024](ADR-024-vpc-cni-pod-identity.md) using EKS Pod Identity —
+  finding M-01; secret envelope encryption by
+  [ADR-025](ADR-025-eks-secrets-kms-encryption.md) — finding M-02.)*

@@ -81,6 +81,28 @@ resource "aws_eks_cluster" "this" {
     bootstrap_cluster_creator_admin_permissions = var.cluster_bootstrap_creator_admin_permissions
   }
 
+  # Secret envelope encryption with a customer-managed KMS key (closes finding
+  # M-02). This is the half that MAKES the encryption real: it tells EKS to
+  # envelope-encrypt Kubernetes Secret objects with the dedicated CMK (kms.tf), on
+  # top of the AWS-owned at-rest encryption of etcd. "secrets" is the only resource
+  # type EKS supports here. A CMK that merely EXISTS next to the cluster would not
+  # encrypt anything — this block is what associates it.
+  #
+  # One-way by design: once a cluster has secrets encryption enabled it CANNOT be
+  # disabled, and the KMS key CANNOT be swapped, without replacing the cluster.
+  # That is acceptable and correct here — the ephemeral validation cluster is
+  # created with encryption on from the first apply (ADR-020, ADR-025) — but it is
+  # why enabling this is a deliberate, ADR-ratified step, not a toggle. The cluster
+  # role's permission to use the key is granted in the key policy (kms.tf); the
+  # implicit dependency on aws_kms_key.eks_secrets.arn orders the key before the
+  # cluster.
+  encryption_config {
+    provider {
+      key_arn = aws_kms_key.eks_secrets.arn
+    }
+    resources = ["secrets"]
+  }
+
   enabled_cluster_log_types = var.cluster_enabled_log_types
 
   tags = {

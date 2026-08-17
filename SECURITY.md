@@ -91,6 +91,19 @@ Contributors and users should follow these practices:
   Trivy) and never runs `terraform plan`/`apply` — real provisioning is a
   deliberate, operator-driven step against
   one's own account (see [ADR-019](docs/decisions/ADR-019-terraform-ci-validation.md)).
+- **Kubernetes Secret encryption at rest (finding M-02).** EKS Kubernetes
+  **Secrets are envelope-encrypted with a dedicated, customer-managed KMS key**
+  (`terraform/kms.tf`) wired into the cluster's `encryption_config` — a
+  customer-controlled layer on top of the AWS-owned etcd default, auditable in
+  CloudTrail and revocable via its key policy. The key has **automatic rotation
+  enabled** and a **least-privilege key policy** (the account-root administration
+  statement plus an explicit use-grant to the EKS cluster role with a
+  `GrantIsForAWSResource`-constrained `CreateGrant` — **no bare `"*"` principal and
+  no project-authored `kms:*` use grant**); permissions are granted through the key
+  policy, so no additional IAM policy widens the surface. Encryption is
+  **unconditional — there is no toggle to disable it** — and the previously
+  documented `AVD-AWS-0039` Trivy suppression has been **removed**. Pinned by an
+  offline `terraform test` suite ([ADR-025](docs/decisions/ADR-025-eks-secrets-kms-encryption.md)).
 - **Ephemeral cloud environment & verified teardown.** The AWS/EKS environment is
   **short-lived** — provisioned to capture evidence, then **destroyed and verified
   clean** (Terraform state empty + AWS API shows no cluster/NAT + ECR repo absent),

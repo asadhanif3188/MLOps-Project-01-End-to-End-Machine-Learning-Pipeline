@@ -172,6 +172,37 @@ output "configure_kubectl" {
   value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}"
 }
 
+# --- EKS Secret encryption / KMS (Sprint 7, PR 5 — closes M-02) ----------------
+# Evidence outputs for the customer-managed KMS envelope encryption of Kubernetes
+# Secrets. The KEY outputs describe the CMK; the ENCRYPTION output reads the key
+# ARN back OFF THE CLUSTER's applied encryption_config, which is the distinction
+# that matters for M-02: it proves EKS Secrets are actually configured to use the
+# key, not merely that a key exists next to the cluster. The alias and key ID are
+# non-sensitive identifiers; the ARNs embed the AWS account ID and are marked
+# sensitive, consistent with the other ARN outputs.
+
+output "eks_secrets_kms_key_id" {
+  description = "Key ID of the customer-managed KMS key that envelope-encrypts Kubernetes Secrets (M-02)."
+  value       = aws_kms_key.eks_secrets.key_id
+}
+
+output "eks_secrets_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key used for EKS Secret envelope encryption. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_kms_key.eks_secrets.arn
+  sensitive   = true
+}
+
+output "eks_secrets_kms_key_alias" {
+  description = "Human-readable alias of the EKS-secrets KMS key (alias/<project>-<environment>-eks-secrets). Non-sensitive identifier for locating the key in the console/CloudTrail."
+  value       = aws_kms_alias.eks_secrets.name
+}
+
+output "eks_secrets_encryption_key_arn" {
+  description = "KMS key ARN read back off the CLUSTER's applied encryption_config — proof that EKS Secrets are actually configured to use the CMK (M-02), not just that the key exists. Should equal eks_secrets_kms_key_arn. Sensitive: the ARN contains the AWS account ID."
+  value       = aws_eks_cluster.this.encryption_config[0].provider[0].key_arn
+  sensitive   = true
+}
+
 # --- EKS access management (Sprint 7, PR 3) -----------------------------------
 # Describe the explicit access model (closes H-03) for inspection/audit. These
 # confirm the secure posture — access-entry auth, no creator-admin bootstrap —

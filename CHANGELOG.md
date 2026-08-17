@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **EKS Secret KMS envelope encryption — closes finding M-02** (Sprint 7, PR 5) —
+  Kubernetes **Secrets** stored in EKS are now envelope-encrypted with a dedicated
+  **customer-managed KMS key**, a customer-controlled layer on top of the AWS-owned
+  etcd default that is auditable in CloudTrail and revocable via its key policy.
+  Design of record: [ADR-025](docs/decisions/ADR-025-eks-secrets-kms-encryption.md).
+  - **Dedicated CMK + alias** — [`kms.tf`](terraform/kms.tf) adds
+    `aws_kms_key.eks_secrets` (symmetric, `enable_key_rotation = true`) and
+    `alias/<project>-<environment>-eks-secrets`. Tagged via `default_tags`; the only
+    tunable is `kms_key_deletion_window_days` (default `7`, the minimum, so a
+    torn-down validation cluster leaves no pending-deletion key lingering).
+  - **Least-privilege key policy** — three statements: the AWS-canonical account-root
+    administration statement (the one justified `kms:*`, present in every default KMS
+    policy to prevent lock-out), an explicit use-grant to the EKS cluster role
+    (`Encrypt`/`Decrypt`/`DescribeKey`/`ListGrants` — **no `kms:*`**, no wildcard
+    action), and
+    a `CreateGrant` constrained by `kms:GrantIsForAWSResource`. **No bare `"*"`
+    principal, no cross-account access.** Permissions are granted through the key
+    policy (authoritative for same-account KMS), so **no extra IAM policy** is
+    attached to the cluster role.
+  - **Cluster actually uses the key** — [`eks.tf`](terraform/eks.tf) adds
+    `encryption_config { resources = ["secrets"], provider { key_arn = <CMK> } }`.
+    *"A key exists"* is not *"Secrets use it"*: the finding closes because the
+    **cluster** is configured to envelope-encrypt with the CMK. Enablement is
+    one-way (encryption cannot later be disabled, nor the key swapped, without
+    replacing the cluster) — acceptable for the ephemeral cluster, created with it on.
+  - **Evidence outputs** — [`outputs.tf`](terraform/outputs.tf) adds
+    `eks_secrets_kms_key_id`, `eks_secrets_kms_key_alias`, sensitive
+    `eks_secrets_kms_key_arn`, and — reading the key ARN **back off the cluster's
+    applied `encryption_config`** — sensitive `eks_secrets_encryption_key_arn`, the
+    output that proves association rather than mere existence.
+  - **Obsolete suppression removed** — the `AVD-AWS-0039` ("EKS should have secrets
+    encryption enabled") entry is **deleted** from [`terraform/.trivyignore`](terraform/.trivyignore),
+    not re-justified: with real CMK encryption configured, Trivy passes on its own, so
+    a future regression becomes a **blocking** CI failure.
+  - **Contract tests** — new [`terraform/tests/eks_secrets_encryption.tftest.hcl`](terraform/tests/eks_secrets_encryption.tftest.hcl)
+    runs offline under `mock_provider "aws"` (**no AWS, no credentials**) and asserts
+    the cluster encrypts `secrets` with a wired KMS provider key, the key is rotated
+    with a valid deletion window, the alias is correct, and the key policy grants no
+    bare `"*"` principal. Wired into the existing `terraform test` CI step.
+  - **Docs** — [ADR-017](docs/decisions/ADR-017-eks-platform.md)'s deferred
+    KMS-encryption follow-up is marked closed by ADR-025;
+    [ADR-021](docs/decisions/ADR-021-terraform-managed-ecr.md)'s shared "CMK later"
+    note is reconciled (ECR keeps AES256 as a separate follow-up);
+    [`terraform/README.md`](terraform/README.md) gains a **Secrets encryption**
+    section (with live-verification commands), and [SECURITY.md](SECURITY.md) is
+    updated.
 - **VPC CNI identity isolation — closes finding M-01** (Sprint 7, PR 4) — moves the
   Amazon VPC CNI's AWS permissions **off the worker-node IAM role** and onto a
   **dedicated role assumed only by the `aws-node` service account via EKS Pod
