@@ -8,25 +8,19 @@
 # .github/workflows/ci.yml § terraform-validate and ADR-019).
 #
 # Re-triage this list whenever the network / EKS / IAM configuration changes.
-# For a persistent or production cluster, the correct action is to REMEDIATE these
-# (narrow the API CIDR, disable the public endpoint, add a KMS CMK) rather than to
-# keep suppressing them.
-
-# AVD-AWS-0041 (CRITICAL) — "EKS cluster should not have open public access CIDRs."
-#   var.cluster_endpoint_public_access_cidrs defaults to 0.0.0.0/0 so a first-run
-#   operator can reach the Kubernetes API with kubectl from a workstation while
-#   validating a throwaway cluster. It is a documented knob the operator MUST
-#   narrow to their own IP/CIDR for any real environment, and private endpoint
-#   access is enabled alongside it. See ADR-017 (endpoint posture) and the
-#   variable's own guidance in terraform/variables.tf.
-AVD-AWS-0041
-
-# AVD-AWS-0040 (HIGH) — "EKS cluster should not have public access enabled."
-#   Same rationale: the public API endpoint is intentionally on for out-of-band
-#   operator validation of a short-lived cluster, restricted by the CIDR knob
-#   above and paired with private access. Set cluster_endpoint_public_access =
-#   false for a private-only production posture. See ADR-017.
-AVD-AWS-0040
+# For a persistent or production cluster, the correct action is to REMEDIATE the
+# remaining trade-offs (add a KMS CMK) rather than to keep suppressing them.
+#
+# RESOLVED (Sprint 7, PR 2 — closes finding H-02): the two EKS API-exposure
+# suppressions that used to live here — AVD-AWS-0041 ("open public access CIDRs")
+# and AVD-AWS-0040 ("public access enabled") — have been REMOVED, not re-justified.
+# The configuration is now secure by default: cluster_endpoint_public_access
+# defaults to false (private-only), cluster_endpoint_public_access_cidrs defaults
+# to [] and rejects any /0, and preconditions reject "public on with no CIDRs" and
+# "both endpoints off". With no default public exposure, Trivy no longer raises
+# those findings, so the suppressions are gone. Public access is an explicit,
+# CIDR-scoped opt-in that CANNOT be unrestricted. See ADR-022 and
+# terraform/eks.tf § Endpoint/security.
 
 # AVD-AWS-0039 (HIGH) — "EKS should have secrets encryption (KMS envelope) enabled."
 #   No customer-managed KMS envelope encryption of Kubernetes secrets is

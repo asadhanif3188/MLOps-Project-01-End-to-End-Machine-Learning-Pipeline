@@ -67,6 +67,7 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-019](decisions/ADR-019-terraform-ci-validation.md) | Terraform CI Validation (no AWS credentials) |
 | [ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md) | Cloud Environment Lifecycle & Cost Control (Provision → Prove → Destroy) |
 | [ADR-021](decisions/ADR-021-terraform-managed-ecr.md) | Terraform-Managed Container Registry (Amazon ECR) — closes H-01 |
+| [ADR-022](decisions/ADR-022-eks-secure-api-access.md) | Secure-by-Default EKS API Access (private default, no `0.0.0.0/0`) — closes H-02 |
 
 ### Engineering Reviews
 

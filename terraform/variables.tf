@@ -208,25 +208,33 @@ variable "node_disk_size" {
 }
 
 variable "cluster_endpoint_public_access" {
-  description = "Whether the EKS API server is reachable from the public internet. Enabled so an operator can run kubectl from a workstation to validate the cluster; pair with cluster_endpoint_public_access_cidrs to restrict the source range."
+  description = "Whether the EKS API server is reachable from the public internet. SECURE DEFAULT: false — the API is private-only out of the box (closes finding H-02). Enabling it is an explicit opt-in and REQUIRES a scoped cluster_endpoint_public_access_cidrs allow-list (an empty list would let EKS fall back to 0.0.0.0/0, which is rejected). Reaching a private-only endpoint needs in-VPC access (bastion/VPN/SSM/in-VPC runner) — see ADR-022 and terraform/README.md § EKS platform."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "cluster_endpoint_private_access" {
-  description = "Whether the EKS API server is reachable privately from within the VPC. Enabled so in-VPC nodes/tools reach the API over private networking rather than traversing the public endpoint."
+  description = "Whether the EKS API server is reachable privately from within the VPC. Enabled by default so in-VPC nodes/tools reach the API over private networking; it is the primary (and, by default, only) access path. Disabling it while the public endpoint is also off is rejected — the API server would be unreachable."
   type        = bool
   default     = true
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
-  description = "CIDR blocks allowed to reach the public EKS API endpoint. Defaults to open (0.0.0.0/0) for first-run validation from any workstation; SET THIS to your operator IP/CIDR for a real environment — it is the primary control-plane exposure knob."
+  description = "CIDR blocks allowed to reach the public EKS API endpoint when public access is opted into. SECURE DEFAULT: [] (empty) — with the private-only default there is no public exposure. If you enable public access, set this to your operator IP/CIDR (e.g. [\"203.0.113.4/32\"]); an unrestricted range (0.0.0.0/0 or any /0) is rejected by validation and must never be used."
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = []
 
   validation {
-    condition     = length(var.cluster_endpoint_public_access_cidrs) > 0
-    error_message = "cluster_endpoint_public_access_cidrs must contain at least one CIDR block."
+    condition     = alltrue([for c in var.cluster_endpoint_public_access_cidrs : can(cidrhost(c, 0))])
+    error_message = "Every entry in cluster_endpoint_public_access_cidrs must be a valid IPv4/IPv6 CIDR block (e.g. \"203.0.113.4/32\")."
+  }
+
+  validation {
+    condition = alltrue([
+      for c in var.cluster_endpoint_public_access_cidrs :
+      can(cidrhost(c, 0)) ? tonumber(split("/", c)[1]) >= 1 : true
+    ])
+    error_message = "cluster_endpoint_public_access_cidrs must not contain an unrestricted range (a /0 such as 0.0.0.0/0). Scope public API access to specific operator IP(s)/CIDR(s)."
   }
 }
 

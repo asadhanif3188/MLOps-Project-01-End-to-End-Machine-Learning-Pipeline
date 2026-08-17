@@ -66,6 +66,13 @@ resource definitions.
   lets an operator validate with `kubectl`. The public source range
   (`cluster_endpoint_public_access_cidrs`) defaults to open **only for first-run
   validation** and is documented as "set to your operator CIDR" for real use.
+  > **Superseded by [ADR-022](ADR-022-eks-secure-api-access.md) (2026-08-17, closes
+  > H-02).** This "public-on, `0.0.0.0/0`-by-default" posture was the H-02 finding.
+  > The endpoint is now **private by default** (`cluster_endpoint_public_access =
+  > false`, CIDR list `[]`); public access is a **scoped, explicit opt-in** that can
+  > never be `0.0.0.0/0`, enforced by variable validation and cluster preconditions
+  > and pinned by `tests/eks_api_security.tftest.hcl`. The rest of this ADR stands.
+
   Access uses **EKS access entries** (`authentication_mode =
   API_AND_CONFIG_MAP`) with `bootstrap_cluster_creator_admin_permissions = true`,
   so the creating principal gets cluster-admin without hand-editing `aws-auth`.
@@ -152,6 +159,10 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
      workstation without a bastion/VPN (out of scope); public-only would forgo
      the in-VPC private path. Enabling both, with a documented public-CIDR
      allow-list, is the balanced default.
+   - > **Revised by [ADR-022](ADR-022-eks-secure-api-access.md).** The default is
+     > now **private**, with public access as a scoped opt-in — the secure-by-default
+     > posture that closes H-02. The "balanced default" above relied on the operator
+     > narrowing an open CIDR; that safety is now enforced by the configuration.
 6. **Enable customer-managed KMS envelope encryption now.**
    - *Deferred* — it adds a KMS key (a billable resource) and complexity for
      marginal benefit on a short-lived cluster with no real secrets. Documented
@@ -182,6 +193,11 @@ and inheriting the common tag set via `default_tags`; only a `Name` tag (and a
 - **Public endpoint defaults open** for first-run validation; a real environment
   must restrict `cluster_endpoint_public_access_cidrs`. This is documented at the
   variable and in the README, not left implicit.
+  > **Resolved by [ADR-022](ADR-022-eks-secure-api-access.md) (H-02):** the public
+  > endpoint no longer defaults open — it defaults **off** (private-only), and when
+  > opted into it must be scoped to an explicit CIDR (never `0.0.0.0/0`), enforced
+  > by validation, preconditions, and a contract test rather than left to operator
+  > discipline.
 - **CNI runs on the node role**, and **secrets lack KMS envelope encryption** —
   both recognized hardenings deferred with rationale (OIDC/IRSA and KMS
   respectively).

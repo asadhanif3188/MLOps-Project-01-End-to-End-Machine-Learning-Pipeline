@@ -79,17 +79,20 @@ the boundary is documented (here, in [docs/ci-cd.md](../ci-cd.md), and in
 over with credentials. `apply` is never run by CI under any trigger.
 
 **Trivy suppressions are a justified triage record, not a blanket mute.** This
-config intentionally carries a few exposures that suit a **short-lived,
-single-operator validation cluster** — the EKS public API endpoint defaulting to
-an open CIDR for first-run `kubectl` access, no customer-managed KMS envelope
-encryption of secrets, and the auto-assigned public IPs on the **public** subnets
-(which host NAT / future public LBs; the EKS nodes themselves are in the private
-subnets with no public IPs — [ADR-015](ADR-015-aws-network-architecture.md)). Each
-is ratified in [ADR-017](ADR-017-eks-platform.md)/[ADR-015](ADR-015-aws-network-architecture.md)
+config intentionally carries a couple of exposures that suit a **short-lived,
+single-operator validation cluster** — no customer-managed KMS envelope encryption
+of secrets, and the auto-assigned public IPs on the **public** subnets (which host
+NAT / future public LBs; the EKS nodes themselves are in the private subnets with
+no public IPs — [ADR-015](ADR-015-aws-network-architecture.md)). Each is ratified in
+[ADR-017](ADR-017-eks-platform.md)/[ADR-015](ADR-015-aws-network-architecture.md)
 and is suppressed **with written justification and an ADR cross-reference** in
 [`terraform/.trivyignore`](../../terraform/.trivyignore). Any **new** CRITICAL/HIGH
 the scanner surfaces is therefore a real, blocking regression — not expected
-noise. For a persistent/production cluster the correct action is to **remediate**
+noise. _(The EKS public-API-endpoint suppressions that used to head this list —
+`AVD-AWS-0040`/`AVD-AWS-0041` — were **removed** in Sprint 7 PR 2: the API is now
+private by default and can never be `0.0.0.0/0`, so the scanner passes on its own
+rather than being told to ignore an exposure — see
+[ADR-022](ADR-022-eks-secure-api-access.md).)_ For a persistent/production cluster the correct action is to **remediate**
 (narrow the API CIDR, disable the public endpoint, add a CMK), not to keep
 suppressing.
 

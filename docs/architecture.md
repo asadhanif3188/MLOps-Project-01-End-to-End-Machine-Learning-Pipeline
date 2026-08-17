@@ -365,6 +365,7 @@ infrastructure; the Kubernetes workload stays in Kustomize
      │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
      ├─ ECR repository + lifecycle policy            └─ security context unchanged
      └─ EKS control plane (K8s 1.35)  ◀── node ───▶
+         │   API endpoint: PRIVATE by default (public = scoped opt-in, never 0.0.0.0/0)
          └─ 1 managed node group (t3.medium, AL2023, private subnets)
 ```
 
@@ -372,12 +373,15 @@ infrastructure; the Kubernetes workload stays in Kustomize
   with public/private subnets across two AZs, a single shared NAT gateway, two
   least-privilege IAM roles, a managed EKS control plane + one small node group +
   the three core addons, and a Terraform-managed **ECR** repository with a lifecycle
-  policy (Sprint 7 PR 1, closing finding H-01). No GPUs, no autoscaler, no
-  ingress/mesh/observability stack, no unrelated services
+  policy (Sprint 7 PR 1, closing finding H-01). The EKS API endpoint is **secure by
+  default** — private-only, with public access only as a scoped opt-in that can
+  never be `0.0.0.0/0` (Sprint 7 PR 2, closing finding H-02). No GPUs, no autoscaler,
+  no ingress/mesh/observability stack, no unrelated services
   ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
   [ADR-016](decisions/ADR-016-aws-iam-foundation.md),
   [ADR-017](decisions/ADR-017-eks-platform.md),
-  [ADR-021](decisions/ADR-021-terraform-managed-ecr.md)).
+  [ADR-021](decisions/ADR-021-terraform-managed-ecr.md),
+  [ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
 - **How the workload attaches.** A thin `k8s/overlays/aws` reuses the base unchanged
   and layers only the three genuine cloud differences (ECR image, `imagePullPolicy:
   Always`, dataset mount); every security field is byte-identical to the local
@@ -386,7 +390,8 @@ infrastructure; the Kubernetes workload stays in Kustomize
   AWS credentials** (`fmt`/`validate`/`test`/TFLint/Trivy — never `plan`/`apply`,
   [ADR-019](decisions/ADR-019-terraform-ci-validation.md)); `terraform test` runs an
   offline `mock_provider` contract suite that pins the ECR security/lifecycle
-  properties. The real provisioning is an operator-driven, own-account step.
+  properties **and the secure-by-default EKS API posture** (private default, no
+  `0.0.0.0/0`). The real provisioning is an operator-driven, own-account step.
 - **Proven, then destroyed.** The platform was provisioned in the operator's own
   account, the Job ran to completion on real EKS (exit 0, 52s, all four stages,
   security controls verified live), and the environment was **destroyed and verified

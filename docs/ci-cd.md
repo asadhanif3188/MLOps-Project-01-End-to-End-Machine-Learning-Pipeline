@@ -118,7 +118,7 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 | 3 | **fmt** | `terraform fmt -check -recursive` | Canonical formatting is enforced (checked, never rewritten). Drift fails with an actionable message. |
 | 4 | **init** | `terraform init -backend=false` | Installs the pinned provider from the committed `.terraform.lock.hcl` — **no backend, no state, no AWS credentials**. Prerequisite for `validate`. |
 | 5 | **validate** | `terraform validate` | Syntax, types, references, and provider-schema conformance. **No AWS API calls.** The primary IaC correctness gate. |
-| 5b | **test** | `terraform test` | Offline contract suite in [`terraform/tests/`](../terraform/tests/) under `mock_provider "aws"` (`command = plan`) — **no AWS, no credentials**. Pins the ECR security/lifecycle contract (immutable tags, scan-on-push, encryption, retention). |
+| 5b | **test** | `terraform test` | Offline contract suite in [`terraform/tests/`](../terraform/tests/) under `mock_provider "aws"` (`command = plan`) — **no AWS, no credentials**. Pins the ECR security/lifecycle contract (immutable tags, scan-on-push, encryption, retention) **and the secure-by-default EKS API posture** (private default, public access rejected without a scoped CIDR, `0.0.0.0/0` rejected). |
 | 6 | **TFLint** | `terraform-linters/setup-tflint@v4` (0.54.0) + `tflint` | Language best-practices preset **+ AWS ruleset** (config in [`terraform/.tflint.hcl`](../terraform/.tflint.hcl)). Static lint; contacts no cloud. |
 | 7 | **Trivy IaC scan** | `trivy` 0.74.0 (pinned, checksum-verified binary) | `trivy config` misconfiguration scan of `terraform/`. **Fails on CRITICAL/HIGH.** Reads only the source — no AWS access. |
 
@@ -134,12 +134,14 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 > **own** account — see [terraform/README.md § Planning](../terraform/README.md)
 > and the boundary below.
 
-> **Trivy suppressions are a triage record, not a mute.** The handful of
-> intentional, ADR-ratified exposures for the short-lived validation cluster (the
-> open default API CIDR, no KMS envelope encryption, public-subnet public IPs) are
-> suppressed **with written justification** in
-> [`terraform/.trivyignore`](../terraform/.trivyignore); any *new* CRITICAL/HIGH
-> the scanner finds is a real, blocking regression.
+> **Trivy suppressions are a triage record, not a mute.** The remaining
+> intentional, ADR-ratified trade-offs for the short-lived validation cluster (no
+> KMS envelope encryption, public-subnet public IPs) are suppressed **with written
+> justification** in [`terraform/.trivyignore`](../terraform/.trivyignore); any
+> *new* CRITICAL/HIGH the scanner finds is a real, blocking regression. The two EKS
+> API-exposure suppressions (open public CIDR, public access enabled) were
+> **removed** in Sprint 7 PR 2: the API is now private by default, so the scanner
+> passes on its own rather than being told to ignore an exposure ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
 
 ### Job 5 — `k8s-cluster-dry-run` (Cluster Admission, opt-in)
 

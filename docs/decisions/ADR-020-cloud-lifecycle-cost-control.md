@@ -94,9 +94,12 @@ deliberate cost envelope, and document it as the operator's runbook
    are order-of-magnitude and point to live AWS pricing; the goal is to rank drivers
    and justify promptness, not to quote a bill.
 
-5. **The endpoint is locked to the operator and no static credentials exist.**
-   `cluster_endpoint_public_access_cidrs` is set to the operator's own `/32`, not
-   `0.0.0.0/0`; all AWS access is via the standard credential chain and short-lived
+5. **The endpoint is private by default (and locked to the operator when public)
+   and no static credentials exist.** The EKS API server is **private by default**
+   (ADR-022, closing H-02); if public access is opted into it must be scoped to the
+   operator's own `/32` — an unrestricted `0.0.0.0/0` is rejected by validation, not
+   just avoided by convention. All AWS access is via the standard credential chain
+   and short-lived
    `update-kubeconfig` tokens; no account ID, state, kubeconfig, or secret is
    committed (the ECR image stays a `000000000000` placeholder in git).
 
