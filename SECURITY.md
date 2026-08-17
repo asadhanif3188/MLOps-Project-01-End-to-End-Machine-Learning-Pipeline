@@ -72,8 +72,9 @@ Contributors and users should follow these practices:
   project-authored wildcard. State files and kubeconfigs are git-ignored and
   never committed. **CI holds no AWS credentials or cloud identity**: the
   `terraform-validate` job validates the IaC *statically* (`fmt`/`init
-  -backend=false`/`validate`, TFLint, Trivy) and never runs `terraform
-  plan`/`apply` — real provisioning is a deliberate, operator-driven step against
+  -backend=false`/`validate`, an offline `terraform test` contract suite, TFLint,
+  Trivy) and never runs `terraform plan`/`apply` — real provisioning is a
+  deliberate, operator-driven step against
   one's own account (see [ADR-019](docs/decisions/ADR-019-terraform-ci-validation.md)).
 - **Ephemeral cloud environment & verified teardown.** The AWS/EKS environment is
   **short-lived** — provisioned to capture evidence, then **destroyed and verified
