@@ -51,11 +51,19 @@ additional_tags = {
 # node_max_size       = 2
 # node_disk_size      = 20
 
-# API endpoint exposure. RESTRICT the public CIDRs to your operator IP for real
-# use — the default below is open only for first-run validation.
+# API endpoint exposure. SECURE BY DEFAULT (finding H-02): the Kubernetes API
+# server is PRIVATE-ONLY out of the box — public access is off and the public CIDR
+# allow-list is empty, so nothing is exposed unless you opt in. Reaching a
+# private-only endpoint needs in-VPC access (bastion / VPN / SSM / in-VPC runner).
+#
+# To run kubectl from your workstation for a validation run, opt into public
+# access AND scope it to your own IP. An unrestricted 0.0.0.0/0 (any /0) is
+# REJECTED by validation, and enabling public access with an empty CIDR list is
+# rejected too (EKS would treat empty as 0.0.0.0/0). Uncomment BOTH lines together:
 # cluster_endpoint_public_access       = true
-# cluster_endpoint_private_access      = true
-# cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]   # e.g. ["203.0.113.4/32"]
+# cluster_endpoint_public_access_cidrs = ["203.0.113.4/32"]   # YOUR IP/CIDR — never 0.0.0.0/0
+#
+# cluster_endpoint_private_access      = true   # on by default; the primary access path
 
 # Control-plane logs shipped to CloudWatch (small cost). Set to [] to disable.
 # cluster_enabled_log_types = ["api", "audit", "authenticator"]

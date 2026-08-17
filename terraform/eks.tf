@@ -28,13 +28,19 @@
 # private subnets) and so public/internal load-balancer subnet discovery works
 # in later workloads.
 #
-# Endpoint/security: both private and public API access are enabled by default
-# so an operator can validate the cluster with kubectl while in-VPC traffic
-# stays private; the public endpoint's source range is restricted via
-# cluster_endpoint_public_access_cidrs (open only for first-run validation — see
-# the variable's guidance). Access uses EKS access entries (API_AND_CONFIG_MAP)
-# and bootstraps the creating principal as cluster admin so kubectl works without
-# hand-editing the aws-auth ConfigMap.
+# Endpoint/security: SECURE BY DEFAULT (closes finding H-02). The API server is
+# PRIVATE-ONLY out of the box — endpoint_private_access defaults true and
+# endpoint_public_access defaults false, so nothing is exposed to the internet
+# without a deliberate choice. Public access is an explicit opt-in that REQUIRES
+# a scoped public_access_cidrs allow-list: an unrestricted 0.0.0.0/0 (any /0) is
+# rejected by the variable's validation, and the preconditions below reject both
+# "public on with an empty CIDR list" (EKS would silently fall back to 0.0.0.0/0)
+# and "both endpoints off" (an unreachable API). Access uses EKS access entries
+# (API_AND_CONFIG_MAP) and bootstraps the creating principal as cluster admin so
+# kubectl works without hand-editing the aws-auth ConfigMap. Reaching a
+# private-only endpoint requires in-VPC access (bastion/VPN/SSM/in-VPC runner);
+# for a workstation validation run, opt into public access scoped to your own IP.
+# See ADR-022 and terraform/README.md § EKS platform.
 resource "aws_eks_cluster" "this" {
   name     = "${local.name_prefix}-eks"
   version  = var.kubernetes_version
@@ -45,6 +51,21 @@ resource "aws_eks_cluster" "this" {
     endpoint_private_access = var.cluster_endpoint_private_access
     endpoint_public_access  = var.cluster_endpoint_public_access
     public_access_cidrs     = var.cluster_endpoint_public_access_cidrs
+  }
+
+  # Secure-by-default guardrails, enforced at plan time (H-02). These are
+  # executable invariants, not documentation: they fail `plan`/`apply` (and the
+  # offline `terraform test` suite) before an insecure cluster can be created.
+  lifecycle {
+    precondition {
+      condition     = var.cluster_endpoint_private_access || var.cluster_endpoint_public_access
+      error_message = "EKS API access is fully disabled: at least one of cluster_endpoint_private_access or cluster_endpoint_public_access must be true, otherwise the Kubernetes API server is unreachable."
+    }
+
+    precondition {
+      condition     = !var.cluster_endpoint_public_access || length(var.cluster_endpoint_public_access_cidrs) > 0
+      error_message = "cluster_endpoint_public_access is true but cluster_endpoint_public_access_cidrs is empty. EKS treats an empty public CIDR list as 0.0.0.0/0 (open to the entire internet); to opt into public access you MUST set an explicit, scoped operator IP/CIDR allow-list."
+    }
   }
 
   access_config {

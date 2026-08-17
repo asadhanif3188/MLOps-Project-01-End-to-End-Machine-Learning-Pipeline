@@ -491,12 +491,14 @@ jobs:
 
       # Static analysis of the Terraform for insecure configuration (public
       # exposure, missing encryption, over-broad IAM, …). Reads only the source —
-      # no AWS access. Fails the job on CRITICAL/HIGH. The few intentional,
-      # ADR-ratified exposures for this SHORT-LIVED validation cluster (the open
-      # default API CIDR, no KMS envelope encryption, public-subnet public IPs)
-      # are suppressed WITH justification in terraform/.trivyignore (read from the
+      # no AWS access. Fails the job on CRITICAL/HIGH. The few remaining
+      # intentional, ADR-ratified trade-offs for this SHORT-LIVED validation
+      # cluster (no KMS envelope encryption, public-subnet public IPs) are
+      # suppressed WITH justification in terraform/.trivyignore (read from the
       # job's working directory), so any NEW critical/high is a real, blocking
-      # regression rather than expected noise.
+      # regression rather than expected noise. The former EKS API-exposure
+      # suppressions were REMOVED in Sprint 7 PR 2 — the API is now private by
+      # default, so the scanner passes on its own (H-02, ADR-022).
       - name: Trivy IaC security scan (Terraform misconfiguration)
         run: |
           set -euo pipefail

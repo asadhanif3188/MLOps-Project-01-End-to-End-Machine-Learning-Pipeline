@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Secure-by-default EKS API access — closes finding H-02** (Sprint 7, PR 2) — the
+  EKS control-plane endpoint is now **private by default** and public access can
+  **never be unrestricted**, fixing an insecure default where the Kubernetes API
+  server was reachable from `0.0.0.0/0` out of the box. The fix is enforced by the
+  configuration itself, not by documentation. Design of record:
+  [ADR-022](docs/decisions/ADR-022-eks-secure-api-access.md).
+  - **Secure defaults** — in [`variables.tf`](terraform/variables.tf),
+    `cluster_endpoint_public_access` now defaults to **`false`** (was `true`) and
+    `cluster_endpoint_public_access_cidrs` to **`[]`** (was `["0.0.0.0/0"]`);
+    `cluster_endpoint_private_access` stays `true`. A fresh `apply` is private-only.
+  - **Executable guardrails** — the CIDR variable rejects **any `/0`** (including
+    `0.0.0.0/0`) and any invalid CIDR; `lifecycle` **preconditions** on
+    [`aws_eks_cluster`](terraform/eks.tf) reject enabling public access with an empty
+    allow-list (EKS would treat empty as `0.0.0.0/0`) and reject disabling both
+    endpoints (an unreachable API). Public access remains a **scoped, explicit
+    opt-in**.
+  - **Contract tests** — new [`terraform/tests/eks_api_security.tftest.hcl`](terraform/tests/eks_api_security.tftest.hcl)
+    runs offline under `mock_provider "aws"` (`command = plan`, **no AWS, no
+    credentials**) and asserts private-by-default, `0.0.0.0/0`/`/0`/invalid CIDRs
+    rejected, public-without-CIDRs rejected, both-endpoints-off rejected, and the
+    scoped opt-in planning cleanly. Wired into the existing `terraform test` CI step.
+  - **Suppressions removed, not re-justified** — the two Trivy entries that excused
+    the old open endpoint (`AVD-AWS-0040`, `AVD-AWS-0041`) are **deleted** from
+    [`terraform/.trivyignore`](terraform/.trivyignore); with no default public
+    exposure the scanner passes on its own.
+  - **Docs** — [ADR-017](docs/decisions/ADR-017-eks-platform.md) endpoint posture
+    superseded by ADR-022; [`terraform/README.md`](terraform/README.md),
+    [`terraform.tfvars.example`](terraform/terraform.tfvars.example),
+    [SECURITY.md](SECURITY.md), [architecture](docs/architecture.md),
+    [ci-cd](docs/ci-cd.md), and the
+    [cloud-operations runbook](docs/cloud-operations.md) updated for the private
+    default, the scoped opt-in, and the in-VPC-reachability limitation. No
+    credentials or account-specific values committed.
+
 ### Added
 
 - **Terraform-managed Amazon ECR — closes finding H-01** (Sprint 7, PR 1) — brings

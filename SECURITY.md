@@ -79,9 +79,14 @@ Contributors and users should follow these practices:
 - **Ephemeral cloud environment & verified teardown.** The AWS/EKS environment is
   **short-lived** — provisioned to capture evidence, then **destroyed and verified
   clean** (Terraform state empty + AWS API shows no cluster/NAT + ECR repo absent),
-  never assumed clean from the `destroy` line alone. The API endpoint is restricted
-  to the operator's own IP, not `0.0.0.0/0`, and no AWS account identifier is
-  committed (the ECR image reference stays a `000000000000` placeholder). The full
+  never assumed clean from the `destroy` line alone. The EKS API server is **private
+  by default** (finding **H-02**): public access is off out of the box, and enabling
+  it is an explicit opt-in that must be scoped to the operator's own IP/CIDR — an
+  unrestricted `0.0.0.0/0` is **rejected** by Terraform validation and cluster
+  preconditions, and pinned by an offline `terraform test` contract suite
+  ([ADR-022](docs/decisions/ADR-022-eks-secure-api-access.md)). No AWS account
+  identifier is committed (the ECR image reference stays a `000000000000`
+  placeholder). The full
   lifecycle, cost drivers, and teardown procedure are in
   [docs/cloud-operations.md](docs/cloud-operations.md)
   ([ADR-020](docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).

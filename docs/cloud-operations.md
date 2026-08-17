@@ -107,16 +107,25 @@ Downloads the pinned AWS provider (recorded in the committed
 ### 3.3 `terraform plan`
 
 Set your own values in `terraform/terraform.tfvars` first (copy
-[`terraform.tfvars.example`](../terraform/terraform.tfvars.example)). At minimum,
-**restrict the API endpoint to your own IP** and keep the node group small:
+[`terraform.tfvars.example`](../terraform/terraform.tfvars.example)). The EKS API
+server is **private by default** (finding H-02); to drive it with `kubectl` from
+your workstation, **opt into public access scoped to your own IP** and keep the
+node group small:
 
 ```hcl
 # terraform/terraform.tfvars  (git-ignored — never committed)
-cluster_endpoint_public_access_cidrs = ["<YOUR_IP>/32"]   # not 0.0.0.0/0
+cluster_endpoint_public_access       = true               # opt in (default is false / private-only)
+cluster_endpoint_public_access_cidrs = ["<YOUR_IP>/32"]   # REQUIRED when opting in — never 0.0.0.0/0
 node_desired_size = 1                                      # 1 node is enough for the Job
 node_min_size     = 1
 node_max_size     = 1
 ```
+
+> Terraform **rejects** `0.0.0.0/0` (any `/0`) and rejects enabling public access
+> with an empty CIDR list, so you cannot accidentally stand up an open endpoint. If
+> you prefer to keep the endpoint fully private, leave these unset and reach the API
+> from **inside the VPC** (bastion/VPN/SSM/in-VPC runner) instead — see
+> [§7 Limitations](#7-limitations) and [ADR-022](decisions/ADR-022-eks-secure-api-access.md).
 
 ```bash
 terraform -chdir=terraform plan -out=tfplan
@@ -162,7 +171,9 @@ kubectl get nodes -o wide                        # -> 1 node Ready, private subn
 
 `update-kubeconfig` fetches **short-lived** credentials via the AWS credential
 chain; it writes a context, not a static secret. The API is reachable only from the
-allow-listed operator CIDR set in §3.3.
+scoped operator CIDR you opted into in §3.3 — the endpoint is private by default and
+never open to `0.0.0.0/0`. (If you kept the endpoint fully private, run this and
+`kubectl` from inside the VPC instead.)
 
 ### 3.7 Publish the workload image to ECR
 
@@ -394,8 +405,10 @@ The cloud lifecycle keeps the repository safe to publish (full posture in
 - **Least-privilege IAM** — dedicated cluster/node roles, AWS-managed policies only,
   no `AdministratorAccess`, no project-authored wildcard
   ([ADR-016](decisions/ADR-016-aws-iam-foundation.md)).
-- **API endpoint restricted** — set `cluster_endpoint_public_access_cidrs` to your
-  own `/32`, not `0.0.0.0/0`.
+- **API endpoint private by default** (H-02) — public access is off out of the box;
+  opting in requires a scoped `cluster_endpoint_public_access_cidrs` (your own `/32`).
+  An unrestricted `0.0.0.0/0` is **rejected** by Terraform validation/preconditions,
+  not merely discouraged ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
 - **CI holds no AWS access** — provisioning is operator-only
   ([ADR-019](decisions/ADR-019-terraform-ci-validation.md)).
 
@@ -420,6 +433,14 @@ it is **not**:
   Prometheus/Grafana, tracing, alerting, or log aggregation.
 - **No multi-region** — one region (`us-east-1`); nothing spans or fails over
   between regions.
+- **Private API endpoint needs in-VPC reachability** — the API server is private by
+  default (H-02). Reaching it *without* the scoped public opt-in requires network
+  access into the VPC (a bastion host, a VPN/Direct Connect, an SSM port-forward, or
+  a CI/ops runner in-VPC). This project provisions **none** of those, so the
+  documented path for a workstation validation run is the scoped public opt-in
+  (`cluster_endpoint_public_access = true` + your `/32`); a standing private-only
+  operations posture would need that in-VPC access added
+  ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
 - **No disaster-recovery proof** — no backup/restore, no state replication, no RTO/RPO
   target; teardown is intentional deletion, not a recovery drill.
 - **Real DagsHub MLflow connectivity not exercised in the recorded run** — the PR 7

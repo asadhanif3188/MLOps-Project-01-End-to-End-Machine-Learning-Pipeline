@@ -48,7 +48,8 @@ terraform/
 ├── eks.tf                     # EKS cluster, managed node group, core addons (Sprint 6, PR 4)
 ├── ecr.tf                     # ECR repository + lifecycle policy (Sprint 7, PR 1 — closes H-01)
 ├── tests/                     # offline `terraform test` contract suite (mock_provider, no AWS)
-│   └── ecr.tftest.hcl        # asserts the ECR security + lifecycle contract
+│   ├── ecr.tftest.hcl        # asserts the ECR security + lifecycle contract (H-01)
+│   └── eks_api_security.tftest.hcl  # asserts the secure-by-default EKS API posture (H-02)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 
@@ -111,7 +112,9 @@ they check formatting, syntax, types, references, provider schema, contract
 assertions, lint rules, and insecure configuration purely from the source.
 `validate` is the primary correctness gate; `terraform test` runs the
 `tests/*.tftest.hcl` suite with a **mocked AWS provider** (`command = plan`, nothing
-provisioned) to pin the ECR security/lifecycle contract; `fmt`/`init
+provisioned) to pin the ECR security/lifecycle contract (H-01) **and the
+secure-by-default EKS API-access posture** (H-02 — private by default, no
+unrestricted `0.0.0.0/0`, public access only as a scoped opt-in); `fmt`/`init
 -backend=false`/`validate`/`test`/TFLint/Trivy are the same checks CI runs on every
 push and PR in the **`terraform-validate`** job, so passing them locally guarantees
 that gate is green. Design of record:
@@ -269,8 +272,8 @@ automatically. Design of record:
 
 ```text
         EKS control plane (managed)              Kubernetes 1.35
-        role: …-eks-cluster-role                 endpoint: public* + private
-        ENIs across public + private subnets     logs → CloudWatch (api/audit/authn)
+        role: …-eks-cluster-role                 endpoint: PRIVATE by default
+        ENIs across public + private subnets     (public = scoped opt-in) · logs → CloudWatch
                     │
                     ▼
         Managed node group  …-eks-ng             role: …-eks-node-role
@@ -298,17 +301,35 @@ resize. (The **PR 7 validation run used a single node** — `node_*_size = 1` vi
 git-ignored `terraform.tfvars` — which comfortably hosted the one batch `Job` plus
 the EKS system pods; the default of 2 leaves scheduling headroom.)
 
-**Endpoint & security.** Both **private and public** API access are enabled: the
-private endpoint keeps in-VPC traffic off the public path, while the public
-endpoint lets an operator validate the cluster with `kubectl`. The public
-endpoint's source range is `cluster_endpoint_public_access_cidrs` — it defaults
-to `0.0.0.0/0` **for first-run validation only** and **should be set to your
-operator IP/CIDR** for any real use. Cluster access uses **EKS access entries**
-(`API_AND_CONFIG_MAP`) and bootstraps the creating principal as cluster admin,
-so `kubectl` works without hand-editing `aws-auth`. Control-plane logging ships
-the **security-relevant** types (`api`, `audit`, `authenticator`) to CloudWatch;
-set `cluster_enabled_log_types = []` to remove that small cost. Nodes have **no
-public IP and no SSH remote-access** configured.
+**Endpoint & security — secure by default (closes finding H-02).** The API server
+is **private by default**: `cluster_endpoint_private_access` defaults **true** and
+`cluster_endpoint_public_access` defaults **false**, so out of the box the control
+plane is reachable only from inside the VPC and **nothing is exposed to the
+internet**. Public access is an **explicit opt-in** and can never be unrestricted —
+the configuration enforces this itself, not just in docs:
+
+- `cluster_endpoint_public_access_cidrs` defaults to `[]` and its validation
+  **rejects any `/0`** (including `0.0.0.0/0`);
+- a **precondition** rejects enabling public access with an **empty** CIDR list
+  (EKS would otherwise treat empty as `0.0.0.0/0`);
+- a **precondition** rejects **disabling both** endpoints (an unreachable API).
+
+To validate with `kubectl` from a workstation, opt in by setting
+`cluster_endpoint_public_access = true` **and** a scoped
+`cluster_endpoint_public_access_cidrs = ["<your-ip>/32"]`. **Operational note:** a
+private-only endpoint is **not reachable from a workstation outside the VPC** —
+reaching it needs a bastion/VPN, an SSM session, or a CI/ops runner inside the VPC;
+the scoped public opt-in is the documented path for the short-lived validation run.
+These rules are pinned by the offline
+[`tests/eks_api_security.tftest.hcl`](tests/eks_api_security.tftest.hcl) contract
+suite. Design of record: [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md).
+
+Cluster access uses **EKS access entries** (`API_AND_CONFIG_MAP`) and bootstraps
+the creating principal as cluster admin, so `kubectl` works without hand-editing
+`aws-auth`. Control-plane logging ships the **security-relevant** types (`api`,
+`audit`, `authenticator`) to CloudWatch; set `cluster_enabled_log_types = []` to
+remove that small cost. Nodes have **no public IP and no SSH remote-access**
+configured.
 
 **Intentionally not provisioned.** No GPU nodes, no Cluster Autoscaler /
 autoscaling, no service mesh, no ingress controller, no observability stack
@@ -435,7 +456,8 @@ contract is pinned by the offline `terraform test` suite
 
 | PR | Adds |
 |----|------|
-| **PR 1 (this PR)** | Terraform-managed **ECR** — the private repository + lifecycle policy that were previously created out-of-band, closing finding **H-01**. Immutable tags, scan-on-push, encrypted, retention-capped, `force_delete` for clean teardown; sensitive URL/ARN outputs; offline `terraform test` contract suite. See [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). |
+| **PR 1** | Terraform-managed **ECR** — the private repository + lifecycle policy that were previously created out-of-band, closing finding **H-01**. Immutable tags, scan-on-push, encrypted, retention-capped, `force_delete` for clean teardown; sensitive URL/ARN outputs; offline `terraform test` contract suite. See [ADR-021](../docs/decisions/ADR-021-terraform-managed-ecr.md). |
+| **PR 2 (this PR)** | **Secure-by-default EKS API access**, closing finding **H-02**. The control-plane endpoint is **private by default** (public off, CIDR list empty); public access is a scoped, explicit opt-in that **can never be `0.0.0.0/0`** — enforced by variable validation and cluster preconditions, and pinned by a new offline `terraform test` suite. The two obsolete Trivy suppressions for the old open endpoint are **removed**, not re-justified. See [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md). |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
 EKS platform** — the control plane and the on-demand node(s) bill hourly, on top
