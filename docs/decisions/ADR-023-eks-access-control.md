@@ -83,11 +83,12 @@ Kubernetes permissions.**
    `policy` defaults to **`AmazonEKSAdminPolicy`** — scoped admin across
    namespaces, **not** `system:masters` — which is sufficient for the single
    operator to create the workload namespace, run the batch `Job`, and inspect it.
-   `AmazonEKSViewPolicy`/`AmazonEKSEditPolicy` (optionally namespace-scoped) are
-   supported and documented for read-only/deploy-only identities.
-   `AmazonEKSClusterAdminPolicy` (full cluster-admin) is accepted but documented as
-   a **last resort**; the validation whitelist prevents associating an arbitrary
-   broad IAM policy.
+   The narrower `AmazonEKSViewPolicy`, `AmazonEKSAdminViewPolicy`, and
+   `AmazonEKSEditPolicy` (optionally namespace-scoped) are supported and documented
+   for read-only/deploy-only identities. `AmazonEKSClusterAdminPolicy` (full
+   cluster-admin) is accepted but documented as a **last resort**; the validation
+   whitelist (these five AWS-managed EKS access policies) prevents associating an
+   arbitrary broad IAM policy.
 
 5. **Terraform/CI needs no admin entry — documented.** This root module manages
    only AWS-API resources (there is **no `kubernetes`/`helm` provider**), so

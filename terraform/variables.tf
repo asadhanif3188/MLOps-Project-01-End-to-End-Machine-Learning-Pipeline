@@ -317,7 +317,7 @@ variable "cluster_access_entries" {
   validation {
     condition = alltrue([
       for k, e in var.cluster_access_entries :
-      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:(role|user)/.+", e.principal_arn))
+      can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:(role|user)/.+$", e.principal_arn))
     ])
     error_message = "Every cluster_access_entries principal_arn must be an IAM role or user ARN (e.g. \"arn:aws:iam::<account-id>:role/<name>\"). Assumed-role session ARNs and non-IAM ARNs are not valid access-entry principals."
   }
