@@ -27,17 +27,21 @@ resources:
 
 # Cloud image source. Nodes run in the PRIVATE subnets (ADR-015) and cannot see a
 # locally built image, so on EKS the workload image is PULLED from a registry —
-# Amazon ECR is the natural choice (the node role carries
-# AmazonEC2ContainerRegistryReadOnly from ADR-016, so the kubelet authenticates
-# the pull with the node's instance role — no pod-level credential or IRSA).
+# Amazon ECR, which is now provisioned and managed by Terraform (terraform/ecr.tf,
+# ADR-021; the manual `aws ecr create-repository` step is gone). The node role
+# carries AmazonEC2ContainerRegistryReadOnly from ADR-016, so the kubelet
+# authenticates the pull with the node's instance role — no pod-level credential
+# or IRSA.
 #
 # The values below are a committed PLACEHOLDER: `000000000000` (the AWS account
 # ID) and the region are filled in for the operator's OWN account during the real
-# cloud run (PR 7), without editing this file, via:
+# cloud run, without editing this file, from the Terraform-managed registry's URL:
 #
 #     cd k8s/overlays/aws
 #     kustomize edit set image \
-#       ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1
+#       ml-pipeline="$(terraform -chdir=../../../terraform output -raw ecr_repository_url)":1.3.1
+#
+# (equivalently: ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1)
 #
 # The tag is an explicit, immutable version (`1.3.1`, the image's BUILD_VERSION —
 # see the root README § "Running with Docker"), never `:latest`, so a run is

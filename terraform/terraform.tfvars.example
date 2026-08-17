@@ -28,6 +28,14 @@ additional_tags = {
   # CostCenter = "ml-portfolio"
 }
 
+# --- Container registry / ECR (Sprint 7, PR 1) --------------------------------
+# All non-secret. Left commented so the defaults apply (repository name follows
+# project_name, retain 10 images). See terraform/variables.tf and
+# terraform/README.md § Container registry.
+
+# ecr_repository_name = "mlops-pipeline"   # defaults to project_name if unset
+# ecr_max_image_count = 10                 # lifecycle policy: images to retain
+
 # --- EKS platform (PR 4) ------------------------------------------------------
 # All non-secret. Left commented so the cost-conscious defaults apply; uncomment
 # to override. See terraform/variables.tf and terraform/README.md § EKS platform.

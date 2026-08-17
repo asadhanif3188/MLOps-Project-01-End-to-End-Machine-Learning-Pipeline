@@ -437,6 +437,20 @@ jobs:
             exit 1
           }
 
+      # Stage 5b — Terraform contract tests (`terraform test`). Runs the offline,
+      # credential-free suite in terraform/tests/*.tftest.hcl: each run uses
+      # `mock_provider "aws"` (no AWS API call, no credentials) with `command =
+      # plan`, so nothing is provisioned. It pins the security/lifecycle contract
+      # of the ECR repository (immutable tags, scan-on-push, encryption, retention
+      # policy) so a regression fails here. Same no-AWS spirit as validate/TFLint/
+      # Trivy; the provider was already installed by the init above.
+      - name: Terraform test (offline contract suite, mocked provider)
+        run: |
+          terraform test -no-color || {
+            echo "::error::terraform test failed — an IaC contract assertion regressed. See terraform/tests/*.tftest.hcl."
+            exit 1
+          }
+
       # Stage 6 — TFLint (language best-practices preset + AWS ruleset). Static
       # lint only; contacts no cloud. Config lives in terraform/.tflint.hcl.
       - name: Set up TFLint (pinned)

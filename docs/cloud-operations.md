@@ -123,9 +123,10 @@ terraform -chdir=terraform plan -out=tfplan
 ```
 
 `plan` **contacts AWS** (to resolve caller identity and AZ data sources), so valid
-credentials are required. With the defaults it proposes **29 resources** — 18
-network + 6 IAM + 5 EKS. Review the plan; the EKS control plane, the node, and the
-NAT gateway are the resources that will start billing on apply.
+credentials are required. With the defaults it proposes **31 resources** — 18
+network + 6 IAM + 5 EKS + 2 ECR (repository + lifecycle policy, Sprint 7 PR 1).
+Review the plan; the EKS control plane, the node, and the NAT gateway are the
+resources that will start billing on apply.
 
 ### 3.4 `terraform apply`
 
@@ -135,8 +136,9 @@ terraform -chdir=terraform apply tfplan
 
 Creates the environment (~10–15 min, dominated by EKS control-plane provisioning).
 **Billing starts now** — start a mental clock; the sooner you destroy, the cheaper
-the run. In the real run this created exactly the plan: `Apply complete! Resources:
-29 added, 0 changed, 0 destroyed.`
+the run. Expect `Apply complete! Resources: 31 added, 0 changed, 0 destroyed.` (The
+original PR 7 integration run predated Terraform-managed ECR and applied 29; the two
+ECR resources this sprint adds bring a fresh apply to 31.)
 
 ### 3.5 Verify EKS
 
@@ -169,16 +171,20 @@ is pulled from a registry. The node role carries
 `AmazonEC2ContainerRegistryReadOnly`, so the kubelet authenticates the pull with the
 node's instance role — **no pod credential or IRSA**.
 
+The **ECR repository is created by `terraform apply`** above — it is
+Terraform-managed (`terraform/ecr.tf`, [ADR-021](decisions/ADR-021-terraform-managed-ecr.md)),
+so there is **no manual `aws ecr create-repository` step**. Read its URL from
+Terraform (the account ID lives in state, not in git):
+
 ```bash
-account=$(aws sts get-caller-identity --query Account --output text)
 region=us-east-1
-aws ecr create-repository --repository-name mlops-pipeline --region "$region" || true
+repo=$(terraform -chdir=terraform output -raw ecr_repository_url)   # <account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline
 aws ecr get-login-password --region "$region" \
-  | docker login --username AWS --password-stdin "$account.dkr.ecr.$region.amazonaws.com"
+  | docker login --username AWS --password-stdin "${repo%%/*}"
 
 docker build --platform linux/amd64 --provenance=false --sbom=false \
-  -t "$account.dkr.ecr.$region.amazonaws.com/mlops-pipeline:1.3.1" .
-docker push "$account.dkr.ecr.$region.amazonaws.com/mlops-pipeline:1.3.1"
+  -t "$repo:1.3.1" .
+docker push "$repo:1.3.1"
 ```
 
 Point the AWS overlay at your account **without editing any committed file** (the
@@ -186,12 +192,12 @@ committed image is a `000000000000` placeholder):
 
 ```bash
 cd k8s/overlays/aws
-kustomize edit set image \
-  ml-pipeline="$account.dkr.ecr.$region.amazonaws.com/mlops-pipeline:1.3.1"   # local, uncommitted
+kustomize edit set image ml-pipeline="$repo:1.3.1"   # local, uncommitted
 cd ../../..
 ```
 
-The tag is an explicit, immutable version (`1.3.1`), never `:latest`.
+The tag is an explicit, immutable version (`1.3.1`), never `:latest` — and the
+repository enforces **immutable tags**, so that version can never be repointed.
 
 ### 3.8 Run the workload
 
@@ -263,7 +269,7 @@ drivers, not to quote a bill.
 | **EBS volumes** | per-GB-month (gp3), prorated hourly | **Low** | 20 GiB root volume per node. |
 | **Elastic IP** | free **while attached** to the running NAT | **~Zero** | Billable only if left allocated and unattached — which `destroy` prevents. |
 | **CloudWatch Logs** | ingestion + storage | **Low** | Only `api`/`audit`/`authenticator` control-plane logs; set `cluster_enabled_log_types=[]` to drop. |
-| **ECR storage** | per-GB-month | **Low** | One image (~hundreds of MB); deleted at teardown. |
+| **ECR storage** | per-GB-month | **Low** | One image (~hundreds of MB); Terraform-managed, so removed by `terraform destroy`. A lifecycle policy also caps retained images ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)). |
 | **Data transfer / requests** | per-GB / per-request | **Low** | Small dataset, short run. |
 
 **IAM roles, VPC, subnets, route tables, internet gateway, security groups, and the
@@ -313,21 +319,21 @@ never assume `destroy` succeeded from the fact that you ran it.
 # 1. Remove the Kubernetes workload (frees the ECR pull / any LB before infra goes).
 kubectl delete -k k8s/overlays/aws          # Job + mlops namespace (cascades to ConfigMaps + pod)
 
-# 2. Delete the ECR repository (Terraform did not create it, so destroy won't remove it).
-aws ecr delete-repository --repository-name mlops-pipeline --force --region us-east-1
-
-# 3. Destroy ALL Terraform-managed infrastructure.
+# 2. Destroy ALL Terraform-managed infrastructure — including the ECR repository.
 terraform -chdir=terraform destroy           # review the plan, then confirm
-#   -> Destroy complete! Resources: 29 destroyed.
+#   -> Destroy complete! Resources: 31 destroyed.
 
-# 4. Revert any local, uncommitted overlay edits from the run.
+# 3. Revert any local, uncommitted overlay edits from the run.
 git checkout -- k8s/overlays/aws/kustomization.yaml   # restore the 000000000000 image placeholder
 ```
 
 `terraform destroy` removes everything in the state — EKS cluster, node group, NAT
-gateway, EIP, VPC, subnets, route tables, internet gateway, and IAM roles. The ECR
-repository is deleted **separately** because it is created out-of-band (by the AWS
-CLI in §3.7), not by Terraform.
+gateway, EIP, VPC, subnets, route tables, internet gateway, IAM roles, **and the ECR
+repository** (with its lifecycle policy). As of Sprint 7 PR 1 the registry is
+Terraform-managed ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)) and set to
+`force_delete`, so `destroy` removes it and any images it still holds in the same
+pass — the old separate `aws ecr delete-repository --force` step is **no longer
+needed**.
 
 ### 5.2 Verify AWS resources are gone
 
@@ -348,7 +354,7 @@ aws ecr describe-repositories --repository-names mlops-pipeline --region us-east
 
 | Check | Expected | Why it matters |
 |---|---|---|
-| `terraform show` | *"The state file is empty."* | The 29 managed resources are released. |
+| `terraform show` | *"The state file is empty."* | All managed resources (incl. the ECR repository) are released. |
 | `aws eks list-clusters` | cluster **absent** | The control plane (flat hourly) has stopped billing. |
 | `aws ec2 describe-nat-gateways` (available) | **none** | The NAT gateway (hourly + per-GB) has stopped billing. |
 | `aws ec2 describe-addresses` unattached | **none billable** | No orphaned Elastic IP (billable only while unattached). |

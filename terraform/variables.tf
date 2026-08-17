@@ -56,6 +56,34 @@ variable "additional_tags" {
   default     = {}
 }
 
+# --- Container registry / ECR (Sprint 7, PR 1) --------------------------------
+# The private Amazon ECR repository that stores the workload image. Managed by
+# Terraform (closing Sprint 6 finding H-01) so it shares the lifecycle, tagging,
+# and teardown of every other resource. See ADR-021 and terraform/README.md
+# § Container registry for the design rationale.
+
+variable "ecr_repository_name" {
+  description = "Name of the ECR repository that stores the workload image. Left null to default to project_name (\"mlops-pipeline\"), which keeps it in lock-step with the image reference committed in k8s/overlays/aws. Not environment-scoped: one artifact registry per project."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.ecr_repository_name == null ? true : can(regex("^[a-z0-9]([a-z0-9._/-]{0,254}[a-z0-9])?$", var.ecr_repository_name))
+    error_message = "ecr_repository_name must be a valid ECR repository name (2-256 chars: lowercase alphanumerics with '.', '_', '-', '/' separators, starting and ending alphanumeric) or null to default to project_name."
+  }
+}
+
+variable "ecr_max_image_count" {
+  description = "Maximum number of images the ECR lifecycle policy retains; older images beyond this count are expired automatically so registry storage cannot grow unbounded across repeated validation pushes."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.ecr_max_image_count >= 1 && var.ecr_max_image_count <= 100
+    error_message = "ecr_max_image_count must be between 1 and 100."
+  }
+}
+
 # --- Network (Sprint 6, PR 2) -------------------------------------------------
 # The VPC that hosts the EKS cluster added in a later PR. Everything below is
 # variable-driven so the same configuration works for a small dev VPC or a

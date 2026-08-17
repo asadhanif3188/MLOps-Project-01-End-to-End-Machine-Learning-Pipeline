@@ -363,25 +363,30 @@ infrastructure; the Kubernetes workload stays in Kustomize
      ├─ IGW + 1 shared NAT + EIP                   hardened batch/v1 Job (base, verbatim)
      ├─ 2 IAM roles (cluster + node,                 ├─ image ← Amazon ECR (node-role pull)
      │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
-     └─ EKS control plane (K8s 1.35)  ◀── node ───▶  └─ security context unchanged
+     ├─ ECR repository + lifecycle policy            └─ security context unchanged
+     └─ EKS control plane (K8s 1.35)  ◀── node ───▶
          └─ 1 managed node group (t3.medium, AL2023, private subnets)
 ```
 
-- **What it provisions.** 29 resources (18 network + 6 IAM + 5 EKS) — a VPC with
-  public/private subnets across two AZs, a single shared NAT gateway, two
-  least-privilege IAM roles, and a managed EKS control plane + one small node group +
-  the three core addons. No GPUs, no autoscaler, no ingress/mesh/observability stack,
-  no unrelated services ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
+- **What it provisions.** 31 resources (18 network + 6 IAM + 5 EKS + 2 ECR) — a VPC
+  with public/private subnets across two AZs, a single shared NAT gateway, two
+  least-privilege IAM roles, a managed EKS control plane + one small node group +
+  the three core addons, and a Terraform-managed **ECR** repository with a lifecycle
+  policy (Sprint 7 PR 1, closing finding H-01). No GPUs, no autoscaler, no
+  ingress/mesh/observability stack, no unrelated services
+  ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
   [ADR-016](decisions/ADR-016-aws-iam-foundation.md),
-  [ADR-017](decisions/ADR-017-eks-platform.md)).
+  [ADR-017](decisions/ADR-017-eks-platform.md),
+  [ADR-021](decisions/ADR-021-terraform-managed-ecr.md)).
 - **How the workload attaches.** A thin `k8s/overlays/aws` reuses the base unchanged
   and layers only the three genuine cloud differences (ECR image, `imagePullPolicy:
   Always`, dataset mount); every security field is byte-identical to the local
   overlay ([ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md)).
 - **Validated, not just written.** The IaC is gated in CI **statically and without
-  AWS credentials** (`fmt`/`validate`/TFLint/Trivy — never `plan`/`apply`,
-  [ADR-019](decisions/ADR-019-terraform-ci-validation.md)); the real provisioning is
-  an operator-driven, own-account step.
+  AWS credentials** (`fmt`/`validate`/`test`/TFLint/Trivy — never `plan`/`apply`,
+  [ADR-019](decisions/ADR-019-terraform-ci-validation.md)); `terraform test` runs an
+  offline `mock_provider` contract suite that pins the ECR security/lifecycle
+  properties. The real provisioning is an operator-driven, own-account step.
 - **Proven, then destroyed.** The platform was provisioned in the operator's own
   account, the Job ran to completion on real EKS (exit 0, 52s, all four stages,
   security controls verified live), and the environment was **destroyed and verified

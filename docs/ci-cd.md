@@ -9,8 +9,9 @@ and the road to **Continuous Delivery (CD)**. The implemented pipeline lives in
 > lints, tests, builds the container image to prove it assembles and runs,
 > **statically validates the Kubernetes manifests** (syntax, schema, Kustomize
 > rendering, and the workload's security/resource contract), and **statically
-> validates the Terraform IaC** (format, provider-only init, `validate`, TFLint,
-> and a Trivy misconfiguration scan — with **no AWS access**). It deliberately does
+> validates the Terraform IaC** (format, provider-only init, `validate`, an offline
+> `terraform test` contract suite, TFLint, and a Trivy misconfiguration scan — with
+> **no AWS access**). It deliberately does
 > **not** deploy, does **not** push images to any registry, does **not** run the
 > workload on a cluster, and does **not** run `terraform plan`/`apply` or provision
 > any cloud resource. The single job that contacts a Kubernetes API server is
@@ -117,6 +118,7 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 | 3 | **fmt** | `terraform fmt -check -recursive` | Canonical formatting is enforced (checked, never rewritten). Drift fails with an actionable message. |
 | 4 | **init** | `terraform init -backend=false` | Installs the pinned provider from the committed `.terraform.lock.hcl` — **no backend, no state, no AWS credentials**. Prerequisite for `validate`. |
 | 5 | **validate** | `terraform validate` | Syntax, types, references, and provider-schema conformance. **No AWS API calls.** The primary IaC correctness gate. |
+| 5b | **test** | `terraform test` | Offline contract suite in [`terraform/tests/`](../terraform/tests/) under `mock_provider "aws"` (`command = plan`) — **no AWS, no credentials**. Pins the ECR security/lifecycle contract (immutable tags, scan-on-push, encryption, retention). |
 | 6 | **TFLint** | `terraform-linters/setup-tflint@v4` (0.54.0) + `tflint` | Language best-practices preset **+ AWS ruleset** (config in [`terraform/.tflint.hcl`](../terraform/.tflint.hcl)). Static lint; contacts no cloud. |
 | 7 | **Trivy IaC scan** | `trivy` 0.74.0 (pinned, checksum-verified binary) | `trivy config` misconfiguration scan of `terraform/`. **Fails on CRITICAL/HIGH.** Reads only the source — no AWS access. |
 
@@ -124,9 +126,10 @@ reads only the source and **never contacts AWS**. Tool versions are pinned (job
 > (`aws_caller_identity`, `aws_region`, `aws_availability_zones`), so it needs
 > **live AWS credentials**. CI holds none by design, and adding long-lived AWS
 > keys to Actions to make `plan` run is the exact security regression this project
-> refuses. The `fmt` → `init` → `validate` → lint → scan chain catches formatting,
-> syntax, type, reference, and misconfiguration errors **without** any cloud
-> access; the un-run part (does this configuration *apply* cleanly against a real
+> refuses. The `fmt` → `init` → `validate` → `test` → lint → scan chain catches
+> formatting, syntax, type, reference, contract, and misconfiguration errors
+> **without** any cloud access (`terraform test` uses a mocked provider); the un-run
+> part (does this configuration *apply* cleanly against a real
 > account) is performed deliberately and out-of-band by an operator against their
 > **own** account — see [terraform/README.md § Planning](../terraform/README.md)
 > and the boundary below.

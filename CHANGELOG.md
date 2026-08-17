@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Terraform-managed Amazon ECR — closes finding H-01** (Sprint 7, PR 1) — brings
+  the container registry that stores the workload image **fully under Terraform**, so
+  the entire AWS platform now has one lifecycle (`apply` creates, `destroy` removes).
+  Previously the repository was created/deleted out-of-band with the AWS CLI, leaving
+  one live resource outside Terraform state. Design of record:
+  [ADR-021](docs/decisions/ADR-021-terraform-managed-ecr.md).
+  - **New [`terraform/ecr.tf`](terraform/ecr.tf)** — an `aws_ecr_repository` plus an
+    `aws_ecr_lifecycle_policy`. **Private** (no public/cross-account policy),
+    **immutable tags** (a version can never be repointed — matches the overlay's
+    image-pinning contract), **scan-on-push ON**, **encrypted at rest** (AES256; a KMS
+    CMK is the documented M-02 follow-up), a **lifecycle policy** retaining the most
+    recent `ecr_max_image_count` images (default 10), and `force_delete` so
+    `terraform destroy` removes it and its images in one pass.
+  - **New variables & outputs** — `ecr_repository_name` (defaults to `project_name`,
+    keeping it in lock-step with the committed overlay image) and `ecr_max_image_count`
+    in [`variables.tf`](terraform/variables.tf); `ecr_repository_name` (non-sensitive)
+    plus **`sensitive`** `ecr_repository_url` / `ecr_repository_arn` (they embed the
+    account ID) in [`outputs.tf`](terraform/outputs.tf).
+  - **No more manual ECR step** — the `aws ecr create-repository` and
+    `aws ecr delete-repository --force` steps are removed from
+    [`docs/cloud-operations.md`](docs/cloud-operations.md); the runbook now reads the
+    registry URL from `terraform output -raw ecr_repository_url`. A default plan is now
+    **31 resources** (was 29). [ADR-020](docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)
+    updated to record the manual teardown step as resolved.
+  - **Offline contract tests** — new [`terraform/tests/ecr.tftest.hcl`](terraform/tests/ecr.tftest.hcl)
+    runs under `mock_provider "aws"` (`command = plan`, **no AWS, no credentials**) and
+    asserts the name, immutability, scan-on-push, encryption, and retention policy. Wired
+    into the `terraform-validate` CI job as a `terraform test` step; `required_version`
+    raised to `>= 1.7.0` for `mock_provider`.
+  - **Security preserved** — ECR is **not** public, no new IAM permission is added (the
+    node role's existing read-only ECR pull is unchanged), and no security feature is
+    disabled to simplify. No credentials, account IDs, or environment-specific secrets
+    are committed.
+
 - **Cloud cost controls, teardown & lifecycle documentation** (Sprint 6, PR 8 —
   the final Sprint 6 PR) — completes the cloud lifecycle documentation and prepares
   the repository for the Sprint 6 release gate. **Adds no new infrastructure and
