@@ -105,8 +105,8 @@ tracking server over HTTP using the `mlflow-artifacts:` scheme. Consequences:
 - **Metadata:** the Postgres `volumeClaimTemplate` (a 1Gi PVC from the default
   StorageClass). Deleting `mlflow-postgres-0` re-binds the *same* volume to the new
   pod, so runs/experiments persist.
-- **Artifacts:** the MinIO `volumeClaimTemplate` locally; the versioned S3 bucket
-  on AWS.
+- **Artifacts:** the MinIO `volumeClaimTemplate` locally; the versioned,
+  CMK-encrypted (SSE-KMS) S3 bucket on AWS.
 - **Tracking server:** deliberately holds **no** state, so deleting the MLflow pod
   loses nothing.
 - **On EKS**, dynamic PVC provisioning requires the **EBS CSI driver**

@@ -18,9 +18,41 @@ mock_provider "aws" {
     }
   }
 
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+
   mock_data "aws_availability_zones" {
     defaults = {
       names = ["us-east-1a", "us-east-1b", "us-east-1c"]
+    }
+  }
+
+  # The CMK-policy run below uses `command = apply` (see its comment). During a
+  # mocked apply the provider would otherwise invent a random string for each
+  # computed ARN, which EKS's role_arn / key_arn format validation rejects and
+  # which would leave the key-policy JSON (it interpolates a role ARN) unknown.
+  # Pin well-formed ARNs so the mocked apply is representative, mirroring the
+  # eks_secrets_encryption test.
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::123456789012:role/mock-role"
+    }
+  }
+
+  mock_resource "aws_kms_key" {
+    defaults = {
+      arn = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+    }
+  }
+
+  # The mocked apply evaluates every module output; eks_cluster_oidc_issuer_url
+  # indexes the cluster's computed identity block, empty by default under the mock.
+  mock_resource "aws_eks_cluster" {
+    defaults = {
+      identity = [{ oidc = [{ issuer = "https://oidc.eks.us-east-1.amazonaws.com/id/MOCK" }] }]
     }
   }
 }
@@ -46,23 +78,52 @@ run "artifact_bucket_blocks_all_public_access" {
   }
 }
 
-# The bucket is encrypted at rest and versioned — durability + recoverability for
-# experiment artifacts.
-run "artifact_bucket_is_encrypted_and_versioned" {
+# The bucket is encrypted at rest with a CUSTOMER-MANAGED KMS key and versioned —
+# durability + recoverability + controllable/auditable encryption for artifacts.
+run "artifact_bucket_is_kms_encrypted_and_versioned" {
   command = plan
 
   assert {
     # `rule` is a set (not indexable), so match with a for-expression.
     condition = anytrue([
       for r in aws_s3_bucket_server_side_encryption_configuration.mlflow_artifacts.rule :
-      r.apply_server_side_encryption_by_default[0].sse_algorithm == "AES256"
+      r.apply_server_side_encryption_by_default[0].sse_algorithm == "aws:kms"
     ])
-    error_message = "The artifact bucket must have default server-side encryption (AES256/SSE-S3) enabled."
+    error_message = "The artifact bucket must use SSE-KMS (aws:kms) with the customer-managed key, not the AWS-owned SSE-S3 key."
   }
 
   assert {
     condition     = aws_s3_bucket_versioning.mlflow_artifacts.versioning_configuration[0].status == "Enabled"
     error_message = "The artifact bucket must have versioning enabled to guard against accidental overwrite/delete of artifacts."
+  }
+}
+
+# The artifact CMK is rotated and its key policy is least-privilege: only the
+# MLflow server role may use it, and no broad kms:* is granted to that role.
+# Uses `command = apply` (against the mock_provider — nothing real is created) so
+# the mocked apply resolves the computed role ARN and the whole policy JSON is
+# known and inspectable, the same technique the EKS-secrets key-policy test uses.
+run "artifact_cmk_is_rotated_and_least_privilege" {
+  command = apply
+
+  assert {
+    condition     = aws_kms_key.mlflow_artifacts.enable_key_rotation == true
+    error_message = "The MLflow artifact CMK must have automatic key rotation enabled."
+  }
+
+  assert {
+    condition     = aws_kms_alias.mlflow_artifacts.name == "alias/mlops-pipeline-dev-mlflow-artifacts"
+    error_message = "The artifact CMK must have the environment-scoped alias alias/<name_prefix>-mlflow-artifacts."
+  }
+
+  assert {
+    condition     = strcontains(aws_kms_key.mlflow_artifacts.policy, "kms:GenerateDataKey")
+    error_message = "The artifact CMK policy must grant the MLflow server role kms:GenerateDataKey (SSE-KMS write path)."
+  }
+
+  assert {
+    condition     = strcontains(aws_kms_key.mlflow_artifacts.policy, "AllowMLflowServerRoleToUseTheKey")
+    error_message = "The artifact CMK policy must scope key use to the MLflow server role (least privilege)."
   }
 }
 

@@ -2,7 +2,7 @@
 #
 # The MLflow Tracking Server (deployed via Kustomize, k8s/base/mlflow) stores its
 # experiment ARTIFACTS in S3 and its METADATA in an in-cluster PostgreSQL. This
-# file provisions the AWS half of the artifact store: a private, encrypted S3
+# file provisions the AWS half of the artifact store: a private, CMK-encrypted S3
 # bucket, plus a dedicated IAM role the tracking server assumes via EKS Pod
 # Identity — so the server reads/writes the bucket with a short-lived, pod-scoped
 # identity and there are NO static AWS keys anywhere on AWS (requirement: workload
@@ -70,16 +70,71 @@ resource "aws_s3_bucket_versioning" "mlflow_artifacts" {
   }
 }
 
-# Encrypt every object at rest. AES256 (SSE-S3, the AWS-managed key) mirrors the
-# ECR repository's encryption choice; a customer-managed KMS CMK is the documented
-# hardening follow-up (as with ECR and M-02), deliberately not bundled here to keep
-# this PR to the MLflow-platform boundary.
+# Customer-managed KMS key (CMK) for the artifact bucket. The bucket holds trained
+# models and experiment artifacts, so — consistent with the project's remediate-
+# don't-suppress stance and the EKS-secrets CMK (M-02, ADR-025) — it is encrypted
+# with a CMK we control (key rotation, auditable use in CloudTrail, revocable)
+# rather than the AWS-owned SSE-S3 key. Symmetric (the only type S3 SSE-KMS
+# supports) with annual rotation always on. deletion_window reuses the existing
+# short-lived-environment variable (ADR-020).
+resource "aws_kms_key" "mlflow_artifacts" {
+  description             = "Customer-managed CMK for the MLflow artifact S3 bucket (ADR-026)."
+  deletion_window_in_days = var.kms_key_deletion_window_days
+  enable_key_rotation     = true
+
+  # Key policy — least-privilege, mirroring kms.tf:
+  #   1. EnableIAMRootAdministration — the AWS-canonical anti-lockout statement
+  #      delegating key administration to same-account IAM (the one justified kms:*).
+  #   2. AllowMLflowServerRoleToUseTheKey — grants ONLY the MLflow server's Pod
+  #      Identity role the data-key operations SSE-KMS needs to write (GenerateDataKey)
+  #      and read (Decrypt) artifacts: no kms:* and no other principal. In-account a
+  #      key-policy grant is sufficient, so no identity-based KMS policy is added to
+  #      the role (same pattern as the EKS-secrets key).
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Id      = "${local.name_prefix}-mlflow-artifacts-key-policy"
+    Statement = [
+      {
+        Sid       = "EnableIAMRootAdministration"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowMLflowServerRoleToUseTheKey"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.mlflow_s3.arn }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+
+  tags = {
+    Name = "${local.name_prefix}-mlflow-artifacts"
+  }
+}
+
+resource "aws_kms_alias" "mlflow_artifacts" {
+  name          = "alias/${local.name_prefix}-mlflow-artifacts"
+  target_key_id = aws_kms_key.mlflow_artifacts.key_id
+}
+
+# Encrypt every object at rest with the CMK above (SSE-KMS). bucket_key_enabled
+# uses S3 Bucket Keys to cut KMS request costs for SSE-KMS at scale.
 resource "aws_s3_bucket_server_side_encryption_configuration" "mlflow_artifacts" {
   bucket = aws_s3_bucket.mlflow_artifacts.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.mlflow_artifacts.arn
     }
     bucket_key_enabled = true
   }

@@ -297,6 +297,17 @@ output "mlflow_s3_role_arn" {
   sensitive   = true
 }
 
+output "mlflow_artifacts_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key encrypting the MLflow artifact bucket (SSE-KMS). Sensitive: contains the AWS account ID."
+  value       = aws_kms_key.mlflow_artifacts.arn
+  sensitive   = true
+}
+
+output "mlflow_artifacts_kms_key_alias" {
+  description = "Human-readable alias of the MLflow artifact CMK (alias/<project>-<environment>-mlflow-artifacts). Non-sensitive identifier for the console/CloudTrail."
+  value       = aws_kms_alias.mlflow_artifacts.name
+}
+
 output "mlflow_s3_pod_identity_association_id" {
   description = "ID of the EKS Pod Identity association binding the mlops/mlflow-server service account to the MLflow S3 role. Confirms the tracking server draws S3 credentials via workload identity, not static keys."
   value       = aws_eks_pod_identity_association.mlflow_s3.association_id
