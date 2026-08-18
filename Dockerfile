@@ -149,6 +149,6 @@ USER appuser
 
 # Default command runs the full DVC pipeline. Override to run a single stage,
 # e.g. `docker run --rm ml-pipeline:local python src/preprocess.py`. Requires
-# mounted data/models and MLflow/DagsHub credentials at run time — see
-# docs/containerization.md § "Build & Run".
+# mounted data/models and a reachable MLflow tracking server (MLFLOW_TRACKING_URI;
+# no credentials — ADR-026) at run time — see docs/containerization.md § "Build & Run".
 CMD ["dvc", "repro"]

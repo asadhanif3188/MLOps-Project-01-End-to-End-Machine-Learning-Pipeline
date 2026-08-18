@@ -54,18 +54,24 @@ def build_signature(model_input: Any, model_output: Any) -> Any:
     return infer_signature(model_input, model_output)
 
 
-def log_evaluation(tracking_uri: str, metrics: Mapping[str, float]) -> None:
+def log_evaluation(
+    tracking_uri: str, metrics: Mapping[str, float], *, experiment_name: str
+) -> None:
     """Log evaluation ``metrics`` to MLflow under a fresh run.
 
     Args:
-        tracking_uri: The MLflow tracking URI (e.g. the DagsHub endpoint).
+        tracking_uri: The MLflow tracking URI — the in-cluster MLflow Service, a
+            local server, or a port-forward (resolved by :mod:`mlflow_config`).
         metrics: Metric name → value pairs to log.
+        experiment_name: Experiment to log the run under; created if it does not
+            exist (resolved by :func:`mlflow_config.resolve_experiment_name`).
 
     Raises:
         TrackingError: If MLflow rejects the connection or a logging call.
     """
     try:
         mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
         with mlflow.start_run():
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)
@@ -78,6 +84,7 @@ def log_evaluation(tracking_uri: str, metrics: Mapping[str, float]) -> None:
 def log_training_run(
     tracking_uri: str,
     *,
+    experiment_name: str,
     model: Any,
     signature: Any,
     metrics: Mapping[str, float],
@@ -95,6 +102,8 @@ def log_training_run(
 
     Args:
         tracking_uri: The MLflow tracking URI.
+        experiment_name: Experiment to log the run under; created if it does not
+            exist (resolved by :func:`mlflow_config.resolve_experiment_name`).
         model: The fitted estimator to log.
         signature: The model's MLflow signature (see :func:`build_signature`).
         metrics: Metric name → value pairs to log.
@@ -107,6 +116,7 @@ def log_training_run(
     """
     try:
         mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
         with mlflow.start_run():
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)

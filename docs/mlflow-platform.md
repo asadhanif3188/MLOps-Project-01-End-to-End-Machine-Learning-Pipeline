@@ -111,6 +111,35 @@ races a not-yet-Ready server (it waits deterministically instead of burning a
 retry). If the server never comes up, the init container fails after ~5 min and the
 Job fails cleanly (then retries per `backoffLimit`).
 
+## Pipeline tracking configuration
+
+The pipeline's tracking configuration is resolved by
+[`src/mlflow_config.py`](../src/mlflow_config.py) **before** the (lazy) MLflow
+import, so a misconfiguration fails fast as a typed `ConfigError` with no MLflow,
+network, or credentials involved. In-cluster these come from the base
+`ConfigMap` ([`k8s/base/configmap.yaml`](../k8s/base/configmap.yaml)); locally
+from `.env` (see [`.env.example`](../.env.example)).
+
+| Env var | Required | Default | Purpose |
+|---|---|---|---|
+| `MLFLOW_TRACKING_URI` | Yes | — | The tracking server. In-cluster it is the `mlflow` Service DNS name; the value lives in config, never hardcoded in Python. |
+| `MLFLOW_EXPERIMENT_NAME` | No | `mlops-pipeline` | Experiment the train/evaluate runs are grouped under (instead of MLflow's catch-all `Default`). |
+| `MLFLOW_ALLOW_FILE_STORE` | No | unset (off) | Opt-in escape hatch for a local `file:` store — see the guard below. |
+
+**File-store guard.** A `file:` (or scheme-less) tracking URI records runs to the
+local filesystem. In a cluster that filesystem is the pod's *ephemeral* storage,
+so every run, metric, and artifact vanishes when the pod exits — the "transient
+offline file store" failure mode. `resolve_tracking_uri()` therefore **rejects** a
+file-store URI unless `MLFLOW_ALLOW_FILE_STORE` is truthy (`1`/`true`/`yes`/`on`),
+turning a silent data-loss footgun into an explicit, offline-only choice. Normal
+runs against this platform need a server URI and never set the flag.
+
+**No credentials.** The server is internal-only and unauthenticated, so the
+pipeline carries no MLflow username/password/token and no S3 access — artifacts are
+proxied through the server (`mlflow-artifacts:`). The platform's *own* Secrets
+(`mlflow-db-credentials`, `mlflow-s3-credentials`) are a separate concern, created
+out-of-band per [Deploy (local)](#deploy-local).
+
 ## Persistence test — the real proof
 
 A Deployment becoming Ready proves nothing about persistence. The real test:

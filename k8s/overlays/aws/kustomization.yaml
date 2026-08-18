@@ -14,9 +14,11 @@
 #   2. Image pull policy + runtime dataset source — expressed by the strategic
 #      merge patch `job-cloud.yaml`.
 #   3. MLflow backend — the AWS overlay intentionally does NOT override
-#      MLFLOW_TRACKING_URI, so the base ConfigMap's real DagsHub endpoint is used
-#      with credentials from the out-of-band Secret. (The LOCAL overlay overrides
-#      it to an in-pod file store; AWS exercises the real tracking path instead.)
+#      MLFLOW_TRACKING_URI: both overlays use the SAME in-cluster MLflow Service
+#      from the base ConfigMap (ADR-026), needing no credentials. They differ only
+#      in the server's own artifact store (local MinIO vs real Amazon S3), which is
+#      transparent to the pipeline. (Pre-Sprint-7 this was a DagsHub endpoint on
+#      AWS and an in-pod file store locally; both are gone.)
 #
 # Render and inspect with:  kustomize build k8s/overlays/aws
 apiVersion: kustomize.config.k8s.io/v1beta1

@@ -49,8 +49,10 @@ class ModelError(PipelineError):
 
 
 class TrackingError(PipelineError):
-    """Experiment tracking (MLflow / DagsHub) failed.
+    """Experiment tracking (MLflow) failed.
 
     Raised when the tracking backend is unreachable, rejects a logging call, or
-    is otherwise misconfigured at the point of a network interaction.
+    is otherwise misconfigured at the point of a network interaction. The backend
+    is the project's in-cluster MLflow Tracking Server (ADR-026); before that it
+    was DagsHub-hosted MLflow, removed from the runtime path in Sprint 7.
     """

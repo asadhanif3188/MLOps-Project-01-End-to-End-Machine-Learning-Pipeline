@@ -33,13 +33,13 @@
 #      >> and this keeps PR 5 to configuration, not new AWS storage services
 #      >> (a Sprint 6 non-goal). See ADR-018.
 #
-#   3. MLflow backend — DELIBERATELY NOT patched here. The local overlay
-#      overrides MLFLOW_TRACKING_URI to an in-pod file store for an offline run;
-#      the AWS overlay omits that override so the base ConfigMap's real DagsHub
-#      endpoint is used, with credentials supplied by the out-of-band Secret
-#      (mlops-pipeline-secret, optional). The cloud run therefore exercises the
-#      REAL MLflow tracking path. Credentials are never committed (see
-#      base/secret.example.yaml); they are created out-of-band for PR 7.
+#   3. MLflow backend — DELIBERATELY NOT patched here. Both overlays use the SAME
+#      in-cluster MLflow Service from the base ConfigMap (ADR-026); the AWS overlay
+#      adds no MLFLOW_TRACKING_URI override. The pipeline needs no credentials (the
+#      server is internal-only) and no S3 access (artifacts are proxied through the
+#      server). The only cloud difference is the server's OWN artifact store — real
+#      Amazon S3 vs local MinIO — which is transparent to the pipeline. (Pre-Sprint-7
+#      this was a DagsHub endpoint + out-of-band credential Secret; both are gone.)
 apiVersion: batch/v1
 kind: Job
 metadata:

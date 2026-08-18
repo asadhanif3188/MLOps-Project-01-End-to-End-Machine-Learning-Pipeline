@@ -21,7 +21,7 @@
 #                exercise the real production image locally.
 #
 # Quick start:
-#   cp .env.example .env         # fill in MLflow / DagsHub credentials
+#   cp .env.example .env         # set MLFLOW_TRACKING_URI (see .env.example)
 #   docker compose up -d         # build + start the dev environment
 #   docker compose exec dev bash # get a shell; run `make check`, `dvc repro`, ...
 #
@@ -48,9 +48,10 @@ services:
         BUILD_VERSION: ${BUILD_VERSION:-0.0.0-dev}
     image: ml-pipeline:dev
     container_name: mlops-dev
-    # Credentials are OPTIONAL for the dev loop (lint/type/test need none). The
-    # file is loaded when present so `dvc repro` inside the container can reach
-    # MLflow/DagsHub; a fresh clone with no .env still starts cleanly.
+    # The .env is OPTIONAL for the dev loop (lint/type/test need none). It is
+    # loaded when present so `dvc repro` inside the container can reach the MLflow
+    # tracking server via MLFLOW_TRACKING_URI; a fresh clone with no .env still
+    # starts cleanly. The in-cluster server needs no credentials (ADR-026).
     env_file:
       - path: .env
         required: false
@@ -99,7 +100,8 @@ services:
     image: ml-pipeline:local
     container_name: mlops-pipeline
     profiles: ["pipeline"]
-    # The batch run DOES need credentials to log to MLflow/DagsHub.
+    # The batch run needs MLFLOW_TRACKING_URI to log to the MLflow server (no
+    # credentials — the in-cluster server is unauthenticated; ADR-026).
     env_file:
       - path: .env
         required: false

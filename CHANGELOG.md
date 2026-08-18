@@ -164,6 +164,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pipeline ↔ in-cluster MLflow integration, proven live** (Sprint 7, PR 7) —
+  makes the training/evaluation workload log to the project's own **in-cluster
+  MLflow Tracking Server** (ADR-026) and proves it with a real run, finishing the
+  DagsHub removal from the **experiment-tracking runtime path**. Design of record:
+  [docs/proof/sprint-07-mlflow-integration-evidence.md](docs/proof/sprint-07-mlflow-integration-evidence.md).
+  - **A real configuration model** — new [`src/mlflow_config.py`](src/mlflow_config.py)
+    centralizes tracking config and is resolved by both stages *before* the lazy
+    MLflow import (fails fast, no MLflow needed to validate). `resolve_tracking_uri()`
+    requires `MLFLOW_TRACKING_URI` and **guards against a local file store**: a
+    `file:`/scheme-less URI is rejected unless `MLFLOW_ALLOW_FILE_STORE` opts in,
+    turning the silent "runs vanish on pod exit" footgun into an explicit,
+    offline-only choice. `resolve_experiment_name()` groups runs under a named
+    experiment (`MLFLOW_EXPERIMENT_NAME`, default `mlops-pipeline`) instead of
+    MLflow's catch-all `Default`.
+  - **Config, not code** — the Service DNS name and experiment stay in the Kustomize
+    `ConfigMap` ([`k8s/base/configmap.yaml`](k8s/base/configmap.yaml), now also
+    carrying `MLFLOW_EXPERIMENT_NAME`); no namespace/Service name is hardcoded in
+    Python. No credential Secret is in the pipeline's runtime path.
+  - **DagsHub removed from the runtime path** — the residual DagsHub mentions in the
+    tracking/exception docstrings are reconciled to the in-cluster reality (kept as
+    dated historical notes, not deleted). The DVC **data** remote (`.dvc/config`) is
+    a separate versioning concern and unchanged; the in-cluster run never contacts it.
+  - **Tests** — new [`tests/unit/test_mlflow_config.py`](tests/unit/test_mlflow_config.py)
+    covers URI resolution, the file-store guard (default-reject, opt-in spellings,
+    falsey values), and experiment-name defaulting; the train/evaluate stub-boundary
+    tests assert the configured experiment reaches the tracking layer. `128 passed`.
+  - **Live evidence** — a green `Job` on Docker Desktop Kubernetes logged experiment
+    `mlops-pipeline` (id 1), two `FINISHED` runs (train + evaluate), accuracy metrics,
+    tuned params, and a registered model (`Best Random Forest Classifier` v3, `READY`)
+    whose `model.skops` bytes are physically in the S3 (MinIO) store — over HTTP to
+    the `mlflow` Service, with no credentials.
+
 - **Terraform-managed Amazon ECR — closes finding H-01** (Sprint 7, PR 1) — brings
   the container registry that stores the workload image **fully under Terraform**, so
   the entire AWS platform now has one lifecycle (`apply` creates, `destroy` removes).

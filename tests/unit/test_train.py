@@ -170,6 +170,7 @@ def test_train_logs_run_across_the_stubbed_boundary(
     assert len(stub_tracking["training"]) == 1
     run = stub_tracking["training"][0]
     assert run["tracking_uri"] == "http://stub"
+    assert run["experiment_name"] == "mlops-pipeline"
     assert run["metrics"]["accuracy"] == pytest.approx(run["metrics"]["accuracy"])
     assert run["params"]["best_n_estimators"] == 7
     assert run["params"]["best_max_depth"] == 4

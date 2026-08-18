@@ -18,6 +18,14 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > **[ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)**. The MLflow
 > platform's own out-of-band Secrets (`mlflow-db-credentials`,
 > `mlflow-s3-credentials`) are created per that guide.
+>
+> **Sprint 7, PR 7 — pipeline integration proven live.** The pipeline now logs to
+> the in-cluster server for real: a green `Job` run logged an experiment, two runs
+> (train + evaluate), metrics, params, and a registered model whose artifact bytes
+> landed in the S3 store — over HTTP to the `mlflow` Service, with no credentials.
+> This supersedes the "connectivity not exercised / transient offline file store"
+> caveats in the pre-Sprint-7 sections below and in the Sprint 6 evidence. Full
+> record: **[docs/proof/sprint-07-mlflow-integration-evidence.md](../docs/proof/sprint-07-mlflow-integration-evidence.md)**.
 
 > **Status — operations & proof (Sprint 5, PR 7).** PR 1 established
 > the structure and namespace; PR 2 made it a **runnable** workload (real

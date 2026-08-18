@@ -273,6 +273,16 @@ infrastructure defined as code.
   operator-driven, own-account step.
 - ⬜ **Monitoring** and centralized logging for pipeline and infrastructure health —
   not implemented; diagnosis is `kubectl` + structured logs (roadmap v6).
+- ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the
+  **experiment-tracking** path (tracking now runs on the in-cluster MLflow platform,
+  [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), but the DVC **data/model
+  remote** in [`.dvc/config`](../.dvc/config) still uses DagsHub's S3-compatible
+  endpoint — a separate *versioning* concern. Point it at the project's own S3
+  (the same Terraform-provisioned bucket family the MLflow artifact store uses),
+  authorized by EKS Pod Identity rather than committed keys, so the whole platform
+  is self-hosted with no external SaaS in any runtime path. Deliberately deferred:
+  in-cluster runs already avoid the remote (`core.no_scm` + a mounted dataset), so
+  this is not blocking. Ratify as an ADR.
 
 **Expected outcome:** Production-deployable infrastructure, provisioned
 reproducibly from code with clear separation of environments.
