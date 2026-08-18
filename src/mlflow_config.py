@@ -99,10 +99,11 @@ def resolve_tracking_uri() -> str:
             f"runs to the local filesystem instead of the shared MLflow tracking "
             f"server. In a cluster that filesystem is the pod's ephemeral storage, so "
             f"every run, metric, and artifact is lost when the pod exits. Point "
-            f"{TRACKING_URI_ENV} at the MLflow server (e.g. the in-cluster Service "
-            f"'http://mlflow.mlops.svc.cluster.local:5000' or a 'kubectl port-forward' "
-            f"to it), or set {ALLOW_FILE_STORE_ENV}=true to deliberately use a local "
-            f"file store for offline development."
+            f"{TRACKING_URI_ENV} at the MLflow server (in-cluster: the tracking "
+            f"Service supplied by the pipeline ConfigMap; locally: a "
+            f"'kubectl port-forward' to it or your own 'mlflow server'), or set "
+            f"{ALLOW_FILE_STORE_ENV}=true to deliberately use a local file store for "
+            f"offline development."
         )
     return uri
 
