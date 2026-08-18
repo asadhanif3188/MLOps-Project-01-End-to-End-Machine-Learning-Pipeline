@@ -133,6 +133,52 @@ spec:
         # Required by the restricted Pod Security Standard.
         seccompProfile:
           type: RuntimeDefault
+      # Readiness gate on the tracking platform (Sprint 7, PR 6 — ADR-026). The
+      # pipeline logs to the in-cluster MLflow server; if it starts before the
+      # server is Ready, the `train` stage's tracking call fails and the Job burns a
+      # retry. This init container BLOCKS the pipeline container until MLflow's
+      # /health returns 200, turning a race into a deterministic wait. It uses the
+      # SAME pipeline image (so the overlay's image pin rewrites it too) and needs no
+      # extra tooling — just Python's stdlib. /health is exempt from MLflow's host
+      # validation, so the FQDN works with no allow-list dependency. If MLflow never
+      # becomes Ready it exits non-zero after ~5 min, failing the Job cleanly (which
+      # then retries per backoffLimit) rather than hanging.
+      initContainers:
+        - name: wait-for-mlflow
+          image: ml-pipeline
+          command: ["python", "-c"]
+          args:
+            - |
+              import os, sys, time, urllib.request
+              url = os.environ.get("MLFLOW_TRACKING_URI", "").rstrip("/") + "/health"
+              attempts = 60
+              for i in range(attempts):
+                  try:
+                      with urllib.request.urlopen(url, timeout=3) as r:
+                          if r.status == 200:
+                              print(f"MLflow ready at {url}")
+                              sys.exit(0)
+                  except Exception as e:  # any failure just means "not ready yet"
+                      print(f"[{i + 1}/{attempts}] waiting for MLflow at {url}: {e}")
+                  time.sleep(5)
+              print(f"MLflow not ready after {attempts * 5}s", file=sys.stderr)
+              sys.exit(1)
+          # MLFLOW_TRACKING_URI comes from the same ConfigMap the pipeline reads.
+          envFrom:
+            - configMapRef:
+                name: mlops-pipeline-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
       containers:
         - name: pipeline
           # The actual image the project builds. Name only here — the tag is

@@ -36,6 +36,15 @@
 # a different registry name is genuinely needed.
 locals {
   ecr_repository_name = coalesce(var.ecr_repository_name, var.project_name)
+
+  # Second per-project registry: the MLflow Tracking Server image
+  # (docker/mlflow/Dockerfile) needs its own repository, separate from the pipeline
+  # image's. The name is fixed (not env-scoped, same rationale as the pipeline repo)
+  # and matches the committed reference in k8s/overlays/aws/kustomization.yaml
+  # (".../mlflow-server"). Added in Sprint 7, PR 6 (ADR-026) so the AWS MLflow
+  # platform is fully wired: previously the overlay referenced a repository nothing
+  # provisioned.
+  mlflow_server_repository_name = "mlflow-server"
 }
 
 resource "aws_ecr_repository" "this" {
@@ -76,6 +85,53 @@ resource "aws_ecr_repository" "this" {
 # within a single environment's life, old images are reaped automatically.
 resource "aws_ecr_lifecycle_policy" "this" {
   repository = aws_ecr_repository.this.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire all but the most recent ${var.ecr_max_image_count} images to cap registry storage."
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = var.ecr_max_image_count
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
+# --- MLflow Tracking Server registry (Sprint 7, PR 6 — ADR-026) ----------------
+# A dedicated repository for the MLflow server image, with the SAME hardened
+# contract as the pipeline repository above (immutable tags, scan-on-push, AES256
+# at rest, force_delete for the ephemeral environment). Kept a separate resource
+# rather than folding both into a for_each so the pipeline repository
+# (aws_ecr_repository.this) and its outputs/tests stay stable.
+resource "aws_ecr_repository" "mlflow_server" {
+  name = local.mlflow_server_repository_name
+
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  force_delete = true
+
+  tags = {
+    Name = local.mlflow_server_repository_name
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "mlflow_server" {
+  repository = aws_ecr_repository.mlflow_server.name
 
   policy = jsonencode({
     rules = [

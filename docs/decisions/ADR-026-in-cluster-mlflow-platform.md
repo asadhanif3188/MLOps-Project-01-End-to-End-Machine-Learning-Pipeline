@@ -238,6 +238,14 @@ reference** survives in any rendered manifest.
   out-of-band Secrets; on AWS the server uses Pod Identity, so no static keys exist.
 - **Client simplification.** The pipeline logs over HTTP with no S3 config and no
   credentials; artifacts are proxied through the server.
+- **Deterministic ordering.** The pipeline Job carries a `wait-for-mlflow` init
+  container that polls the server's `/health` (exempt from host validation) and
+  blocks the pipeline until it is Ready — turning a start-order race into a bounded
+  wait. Verified: with the server scaled to 0 the init container blocks; the instant
+  it is scaled back up the init passes and the pipeline completes.
+- **AWS path fully wired.** Terraform provisions a dedicated `mlflow-server` ECR
+  repository (alongside the pipeline repository) with the same hardened contract, so
+  the AWS overlay's server-image reference resolves to a repository Terraform owns.
 - **Same contract, statically checked.** `k8s/validate.py` gained an "MLflow
   tracking platform" section (server probes/resources/hardening, internal-only
   Service, explicit Postgres PVC, no-DagsHub, in-cluster tracking URI) that runs in

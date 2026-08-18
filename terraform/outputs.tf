@@ -256,6 +256,21 @@ output "ecr_repository_arn" {
   sensitive   = true
 }
 
+# The MLflow server image's own registry (Sprint 7, PR 6). Push the
+# docker/mlflow/Dockerfile image here and set it on the k8s AWS overlay's
+# mlflow-server image. Same sensitivity treatment as the pipeline repository.
+
+output "mlflow_server_ecr_repository_name" {
+  description = "Name of the Terraform-managed ECR repository holding the MLflow Tracking Server image."
+  value       = aws_ecr_repository.mlflow_server.name
+}
+
+output "mlflow_server_ecr_repository_url" {
+  description = "Registry URI of the MLflow server ECR repository. Tag/push the docker/mlflow image here and set it on k8s/overlays/aws. Sensitive: the URI contains the AWS account ID."
+  value       = aws_ecr_repository.mlflow_server.repository_url
+  sensitive   = true
+}
+
 # --- MLflow artifact store / S3 + Pod Identity (Sprint 7, PR 6) ----------------
 # The S3 bucket backing the in-cluster MLflow platform's artifacts and the
 # workload identity that grants the tracking server (and only it) access. Set the

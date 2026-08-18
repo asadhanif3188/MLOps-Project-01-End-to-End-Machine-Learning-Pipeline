@@ -105,6 +105,12 @@ kubectl -n mlops logs job/mlops-pipeline | tail
 
 The run's metrics/params land in PostgreSQL and its model/artifacts in S3 (MinIO).
 
+The pipeline Job carries a `wait-for-mlflow` **init container** that polls the
+server's `/health` and blocks the pipeline until it returns 200 — so the Job never
+races a not-yet-Ready server (it waits deterministically instead of burning a
+retry). If the server never comes up, the init container fails after ~5 min and the
+Job fails cleanly (then retries per `backoffLimit`).
+
 ## Persistence test — the real proof
 
 A Deployment becoming Ready proves nothing about persistence. The real test:
@@ -140,6 +146,15 @@ pod. The executed evidence is recorded in
 The AWS path is authored in `k8s/overlays/aws` + `terraform/` and applied by the
 operator against their own account (operator-driven apply, as elsewhere):
 
+- **Images → ECR.** Terraform provisions TWO repositories: `mlops-pipeline` (the
+  pipeline image) and `mlflow-server` (the tracking server image). Build, tag, and
+  push both, then pin them on the overlay:
+  ```bash
+  cd k8s/overlays/aws
+  kustomize edit set image \
+    ml-pipeline="$(terraform -chdir=../../../terraform output -raw ecr_repository_url)":<ver> \
+    mlflow-server="$(terraform -chdir=../../../terraform output -raw mlflow_server_ecr_repository_url)":<ver>
+  ```
 - **Artifacts → real S3.** `terraform/s3.tf` provisions a private, encrypted,
   versioned bucket. Set it on the overlay:
   ```bash
