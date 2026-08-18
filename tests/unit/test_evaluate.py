@@ -143,9 +143,14 @@ def test_evaluate_produces_readable_metrics_artifact(
     assert set(payload) == {"accuracy"}
     assert isinstance(payload["accuracy"], float)
     assert 0.0 <= payload["accuracy"] <= 1.0
-    # The persisted metrics were also handed across the (stubbed) boundary.
+    # The persisted metrics were also handed across the (stubbed) boundary, under
+    # the configured (default) experiment.
     assert stub_tracking["evaluation"] == [
-        {"tracking_uri": "http://stub", "metrics": payload}
+        {
+            "tracking_uri": "http://stub",
+            "metrics": payload,
+            "experiment_name": "mlops-pipeline",
+        }
     ]
 
 

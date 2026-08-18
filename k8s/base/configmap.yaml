@@ -38,5 +38,12 @@ data:
   # fully-qualified name resolves from any namespace; within mlops, `mlflow:5000`
   # also works. Both overlays use this same server — they differ only in the
   # server's artifact backend (local MinIO vs real S3), which is transparent to
-  # the client.
+  # the client. The service DNS name lives HERE, not in Python: the code resolves
+  # it from this env var (src/mlflow_config.py), so no namespace/Service name is
+  # hardcoded in the application.
   MLFLOW_TRACKING_URI: "http://mlflow.mlops.svc.cluster.local:5000"
+  # Experiment the pipeline's train/evaluate runs are grouped under on the server
+  # (read by src/mlflow_config.resolve_experiment_name). Optional — the code
+  # defaults to "mlops-pipeline" — but set explicitly so the grouping is legible
+  # in the manifest and easy to repoint per environment.
+  MLFLOW_EXPERIMENT_NAME: "mlops-pipeline"

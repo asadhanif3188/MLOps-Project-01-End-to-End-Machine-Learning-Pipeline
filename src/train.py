@@ -26,7 +26,8 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import GridSearchCV, train_test_split
 
 from logging_config import configure_logging, get_logger
-from pipeline_io import ensure_columns, load_params, read_csv, require_env, save_pickle
+from mlflow_config import resolve_experiment_name, resolve_tracking_uri
+from pipeline_io import ensure_columns, load_params, read_csv, save_pickle
 from stage_runner import run_stage
 
 logger = get_logger("train")
@@ -193,7 +194,8 @@ def train(
     Raises:
         DataError: If the dataset cannot be read/lacks ``target``, or the model
             cannot be written.
-        ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
+        ConfigError: If ``MLFLOW_TRACKING_URI`` is unset or names a local file
+            store without ``MLFLOW_ALLOW_FILE_STORE`` (see :mod:`mlflow_config`).
         TrackingError: If MLflow tracking fails.
         ModelError: If the trained model cannot be serialized.
     """
@@ -205,7 +207,8 @@ def train(
     y = data[target]
 
     # Validate the tracking config up front — fail fast before the expensive fit.
-    tracking_uri = require_env("MLFLOW_TRACKING_URI")
+    tracking_uri = resolve_tracking_uri()
+    experiment_name = resolve_experiment_name()
 
     result = run_training(
         X,
@@ -227,6 +230,7 @@ def train(
 
     log_training_run(
         tracking_uri,
+        experiment_name=experiment_name,
         model=result.model,
         signature=build_signature(X, y),
         metrics={"accuracy": result.accuracy},

@@ -29,12 +29,12 @@ from sklearn.metrics import accuracy_score
 
 from exceptions import ModelError
 from logging_config import configure_logging, get_logger
+from mlflow_config import resolve_experiment_name, resolve_tracking_uri
 from pipeline_io import (
     ensure_columns,
     load_params,
     load_pickle,
     read_csv,
-    require_env,
     write_json,
 )
 from stage_runner import run_stage
@@ -98,7 +98,8 @@ def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) ->
     Raises:
         DataError: If the dataset cannot be read/lacks ``target``, or the metrics
             cannot be written.
-        ConfigError: If ``MLFLOW_TRACKING_URI`` is not set.
+        ConfigError: If ``MLFLOW_TRACKING_URI`` is unset or names a local file
+            store without ``MLFLOW_ALLOW_FILE_STORE`` (see :mod:`mlflow_config`).
         ModelError: If the model cannot be loaded or fails to predict.
         TrackingError: If logging to MLflow fails.
     """
@@ -109,7 +110,8 @@ def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) ->
     X = data.drop(columns=[target])
     y = data[target]
 
-    tracking_uri = require_env("MLFLOW_TRACKING_URI")
+    tracking_uri = resolve_tracking_uri()
+    experiment_name = resolve_experiment_name()
 
     model = load_pickle(model_path)
     metrics = compute_metrics(model, X, y, data_path)
@@ -122,7 +124,7 @@ def evaluate(data_path: str, model_path: str, target: str, metrics_path: str) ->
     # module's import graph so the computation above stays testable without it.
     from tracking import log_evaluation
 
-    log_evaluation(tracking_uri, metrics)
+    log_evaluation(tracking_uri, metrics, experiment_name=experiment_name)
 
     logger.info("Evaluate stage completed; model accuracy: %.4f", metrics["accuracy"])
 

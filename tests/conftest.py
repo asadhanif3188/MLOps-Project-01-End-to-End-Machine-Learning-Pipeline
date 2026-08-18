@@ -142,9 +142,9 @@ def stub_tracking(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     def log_training_run(tracking_uri: str, **kwargs: Any) -> None:
         calls["training"].append({"tracking_uri": tracking_uri, **kwargs})
 
-    def log_evaluation(tracking_uri: str, metrics: Any) -> None:
+    def log_evaluation(tracking_uri: str, metrics: Any, **kwargs: Any) -> None:
         calls["evaluation"].append(
-            {"tracking_uri": tracking_uri, "metrics": dict(metrics)}
+            {"tracking_uri": tracking_uri, "metrics": dict(metrics), **kwargs}
         )
 
     module.build_signature = build_signature  # type: ignore[attr-defined]
