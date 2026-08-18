@@ -27,9 +27,13 @@ from mlflow.models import infer_signature
 from exceptions import TrackingError
 
 # Reused for both stages' failure messages: the actionable next steps are the
-# same whichever call fails.
+# same whichever call fails. The tracking server is the project's in-cluster
+# MLflow platform (ADR-026); the hint stays backend-agnostic so it is accurate
+# whether the URI points at the in-cluster Service, a port-forward, or a local
+# `mlflow server`.
 _TRACKING_HINT = (
-    "Check the tracking URI and your DagsHub credentials / network connection."
+    "Check that MLFLOW_TRACKING_URI points at a reachable MLflow tracking server "
+    "and that the server is healthy."
 )
 
 

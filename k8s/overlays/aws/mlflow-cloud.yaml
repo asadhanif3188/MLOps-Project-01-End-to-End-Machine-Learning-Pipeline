@@ -1,0 +1,43 @@
+# AWS-overlay MLflow patch (Sprint 7, PR 6) — point the tracking server at the
+# REAL, Terraform-provisioned S3 bucket, using EKS Pod Identity for credentials.
+#
+# The base MLflow Deployment reads AWS credentials from the (optional)
+# `mlflow-s3-credentials` Secret and its artifact destination from the base
+# ConfigMap (a local MinIO default). On AWS BOTH change, and BOTH changes are here:
+#
+#   * MLFLOW_ARTIFACTS_DESTINATION — overridden (an `env` entry wins over the base
+#     ConfigMap's `envFrom` value) to the real S3 bucket. This is a committed
+#     PLACEHOLDER, filled in for the operator's OWN account from Terraform output,
+#     WITHOUT editing this file:
+#
+#         cd k8s/overlays/aws
+#         kustomize edit add configmap ... # (or edit MLFLOW_ARTIFACTS_DESTINATION)
+#         # bucket name: terraform -chdir=../../../terraform output -raw mlflow_artifact_bucket_name
+#         # => s3://<bucket>/artifacts
+#
+#   * AWS_DEFAULT_REGION — boto3's region for real S3.
+#
+# What is deliberately ABSENT (this is the workload-identity design, ADR-026):
+#   * NO MLFLOW_S3_ENDPOINT_URL — boto3 talks to real Amazon S3, not MinIO.
+#   * NO mlflow-s3-credentials Secret is created on AWS — the optional envFrom in
+#     the base resolves to nothing, and boto3 instead obtains SHORT-LIVED,
+#     POD-SCOPED credentials from EKS Pod Identity (the mlflow-server IAM role bound
+#     in terraform/s3.tf). There are no static AWS keys on the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlops
+spec:
+  template:
+    spec:
+      containers:
+        - name: mlflow
+          env:
+            # PLACEHOLDER bucket — replace with the Terraform-provisioned bucket for
+            # your account (see the header). The `<account-id>` mirrors the ECR
+            # overlay's committed-placeholder convention.
+            - name: MLFLOW_ARTIFACTS_DESTINATION
+              value: "s3://mlops-pipeline-dev-mlflow-artifacts-000000000000/artifacts"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"

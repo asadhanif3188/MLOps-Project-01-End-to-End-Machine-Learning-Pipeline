@@ -36,10 +36,14 @@
 #   * Dataset — the runtime image excludes data via `.dockerignore`. The local
 #     overlay mounts it read-only at `/app/data/raw` from a ConfigMap generated
 #     out of the (git-ignored) local dataset file.
-# MLflow credentials remain injectable via the Secret; the local overlay instead
-# points MLFLOW_TRACKING_URI at an in-pod file store so a local run needs no
-# external MLflow or credentials. Verified end to end on Docker Desktop Kubernetes
-# (Job Completed, exit 0, all four stages). Design of record: ADR-013. Security
+# Sprint 7 PR 6 (ADR-026) rewired MLflow: the base ConfigMap now points
+# MLFLOW_TRACKING_URI at the PERSISTENT in-cluster MLflow Tracking Server Service
+# (PostgreSQL + S3 backend), replacing the removed DagsHub SaaS and the local
+# overlay's in-pod file store. The pipeline needs no MLflow credentials (the
+# server is internal-only, no client auth) and no S3 access (artifacts are proxied
+# through the server), so the former credential Secret ref is gone. Verified end
+# to end on Docker Desktop Kubernetes (Job Completed, exit 0, all four stages).
+# Runtime contract design of record: ADR-013. Security
 # rationale and the read-only-root decision remain in
 # docs/decisions/ADR-010-kubernetes-security-hardening.md; see also
 # docs/kubernetes-architecture.md § "Identity & security boundary".
@@ -236,24 +240,23 @@ spec:
               subPath: config.local
               readOnly: true
           # Externalized configuration (PR 3). The image stays immutable; env-var
-          # config is injected from the cluster:
+          # config is injected from the cluster via the base ConfigMap:
           #   * configMapRef — non-secret config (LOG_LEVEL, MLFLOW_TRACKING_URI),
           #     always present (it is part of the Kustomize base).
-          #   * secretRef    — MLflow credentials (MLFLOW_TRACKING_USERNAME/
-          #     _PASSWORD). optional: true so `kubectl apply -k` succeeds before
-          #     the operator creates the out-of-band Secret (see secret.example.yaml);
-          #     without it the pipeline still runs but the MLflow calls fail with a
-          #     clear auth error — the credentials are never baked into the image.
-          # Both sources inject env vars whose names match exactly what the code
-          # reads (require_env / logging_config / the MLflow client). The local
-          # overlay overrides MLFLOW_TRACKING_URI to an in-pod file store so a
-          # local validation run needs no external MLflow/credentials (ADR-013).
+          # The ConfigMap injects env vars whose names match exactly what the code
+          # reads (require_env / logging_config / the MLflow client).
+          #
+          # No credential Secret is referenced any more (Sprint 7, PR 6 — ADR-026).
+          # Tracking now targets the in-cluster MLflow Tracking Server, which runs
+          # internal-only with no client authentication, so the pipeline needs no
+          # MLFLOW_TRACKING_USERNAME/_PASSWORD. The former out-of-band DagsHub Secret
+          # is gone. S3 artifact credentials live ONLY on the tracking server (via
+          # its Secret locally, or EKS Pod Identity on AWS) — the pipeline uploads
+          # artifacts through the server (`mlflow-artifacts:` proxy) and never holds
+          # S3 access itself.
           envFrom:
             - configMapRef:
                 name: mlops-pipeline-config
-            - secretRef:
-                name: mlops-pipeline-secret
-                optional: true
       # Pod-level volumes. The base declares only the DVC no-SCM config source
       # (environment-independent). The dataset volume is added by the local
       # overlay, where the dataset provisioning mechanism is chosen and clearly

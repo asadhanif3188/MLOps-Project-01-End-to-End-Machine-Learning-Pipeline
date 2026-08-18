@@ -1,0 +1,167 @@
+# PostgreSQL — the MLflow metadata backend (relational store for experiments,
+# runs, params, metrics, tags, and the Model Registry).
+#
+# Why a StatefulSet with volumeClaimTemplates, and NOT a Deployment:
+# MLflow's metadata is durable state. A StatefulSet gives this pod a STABLE
+# identity (`mlflow-postgres-0`) and, crucially, a PersistentVolumeClaim that is
+# RE-BOUND to the new pod when the pod is deleted/rescheduled — so the database
+# SURVIVES pod recreation. A Deployment with an emptyDir (or no volume) would lose
+# every experiment the moment the pod restarted; a Deployment sharing one PVC
+# risks two pods mounting the same volume during a rollout (data corruption). The
+# StatefulSet is the correct primitive for single-writer durable state.
+#
+# Why PostgreSQL and not SQLite: MLflow can use a SQLite file as its backend, but
+# SQLite is a single-file, single-writer store with no real concurrency and a
+# fragility on networked/again-mounted filesystems that makes it the wrong
+# durable backend for a shared tracking server. PostgreSQL is the backend MLflow
+# documents for a real deployment and removes the single-writer weakness. Full
+# rationale and the rejected alternatives are in ADR-026.
+#
+# Persistence is EXPLICIT: the volumeClaimTemplate below requests a 1Gi PVC from
+# the cluster's default StorageClass (local: rancher.io/local-path; EKS: an
+# EBS-backed gp3 class). The claim, not an ephemeral dir, is what makes the
+# metadata durable across pod recreation.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mlflow-postgres
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-postgres
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-metadata-db
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # The governing (headless) Service — required by a StatefulSet for stable
+  # network identity. Defined at the bottom of this file.
+  serviceName: mlflow-postgres
+  # Exactly one replica. This is a single-writer metadata DB; HA/replication
+  # (e.g. a managed RDS or a Postgres operator) is deliberate future work, not a
+  # silent gap (ADR-026 § Consequences).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mlflow-postgres
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: tracking-metadata-db
+    spec:
+      # No Kubernetes API access needed.
+      automountServiceAccountToken: false
+      # Pod-level security context. Runs as the image's non-root `postgres` user
+      # (uid/gid 999 in the official Debian image). fsGroup 999 makes the mounted
+      # PVC group-writable so initdb can create the data directory, and the
+      # postgres socket dir (/var/run/postgresql, owned by 999 in the image) is
+      # already writable — so the server never needs root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          # Pinned minor. Alpine/Debian variants both run non-root here; the
+          # default Debian variant is used for the widest filesystem compatibility.
+          image: postgres:16.4
+          ports:
+            - name: postgres
+              containerPort: 5432
+          # POSTGRES_DB is non-secret (ConfigMap); POSTGRES_USER/POSTGRES_PASSWORD
+          # are the out-of-band Secret (created like the pipeline's — never
+          # committed). optional:false on the Secret ref is deliberate: without
+          # credentials the database MUST NOT initialise, so the pod stays not-ready
+          # until the operator creates the Secret, rather than booting an
+          # unauthenticated database.
+          envFrom:
+            - configMapRef:
+                name: mlflow-config
+            - secretRef:
+                name: mlflow-db-credentials
+          env:
+            # Keep the data in a SUBDIRECTORY of the mount, not the mount root.
+            # initdb refuses a non-empty data dir, and a freshly provisioned PVC
+            # can carry a lost+found; a subdir sidesteps both and is the documented
+            # pattern for the official image on Kubernetes.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # Readiness gates dependent workloads (the MLflow server, the pipeline
+          # Job) until the DB actually accepts connections; liveness restarts a
+          # wedged server. `pg_isready` is the DB's own health check.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-p", "5432"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-p", "5432"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Modest, explicit resources (requirement: requests + limits). The
+          # metadata DB for a small batch pipeline is light; Burstable QoS.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  # The durable claim. Deleting the pod re-binds THIS volume to the replacement
+  # pod, which is what makes MLflow metadata survive pod recreation. The
+  # StorageClass is intentionally unset so the cluster's DEFAULT class is used
+  # (portable across Docker Desktop / kind / EKS); make it explicit per
+  # environment if a specific class is required.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: mlflow-postgres
+          app.kubernetes.io/part-of: mlops-pipeline
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# Headless Service (clusterIP: None) — the StatefulSet's governing Service. It
+# gives the pod a stable in-cluster DNS name (`mlflow-postgres` within the mlops
+# namespace, or `mlflow-postgres.mlops.svc.cluster.local`) that the MLflow server
+# uses in its backend-store URI. Headless is correct for a single stateful pod:
+# DNS resolves straight to the pod, with no load-balancing VIP in front of a DB.
+# It is internal-only (ClusterIP) — the database is never exposed outside the
+# cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-postgres
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-postgres
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-metadata-db
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mlflow-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

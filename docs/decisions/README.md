@@ -33,6 +33,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-023](ADR-023-eks-access-control.md) | Explicit EKS Access Entries (scoped policies, no creator-admin) — closes H-03 | Accepted (design) | 2026-08-17 |
 | [ADR-024](ADR-024-vpc-cni-pod-identity.md) | VPC CNI Identity via EKS Pod Identity (dedicated role, off the node role) — closes M-01 | Accepted (design) | 2026-08-17 |
 | [ADR-025](ADR-025-eks-secrets-kms-encryption.md) | EKS Secret Envelope Encryption with a Customer-Managed KMS Key — closes M-02 | Accepted (design) | 2026-08-17 |
+| [ADR-026](ADR-026-in-cluster-mlflow-platform.md) | Persistent In-Cluster MLflow Tracking Platform (PostgreSQL + S3); removes DagsHub | Accepted (validated) | 2026-08-18 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and

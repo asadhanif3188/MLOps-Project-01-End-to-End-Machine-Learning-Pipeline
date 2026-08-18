@@ -3,20 +3,25 @@
 # Twelve-factor config: the image stays immutable and environment-specific,
 # non-sensitive values are injected at run time (consistent with ADR-005 and the
 # docker-compose `environment:` block). Only values that are genuinely NOT secret
-# live here; credentials go in a Secret (see secret.example.yaml), never here.
+# live here; credentials go in Secrets, never here.
 #
 # Every key is a real environment variable the application code reads:
 #   * LOG_LEVEL          — read by src/logging_config.py (default "INFO").
 #   * MLFLOW_TRACKING_URI — read by src/train.py / src/evaluate.py via
 #                           require_env("MLFLOW_TRACKING_URI"); passed to
-#                           mlflow.set_tracking_uri(). It is an ENDPOINT, not a
-#                           credential — authentication uses the Secret's
-#                           MLFLOW_TRACKING_USERNAME / MLFLOW_TRACKING_PASSWORD.
+#                           mlflow.set_tracking_uri(). It points at the in-cluster
+#                           MLflow Tracking Server's ClusterIP Service (Sprint 7,
+#                           PR 6): the pipeline logs experiments to the PERSISTENT,
+#                           self-hosted platform (PostgreSQL + S3), not to an
+#                           external SaaS. It is an ENDPOINT, not a credential; the
+#                           server runs internal-only with no client auth, so the
+#                           pipeline needs no MLflow username/password.
 #
-# The URI is the project's public DagsHub MLflow endpoint — the same host already
-# committed (non-secret) as the DVC S3 remote in .dvc/config, so committing it
-# here leaks nothing. A future staging/prod overlay repoints it with a patch or a
-# configMapGenerator without editing this base.
+# DagsHub removed (ADR-026). The former public DagsHub MLflow endpoint and its
+# out-of-band credential Secret are gone: experiment tracking now runs on the
+# in-cluster platform under this project's own control. (DVC's separate
+# S3-compatible data remote in .dvc/config is a different concern — data/model
+# versioning — and is out of scope for this change.)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -29,4 +34,9 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 data:
   LOG_LEVEL: "INFO"
-  MLFLOW_TRACKING_URI: "https://dagshub.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline.mlflow"
+  # In-cluster MLflow Tracking Server Service (base/mlflow/deployment.yaml). The
+  # fully-qualified name resolves from any namespace; within mlops, `mlflow:5000`
+  # also works. Both overlays use this same server — they differ only in the
+  # server's artifact backend (local MinIO vs real S3), which is transparent to
+  # the client.
+  MLFLOW_TRACKING_URI: "http://mlflow.mlops.svc.cluster.local:5000"

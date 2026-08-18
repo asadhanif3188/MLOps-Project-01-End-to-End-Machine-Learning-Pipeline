@@ -1,0 +1,42 @@
+# ConfigMap — non-secret configuration for the MLflow tracking platform.
+#
+# Only genuinely non-sensitive values live here; credentials (the PostgreSQL
+# username/password and, on local, the MinIO access keys) are in out-of-band
+# Secrets (see secret.example.yaml and the overlays), never here.
+#
+# Every key is consumed as an environment variable by the PostgreSQL StatefulSet
+# and/or the MLflow Deployment:
+#   * POSTGRES_HOST                — the metadata DB Service DNS name. The MLflow
+#                                    server builds its SQLAlchemy backend-store URI
+#                                    from this; the value is the headless Service
+#                                    `mlflow-postgres` (resolved within the mlops
+#                                    namespace).
+#   * POSTGRES_DB                  — the database name MLflow uses for its metadata
+#                                    (experiments, runs, params, metrics, the Model
+#                                    Registry). Also the DB the Postgres image
+#                                    initialises on first boot.
+#   * MLFLOW_PORT                  — the port the tracking server listens on and the
+#                                    Service targets.
+#   * MLFLOW_ARTIFACTS_DESTINATION — the S3 URI the server proxies artifacts to
+#                                    (`--artifacts-destination`). The default below
+#                                    targets the LOCAL MinIO bucket; the AWS overlay
+#                                    overrides it with the real S3 bucket. The
+#                                    ARTIFACT bytes live in S3, never in this
+#                                    ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlflow-config
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-config
+    app.kubernetes.io/managed-by: kustomize
+data:
+  POSTGRES_HOST: "mlflow-postgres"
+  POSTGRES_DB: "mlflow"
+  MLFLOW_PORT: "5000"
+  # Local default (MinIO bucket `mlflow`). The AWS overlay overrides this with the
+  # Terraform-provisioned S3 bucket URI via a deployment env patch.
+  MLFLOW_ARTIFACTS_DESTINATION: "s3://mlflow/artifacts"

@@ -4,6 +4,21 @@ Kubernetes deployment surface for the End-to-End ML Pipeline. This directory
 holds the **architectural foundation** for running the pipeline as a
 Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 
+> **⚠️ Update — MLflow tracking platform (Sprint 7, PR 6; supersedes the
+> DagsHub/file-store narrative below).** Experiment tracking now runs on a
+> **persistent, self-hosted MLflow platform inside the cluster** — a stateless
+> MLflow Tracking Server (`k8s/base/mlflow/`) backed by a **PostgreSQL** metadata
+> database and an **S3** artifact store (MinIO locally; real Amazon S3 on EKS via
+> Terraform + EKS Pod Identity). **DagsHub has been removed** and the pipeline Job
+> no longer uses a credential Secret or a file store: it logs over HTTP to the
+> in-cluster `mlflow` Service (`MLFLOW_TRACKING_URI` in the base ConfigMap). Where
+> sections below describe the DagsHub endpoint, the `mlops-pipeline-secret`, or the
+> local file-store override, read them as the **pre-Sprint-7 state**; the current
+> design of record is **[docs/mlflow-platform.md](../docs/mlflow-platform.md)** and
+> **[ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)**. The MLflow
+> platform's own out-of-band Secrets (`mlflow-db-credentials`,
+> `mlflow-s3-credentials`) are created per that guide.
+
 > **Status — operations & proof (Sprint 5, PR 7).** PR 1 established
 > the structure and namespace; PR 2 made it a **runnable** workload (real
 > `ml-pipeline:local` image, real `dvc repro`, finite-run lifecycle —

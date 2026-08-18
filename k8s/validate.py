@@ -204,7 +204,14 @@ def validate() -> int:
         r.check(sec, "rendered output contains a Job", False, "no Job found in render")
         return r.render()
     r.check(sec, "rendered output contains a Job", True)
-    job = jobs[0]
+    # Select the PIPELINE Job by name. The local overlay now renders a second Job
+    # (`minio-setup`, the artifact-bucket bootstrap), so `jobs[0]` is no longer
+    # unambiguously the pipeline — the workload-contract checks below must target
+    # `mlops-pipeline` explicitly (they assert its command, dataset mount, etc.).
+    job = next(
+        (j for j in jobs if j.get("metadata", {}).get("name") == "mlops-pipeline"),
+        jobs[0],
+    )
     pod = pod_spec_of(job)
     containers = containers_of(job)
 
@@ -529,6 +536,179 @@ def validate() -> int:
         "MLFLOW_TRACKING_URI configured (env override or envFrom ConfigMap)",
         "MLFLOW_TRACKING_URI" in env or envfrom_has_uri,
         "no MLFLOW_TRACKING_URI in container env or referenced ConfigMap",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Section 6 — MLflow tracking platform (Sprint 7, PR 6; ADR-026).
+    # ------------------------------------------------------------------ #
+    # The persistent in-cluster MLflow platform: a stateless tracking-server
+    # Deployment fronted by an INTERNAL Service, backed by a PostgreSQL StatefulSet
+    # whose PVC makes metadata survive pod recreation. These checks assert the
+    # platform's declared contract (probes, resources, hardening, internal-only
+    # exposure, explicit persistence) on the rendered overlay. STILL static: they
+    # prove the manifest declares the platform, not that it runs (that is the
+    # persistence test in ADR-026).
+    sec = "6. MLflow tracking platform"
+
+    # (a) The tracking server Deployment exists and is hardened + probed + bounded.
+    deployments = by_kind.get("Deployment", [])
+    mlflow_dep = next(
+        (d for d in deployments if d.get("metadata", {}).get("name") == "mlflow"),
+        None,
+    )
+    r.check(
+        sec,
+        "MLflow tracking server Deployment present",
+        mlflow_dep is not None,
+        "no Deployment/mlflow in render",
+    )
+    if mlflow_dep is not None:
+        mpod = pod_spec_of(mlflow_dep)
+        mcs = containers_of(mlflow_dep)
+        mc = mcs[0] if mcs else {}
+        r.check(
+            sec,
+            "MLflow server: readiness + liveness probes",
+            bool(mc.get("readinessProbe")) and bool(mc.get("livenessProbe")),
+            "the tracking server must define both readiness and liveness probes",
+        )
+        mreqs = mc.get("resources", {}).get("requests", {})
+        mlimits = mc.get("resources", {}).get("limits", {})
+        r.check(
+            sec,
+            "MLflow server: CPU/memory requests + limits",
+            bool(mreqs.get("cpu"))
+            and bool(mreqs.get("memory"))
+            and bool(mlimits.get("cpu"))
+            and bool(mlimits.get("memory")),
+            f"requests={mreqs}, limits={mlimits}",
+        )
+        mpod_sc = mpod.get("securityContext", {}) or {}
+        r.check(
+            sec,
+            "MLflow server: pod runAsNonRoot true",
+            mpod_sc.get("runAsNonRoot") is True,
+            f"runAsNonRoot={mpod_sc.get('runAsNonRoot')!r}",
+        )
+        mc_sc = mc.get("securityContext", {}) or {}
+        mcaps = (mc_sc.get("capabilities", {}) or {}).get("drop", [])
+        mdrops = {str(x).upper() for x in mcaps}
+        r.check(
+            sec,
+            "MLflow server: allowPrivilegeEscalation false + drop ALL",
+            mc_sc.get("allowPrivilegeEscalation") is False and "ALL" in mdrops,
+            f"allowPrivilegeEscalation={mc_sc.get('allowPrivilegeEscalation')!r}, "
+            f"drop={sorted(mdrops)}",
+        )
+        mimage = mc.get("image", "")
+        mtag = (
+            mimage.rsplit(":", 1)[-1] if ":" in mimage and "@" not in mimage else mimage
+        )
+        r.check(
+            sec,
+            "MLflow server: explicit pinned image",
+            bool(mimage) and (":" in mimage or "@" in mimage) and mtag != "latest",
+            f"image={mimage!r} (must have an explicit non-latest tag/digest)",
+        )
+
+    # (b) The tracking Service exists and is INTERNAL ONLY (requirement 13): a
+    # ClusterIP (or unset, which defaults to ClusterIP), never a NodePort or
+    # LoadBalancer that would expose the no-auth server outside the cluster.
+    mlflow_svc = next(
+        (
+            s
+            for s in by_kind.get("Service", [])
+            if s.get("metadata", {}).get("name") == "mlflow"
+        ),
+        None,
+    )
+    r.check(
+        sec,
+        "MLflow Service present",
+        mlflow_svc is not None,
+        "no Service/mlflow in render",
+    )
+    if mlflow_svc is not None:
+        svc_type = mlflow_svc.get("spec", {}).get("type", "ClusterIP")
+        r.check(
+            sec,
+            "MLflow Service is internal-only (ClusterIP)",
+            svc_type == "ClusterIP",
+            f"service type={svc_type!r} (must be ClusterIP — internal, requirement 13)",
+        )
+
+    # (c) The metadata backend is a StatefulSet with an EXPLICIT PVC template — the
+    # single thing that makes MLflow metadata survive pod recreation.
+    statefulsets = by_kind.get("StatefulSet", [])
+    pg = next(
+        (
+            s
+            for s in statefulsets
+            if s.get("metadata", {}).get("name") == "mlflow-postgres"
+        ),
+        None,
+    )
+    r.check(
+        sec,
+        "PostgreSQL metadata StatefulSet present",
+        pg is not None,
+        "no StatefulSet/mlflow-postgres in render",
+    )
+    if pg is not None:
+        vcts = pg.get("spec", {}).get("volumeClaimTemplates", []) or []
+        r.check(
+            sec,
+            "PostgreSQL persistence is explicit (volumeClaimTemplate)",
+            bool(vcts)
+            and any(
+                (v.get("spec", {}).get("resources", {}).get("requests", {}) or {}).get(
+                    "storage"
+                )
+                for v in vcts
+            ),
+            "the Postgres StatefulSet must declare a volumeClaimTemplate "
+            "with a storage request",
+        )
+        pg_c = containers_of(pg)[0] if containers_of(pg) else {}
+        pg_reqs = pg_c.get("resources", {}).get("requests", {})
+        pg_limits = pg_c.get("resources", {}).get("limits", {})
+        r.check(
+            sec,
+            "PostgreSQL: CPU/memory requests + limits",
+            bool(pg_reqs.get("cpu"))
+            and bool(pg_reqs.get("memory"))
+            and bool(pg_limits.get("cpu"))
+            and bool(pg_limits.get("memory")),
+            f"requests={pg_reqs}, limits={pg_limits}",
+        )
+
+    # (d) DagsHub is fully removed (ADR-026): no rendered manifest may reference it
+    # (endpoint, credentials, or otherwise). Guards against a stray leftover.
+    dagshub_hits = [
+        f"{d.get('kind')}/{d.get('metadata', {}).get('name')}:{k}"
+        for d in docs
+        for k, v in walk_strings(d)
+        if "dagshub" in v.lower()
+    ]
+    r.check(
+        sec,
+        "no DagsHub reference in rendered output",
+        not dagshub_hits,
+        f"DagsHub still referenced: {dagshub_hits}",
+    )
+
+    # (e) The pipeline's tracking URI now targets the in-cluster server over HTTP
+    # (not a file store, not an external SaaS) — the platform is actually wired in.
+    tracking_uri_vals = [
+        cm.get("data", {}).get("MLFLOW_TRACKING_URI", "")
+        for cm in by_kind.get("ConfigMap", [])
+        if cm.get("metadata", {}).get("name") == "mlops-pipeline-config"
+    ]
+    r.check(
+        sec,
+        "pipeline MLFLOW_TRACKING_URI points at the in-cluster server (http)",
+        any(uri.startswith("http") and "mlflow" in uri for uri in tracking_uri_vals),
+        f"mlops-pipeline-config MLFLOW_TRACKING_URI values: {tracking_uri_vals}",
     )
 
     return r.render()
