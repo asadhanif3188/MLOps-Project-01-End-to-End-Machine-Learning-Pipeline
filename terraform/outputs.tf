@@ -255,3 +255,66 @@ output "ecr_repository_arn" {
   value       = aws_ecr_repository.this.arn
   sensitive   = true
 }
+
+# The MLflow server image's own registry (Sprint 7, PR 6). Push the
+# docker/mlflow/Dockerfile image here and set it on the k8s AWS overlay's
+# mlflow-server image. Same sensitivity treatment as the pipeline repository.
+
+output "mlflow_server_ecr_repository_name" {
+  description = "Name of the Terraform-managed ECR repository holding the MLflow Tracking Server image."
+  value       = aws_ecr_repository.mlflow_server.name
+}
+
+output "mlflow_server_ecr_repository_url" {
+  description = "Registry URI of the MLflow server ECR repository. Tag/push the docker/mlflow image here and set it on k8s/overlays/aws. Sensitive: the URI contains the AWS account ID."
+  value       = aws_ecr_repository.mlflow_server.repository_url
+  sensitive   = true
+}
+
+# --- MLflow artifact store / S3 + Pod Identity (Sprint 7, PR 6) ----------------
+# The S3 bucket backing the in-cluster MLflow platform's artifacts and the
+# workload identity that grants the tracking server (and only it) access. Set the
+# bucket name on the k8s AWS overlay's MLFLOW_ARTIFACTS_DESTINATION from the bucket
+# output. Role ARNs embed the account ID and are marked sensitive, consistent with
+# the other ARN outputs; the bucket NAME is non-sensitive (it contains the account
+# ID by construction for global uniqueness, so it is treated as sensitive too).
+
+output "mlflow_artifact_bucket_name" {
+  description = "Name of the S3 bucket that stores MLflow artifacts. Set it on k8s/overlays/aws (MLFLOW_ARTIFACTS_DESTINATION = s3://<bucket>/artifacts). Sensitive: the name embeds the AWS account ID for global uniqueness."
+  value       = aws_s3_bucket.mlflow_artifacts.bucket
+  sensitive   = true
+}
+
+output "mlflow_artifact_bucket_arn" {
+  description = "ARN of the MLflow artifact S3 bucket. Sensitive: contains the AWS account ID."
+  value       = aws_s3_bucket.mlflow_artifacts.arn
+  sensitive   = true
+}
+
+output "mlflow_s3_role_arn" {
+  description = "ARN of the IAM role the MLflow Tracking Server assumes via EKS Pod Identity for S3 access (bound to the mlops/mlflow-server service account). Sensitive: contains the AWS account ID."
+  value       = aws_iam_role.mlflow_s3.arn
+  sensitive   = true
+}
+
+output "mlflow_artifacts_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key encrypting the MLflow artifact bucket (SSE-KMS). Sensitive: contains the AWS account ID."
+  value       = aws_kms_key.mlflow_artifacts.arn
+  sensitive   = true
+}
+
+output "mlflow_artifacts_kms_key_alias" {
+  description = "Human-readable alias of the MLflow artifact CMK (alias/<project>-<environment>-mlflow-artifacts). Non-sensitive identifier for the console/CloudTrail."
+  value       = aws_kms_alias.mlflow_artifacts.name
+}
+
+output "mlflow_s3_pod_identity_association_id" {
+  description = "ID of the EKS Pod Identity association binding the mlops/mlflow-server service account to the MLflow S3 role. Confirms the tracking server draws S3 credentials via workload identity, not static keys."
+  value       = aws_eks_pod_identity_association.mlflow_s3.association_id
+}
+
+output "ebs_csi_role_arn" {
+  description = "ARN of the IAM role the Amazon EBS CSI driver controller assumes via EKS Pod Identity to provision EBS volumes (e.g. the MLflow Postgres PVC). Sensitive: contains the AWS account ID."
+  value       = aws_iam_role.ebs_csi.arn
+  sensitive   = true
+}

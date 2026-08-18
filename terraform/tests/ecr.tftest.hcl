@@ -71,6 +71,38 @@ run "ecr_defaults_preserve_security_contract" {
   }
 }
 
+# The MLflow server registry (Sprint 7, PR 6) exists and carries the SAME hardened
+# contract as the pipeline registry: fixed name matching the AWS overlay, immutable
+# tags, scan-on-push, encryption, and a retention policy.
+run "mlflow_server_ecr_preserves_security_contract" {
+  command = plan
+
+  assert {
+    condition     = aws_ecr_repository.mlflow_server.name == "mlflow-server"
+    error_message = "The MLflow server ECR repository must be named \"mlflow-server\" to match the committed image reference in k8s/overlays/aws."
+  }
+
+  assert {
+    condition     = aws_ecr_repository.mlflow_server.image_tag_mutability == "IMMUTABLE"
+    error_message = "MLflow server ECR image tags must be IMMUTABLE (reproducible, pinned pulls)."
+  }
+
+  assert {
+    condition     = aws_ecr_repository.mlflow_server.image_scanning_configuration[0].scan_on_push == true
+    error_message = "scan_on_push must stay enabled on the MLflow server registry."
+  }
+
+  assert {
+    condition     = aws_ecr_repository.mlflow_server.encryption_configuration[0].encryption_type == "AES256"
+    error_message = "The MLflow server registry must be encrypted at rest (AES256)."
+  }
+
+  assert {
+    condition     = aws_ecr_lifecycle_policy.mlflow_server.repository == aws_ecr_repository.mlflow_server.name
+    error_message = "A lifecycle policy must be attached to the MLflow server registry to cap image accumulation."
+  }
+}
+
 # The repository name is overridable without touching resource definitions.
 run "ecr_repository_name_override" {
   command = plan

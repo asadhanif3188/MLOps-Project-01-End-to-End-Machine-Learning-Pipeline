@@ -13,22 +13,36 @@ kind: Kustomization
 
 resources:
   - ../../base
+  # Local S3 artifact backend for the MLflow platform (Sprint 7, PR 6): MinIO
+  # (S3-compatible) + a one-shot Job that creates the `mlflow` bucket. On AWS the
+  # equivalent is a real Terraform-provisioned S3 bucket, so these render ONLY in
+  # the local overlay. See ADR-026 and minio.yaml.
+  - minio.yaml
+  - minio-setup-job.yaml
+  - mlflow-boto-config.yaml
 
 # Pin the base image to the tag built locally per the README (§ "Running with
 # Docker") and docker-compose (`ml-pipeline:local`). For a local kind/minikube
 # run the image is side-loaded into the cluster (e.g.
 # `kind load docker-image ml-pipeline:local`) rather than pulled from a registry.
+# The MLflow server image (docker/mlflow/Dockerfile) is likewise built and imported
+# locally as `mlflow-server:local`.
 # A published registry tag and an explicit imagePullPolicy are deferred until
 # image publishing exists (roadmap).
 images:
   - name: ml-pipeline
     newTag: local
+  - name: mlflow-server
+    newTag: local
 
-# Runtime-execution patch (PR 8). Layers the LOCAL-specific runtime inputs onto
-# the base Job: the dataset volume/mount (out-of-band ConfigMap, mounted at
-# /app/data/raw) and the offline MLflow file-store env override. The base already
-# provides the environment-independent DVC no-SCM config. Rationale and the
-# "local validation, not production storage" scoping are inline in the patch and
-# in ADR-013.
+# Patches (Sprint 7, PR 6):
+#   * job-runtime.yaml       — layers the LOCAL dataset mount onto the base Job
+#     (the base provides the environment-independent DVC no-SCM config; the former
+#     MLflow file-store override is removed — the Job now logs to the in-cluster
+#     server). Rationale in the patch and ADR-013.
+#   * mlflow-local-patch.yaml — points the MLflow server's S3 client at the
+#     in-cluster MinIO (endpoint URL + path-style addressing). Rationale in the
+#     patch and ADR-026.
 patches:
   - path: job-runtime.yaml
+  - path: mlflow-local-patch.yaml

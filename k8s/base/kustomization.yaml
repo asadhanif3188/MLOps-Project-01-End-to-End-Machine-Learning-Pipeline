@@ -18,10 +18,17 @@ resources:
   - configmap.yaml
   - dvc-config.yaml
   - job.yaml
-  # secret.example.yaml is intentionally NOT a resource: it is a committed
-  # *template* with placeholder values, never applied. The real Secret is created
-  # out-of-band from your local .env so credentials never enter git or a rendered
-  # manifest (see secret.example.yaml and k8s/README.md § "Secrets").
+  # The persistent in-cluster MLflow tracking platform (Sprint 7, PR 6): the
+  # PostgreSQL metadata backend, the MLflow Tracking Server, and their Services +
+  # identity. Included as a component directory so the platform is one legible
+  # unit. The pipeline Job logs to it via the in-cluster Service (see
+  # configmap.yaml MLFLOW_TRACKING_URI). Design of record: ADR-026.
+  - mlflow
+  # The credential TEMPLATES (base/mlflow/secret.example.yaml for the DB, and the
+  # overlays' S3 templates) are intentionally NOT resources: they are committed
+  # *templates* with placeholder values, never applied. The real Secrets are
+  # created out-of-band so credentials never enter git or a rendered manifest
+  # (see the templates and k8s/README.md § "Secrets").
 
 # Common identifying metadata for every resource. includeSelectors is false on
 # purpose: a Job's spec.selector is auto-generated and immutable, so a label

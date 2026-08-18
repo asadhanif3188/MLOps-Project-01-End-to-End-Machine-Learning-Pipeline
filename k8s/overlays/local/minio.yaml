@@ -1,0 +1,139 @@
+# MinIO — an S3-compatible object store, LOCAL OVERLAY ONLY (Sprint 7, PR 6).
+#
+# Why MinIO exists here: the target architecture stores MLflow artifacts in S3.
+# On AWS that is a real, Terraform-provisioned S3 bucket (see the aws overlay +
+# terraform/s3.tf). Locally there is no AWS, so MinIO provides the SAME S3 API on
+# the same cluster — the MLflow server talks boto3/S3 to `http://minio:9000`
+# exactly as it would to Amazon S3, only the endpoint URL and credential SOURCE
+# differ. This makes the S3 artifact path REAL and fully testable locally
+# (including the persistence test), rather than stubbed — MinIO is a faithful S3
+# implementation, not a mock. It is scoped to the local overlay and never renders
+# on AWS.
+#
+# Persistence: a StatefulSet with a volumeClaimTemplate (like PostgreSQL), so the
+# artifact bytes survive MinIO pod recreation — the artifact half of the
+# persistence guarantee (the metadata half is PostgreSQL's PVC).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: artifact-store
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: artifact-store
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          # Pinned MinIO release.
+          image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            # MinIO's root credentials ARE the S3 access key/secret the MLflow
+            # server authenticates with. Sourcing both from the single out-of-band
+            # `mlflow-s3-credentials` Secret keeps one credential pair for the local
+            # S3 story (MinIO consumes them as root creds; MLflow consumes the same
+            # Secret via envFrom as AWS_ACCESS_KEY_ID/SECRET).
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: minio
+          app.kubernetes.io/part-of: mlops-pipeline
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+# Internal-only Service for the S3 API (and the console). ClusterIP: the object
+# store is never exposed outside the cluster; the MLflow server reaches it at
+# `http://minio:9000`. Console access, if wanted, is via `kubectl port-forward`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: artifact-store
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    - name: console
+      port: 9001
+      targetPort: console

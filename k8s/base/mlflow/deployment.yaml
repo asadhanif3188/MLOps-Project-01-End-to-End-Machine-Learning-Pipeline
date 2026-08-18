@@ -1,0 +1,205 @@
+# MLflow Tracking Server — the platform's front door.
+#
+# Why a Deployment (and not a StatefulSet): the tracking server itself is
+# STATELESS. All of its durable state lives OUTSIDE the pod — experiment/run
+# metadata in PostgreSQL, artifact bytes in S3 — so a replacement pod reconnects
+# to exactly the same data. This is precisely the property the persistence test
+# exercises: delete this pod, a fresh one starts, and every logged run/metric/
+# artifact is still there because none of it was in the pod (ADR-026 § Persistence).
+#
+# Artifact PROXYING (`--serve-artifacts`): the server is the single component that
+# talks to S3. Clients (the pipeline Job) upload/download artifacts THROUGH the
+# tracking server over HTTP using the `mlflow-artifacts:` scheme, so they need no
+# S3 endpoint and no S3 credentials of their own. This both simplifies the client
+# and means only ONE workload identity (this server's) is ever granted S3 access.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-server
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Single replica. The server is stateless so it could scale horizontally, but
+  # one replica is right-sized for a single-operator batch pipeline; scaling is a
+  # documented future option, not a hidden limitation (ADR-026).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-server
+  # Recreate (not RollingUpdate): a single replica backed by one DB — recreating
+  # avoids two servers briefly racing on the same backend during a rollout.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mlflow-server
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: tracking-server
+    spec:
+      # Its own least-privilege identity — and the SUBJECT of EKS Pod Identity for
+      # S3 access on AWS (see serviceaccount.yaml, terraform/s3.tf).
+      serviceAccountName: mlflow-server
+      # The server does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mlflow
+          # Purpose-built server image (docker/mlflow/Dockerfile): mlflow +
+          # psycopg2 + boto3, pinned and non-root. Tag pinned per environment by an
+          # overlay (local: `:local`; aws: an ECR path + version).
+          image: mlflow-server
+          # The server invocation, built from ConfigMap/Secret env so the runtime
+          # wiring is legible here rather than hidden in the image:
+          #   * backend-store-uri — PostgreSQL, with the HOST/DB from the ConfigMap.
+          #     Credentials are NOT in the URI (and so never in the process argv):
+          #     psycopg2/libpq read PGUSER/PGPASSWORD from the env below, which also
+          #     avoids URL-encoding pitfalls for passwords with special characters.
+          #   * artifacts-destination + --serve-artifacts — proxy artifacts to S3.
+          command: ["/bin/sh", "-c"]
+          args:
+            # --workers 1: MLflow 3.x runs a uvicorn/gunicorn server that, left to
+            # its default worker count, forks several workers each loading the full
+            # MLflow stack (~250 MiB apiece) and blows past a sane memory limit
+            # (OOMKilled, exit 137). One worker is right-sized for a single-operator
+            # batch pipeline and keeps the footprint ~250 MiB; scale workers (and
+            # memory) together if concurrency ever demands it.
+            - >
+              exec mlflow server
+              --host 0.0.0.0
+              --port "${MLFLOW_PORT}"
+              --workers 1
+              --backend-store-uri "postgresql+psycopg2://${POSTGRES_HOST}:5432/${POSTGRES_DB}"
+              --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}"
+              --serve-artifacts
+          env:
+            # DB auth via libpq env — keeps the password out of argv and out of the
+            # URI. Sourced from the same out-of-band Secret the Postgres pod uses.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-db-credentials
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-db-credentials
+                  key: POSTGRES_PASSWORD
+            # MLflow 3.x ships a DNS-rebinding protection middleware that rejects any
+            # request whose Host header is not an explicit allow-list entry (private
+            # IPs and localhost are allowed by default, which is why IP-based health
+            # probes pass, but the Service DNS name the pipeline uses would be
+            # rejected with "Invalid Host header"). We KEEP the protection on and
+            # scope it to this project's in-cluster names (and localhost for
+            # `kubectl port-forward`) rather than disabling it — the server is
+            # ClusterIP-internal anyway, so this bounded list still rejects any
+            # unexpected external host. `/health` and `/version` are exempt from this
+            # check, so the probes need no special handling. This is
+            # environment-independent (the Service is always `mlflow.mlops…` in this
+            # project), so it lives in the base. See ADR-026 § Security model.
+            - name: MLFLOW_SERVER_ALLOWED_HOSTS
+              value: "mlflow.mlops.svc.cluster.local:5000,mlflow.mlops.svc.cluster.local,mlflow.mlops:5000,mlflow.mlops,mlflow:5000,mlflow,localhost:5000,localhost,127.0.0.1:5000,127.0.0.1"
+          envFrom:
+            # Non-secret config: POSTGRES_HOST/DB, MLFLOW_PORT, artifacts dest.
+            - configMapRef:
+                name: mlflow-config
+            # S3 credentials for the artifact store. optional:true is load-bearing
+            # for the workload-identity story: LOCALLY this Secret carries the MinIO
+            # access keys; on AWS it is ABSENT and boto3 instead resolves
+            # credentials from EKS Pod Identity (the mlflow-server IAM role). Either
+            # way, only the server — never the client — holds S3 access.
+            - secretRef:
+                name: mlflow-s3-credentials
+                optional: true
+          ports:
+            - name: http
+              containerPort: 5000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # Health probes against MLflow's own /health endpoint. Readiness gates
+          # the Service (and therefore the pipeline Job) until the server can serve;
+          # liveness restarts a wedged server. startupProbe gives the first boot
+          # (DB migrations on an empty database) generous time without loosening the
+          # steady-state liveness timing.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            # A generous per-probe timeout: MLflow 3.x is slow to first-respond
+            # while it imports its stack and (on first boot) migrates the database,
+            # and a 1s default would spuriously time out. 30 × 5s = 150s of budget.
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              # MLflow 3.x is memory-heavy: the single-worker server's steady RSS
+              # was MEASURED at ~1.7 GiB (uvicorn + the full mlflow 3.15 stack), not
+              # the ~250 MiB a 2.x server used. The request reserves a realistic
+              # floor so the pod schedules only where it genuinely fits.
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              # Above the measured ~1.7 GiB steady state, with headroom for request
+              # handling and artifact proxying; a real runaway is OOMKilled rather
+              # than eating the node. A tighter limit (1Gi) OOM-kills the worker on
+              # startup — verified — so 2Gi is the floor, not a guess.
+              memory: 2Gi
+---
+# Service — the stable internal endpoint clients use as MLFLOW_TRACKING_URI
+# (`http://mlflow.mlops.svc.cluster.local:5000`).
+#
+# ClusterIP (the default type): the tracking server is INTERNAL to the cluster.
+# It is deliberately NOT a LoadBalancer or NodePort — the pipeline Job reaches it
+# in-cluster, and exposing a no-auth MLflow server to the internet would be an
+# unauthenticated data-exfiltration surface. External UI access is done
+# deliberately and temporarily via `kubectl port-forward` (see docs), not by a
+# standing public endpoint. Requirement 13 (internal unless externally justified)
+# is satisfied by ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-server
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mlflow-server
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http

@@ -1,0 +1,23 @@
+# Path-style S3 addressing config for boto3 — LOCAL OVERLAY ONLY (Sprint 7, PR 6).
+#
+# Consumed by the MLflow server via AWS_CONFIG_FILE (set in mlflow-local-patch.yaml)
+# and mounted read-only at /etc/aws/config. It forces boto3 to address the MinIO
+# bucket path-style (`http://minio:9000/mlflow`) instead of virtual-hosted style
+# (`http://mlflow.minio:9000`, which does not resolve in-cluster). This is the one
+# boto3 difference between MinIO and real Amazon S3; on AWS this ConfigMap does not
+# render and boto3 uses its normal virtual-hosted addressing.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlflow-boto-config
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: tracking-config
+    app.kubernetes.io/managed-by: kustomize
+data:
+  config: |
+    [default]
+    s3 =
+        addressing_style = path

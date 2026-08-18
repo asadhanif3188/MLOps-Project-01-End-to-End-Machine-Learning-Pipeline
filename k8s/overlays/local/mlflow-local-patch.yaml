@@ -1,0 +1,43 @@
+# Local-overlay MLflow patch (Sprint 7, PR 6) — point the tracking server's S3
+# client at the in-cluster MinIO instead of real Amazon S3.
+#
+# The base MLflow Deployment is environment-independent: it names an S3 artifact
+# destination and reads AWS credentials from the (optional) `mlflow-s3-credentials`
+# Secret. This patch layers ONLY the local specifics:
+#   * MLFLOW_S3_ENDPOINT_URL — redirect boto3 from AWS to the MinIO Service. On AWS
+#     this is unset, so boto3 talks to real S3.
+#   * AWS_DEFAULT_REGION      — boto3 requires a region even for MinIO; any value
+#     works against MinIO.
+#   * AWS_CONFIG_FILE + the mounted config — force S3 PATH-STYLE addressing
+#     (`http://minio:9000/mlflow`) instead of virtual-hosted style
+#     (`http://mlflow.minio:9000`, which does not resolve in-cluster). This is the
+#     one MinIO-vs-AWS boto3 difference and is scoped here to the local overlay.
+#
+# Credentials themselves come from the out-of-band `mlflow-s3-credentials` Secret
+# (see secret.example.yaml) via the base Deployment's envFrom — never from this
+# committed patch.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlops
+spec:
+  template:
+    spec:
+      containers:
+        - name: mlflow
+          env:
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "http://minio:9000"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: AWS_CONFIG_FILE
+              value: "/etc/aws/config"
+          volumeMounts:
+            - name: boto-config
+              mountPath: /etc/aws
+              readOnly: true
+      volumes:
+        - name: boto-config
+          configMap:
+            name: mlflow-boto-config

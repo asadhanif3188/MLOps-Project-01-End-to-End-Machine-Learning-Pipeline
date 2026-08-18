@@ -1,0 +1,72 @@
+# MinIO bucket bootstrap — LOCAL OVERLAY ONLY (Sprint 7, PR 6).
+#
+# MLflow does NOT create its S3 bucket; it expects the bucket to already exist.
+# On AWS, Terraform creates the bucket (terraform/s3.tf). Locally, this one-shot
+# Job creates the `mlflow` bucket in MinIO using the MinIO client (`mc`), idempotently.
+#
+# It waits for MinIO to become reachable, then `mc mb --ignore-existing` creates
+# the bucket (safe to re-run). The Job is finite (restartPolicy: Never,
+# backoffLimit for transient MinIO-not-up-yet retries) — the same finite-run
+# discipline as the pipeline Job (ADR-009).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-setup
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: minio-setup
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: artifact-store-bootstrap
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 10
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-setup
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: artifact-store-bootstrap
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mc
+          # Pinned MinIO client.
+          image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              set -e;
+              until mc alias set local http://minio:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null 2>&1; do
+                echo "waiting for minio..."; sleep 3;
+              done;
+              mc mb --ignore-existing local/mlflow;
+              echo "bucket local/mlflow ready";
+          env:
+            # mc writes its config under $MC_CONFIG_DIR; point it at a writable
+            # path for the non-root numeric user (its HOME does not exist).
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+          envFrom:
+            # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — the same MinIO root creds.
+            - secretRef:
+                name: mlflow-s3-credentials
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

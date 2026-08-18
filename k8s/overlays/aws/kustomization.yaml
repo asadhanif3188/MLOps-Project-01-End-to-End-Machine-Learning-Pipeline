@@ -50,9 +50,23 @@ images:
   - name: ml-pipeline
     newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/mlops-pipeline
     newTag: "1.3.1"
+  # The MLflow Tracking Server image (docker/mlflow/Dockerfile), pushed to its OWN
+  # Terraform-managed ECR repository (terraform/ecr.tf: aws_ecr_repository.mlflow_server).
+  # Committed PLACEHOLDER (account id / region), filled in for the operator's OWN
+  # account WITHOUT editing this file, never `:latest` (Sprint 7, PR 6 — ADR-026):
+  #
+  #     kustomize edit set image \
+  #       mlflow-server="$(terraform -chdir=../../../terraform output -raw mlflow_server_ecr_repository_url)":0.1.0
+  - name: mlflow-server
+    newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/mlflow-server
+    newTag: "0.1.0"
 
-# Cloud-specific patch: image pull policy + the runtime dataset source. Kept in a
-# single small strategic-merge patch so the AWS-vs-base delta is legible in one
-# place. It changes no security field.
+# Cloud-specific patches, each a small strategic-merge so the AWS-vs-base delta is
+# legible:
+#   * job-cloud.yaml    — image pull policy + the runtime dataset source (Sprint 6).
+#   * mlflow-cloud.yaml  — point the MLflow server at the real S3 bucket and rely on
+#     EKS Pod Identity for S3 credentials (no MinIO, no static keys). ADR-026.
+# Neither weakens any security field.
 patches:
   - path: job-cloud.yaml
+  - path: mlflow-cloud.yaml

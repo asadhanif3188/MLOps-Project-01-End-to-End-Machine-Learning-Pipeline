@@ -1,0 +1,26 @@
+# MLflow tracking platform — the persistent, in-cluster experiment-tracking
+# backend (Sprint 7, PR 6). Grouped as its own Kustomize component so the platform
+# is a single, legible unit that the top-level base includes with one line.
+#
+# What this renders (all internal to the cluster):
+#   * serviceaccount.yaml — the tracking server's identity (and the AWS Pod
+#     Identity subject for S3).
+#   * configmap.yaml      — non-secret config (DB host/name, port, artifact dest).
+#   * postgres.yaml       — the PostgreSQL StatefulSet (metadata backend) + its
+#     headless Service; persistence via a volumeClaimTemplate.
+#   * deployment.yaml     — the MLflow Tracking Server Deployment + its ClusterIP
+#     Service (the platform's front door on :5000).
+#
+# NOT rendered (created out-of-band, never applied from git):
+#   * secret.example.yaml — the DB credential TEMPLATE (placeholders only). The
+#     real `mlflow-db-credentials` Secret is created out-of-band, so credentials
+#     never enter git or a rendered manifest. The S3 credential Secret is
+#     overlay-specific (local MinIO keys) and likewise out-of-band.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - serviceaccount.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - deployment.yaml
