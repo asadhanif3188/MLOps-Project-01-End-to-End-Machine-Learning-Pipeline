@@ -137,7 +137,8 @@ jobs:
 
       # Stage 8 — Fixture pipeline reproduction. The step above validates the
       # production pipeline's *definition* but cannot run it (its raw data is
-      # remote-only and its stages log to DagsHub MLflow). This step proves actual
+      # remote-only and its stages need a reachable MLflow tracking server — the
+      # in-cluster platform, ADR-026). This step proves actual
       # `declared pipeline + params + inputs + code = reproducible execution` by
       # running a REAL `dvc repro` over the self-contained fixture pipeline
       # (tests/fixtures/pipeline/): the SAME src/ stage code against a small

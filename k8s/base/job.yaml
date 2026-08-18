@@ -64,7 +64,7 @@ spec:
   # — it is NOT a service that should be kept running. Kept at 2 deliberately:
   # this pipeline is deterministic, so a genuine code/data/config error will fail
   # identically on every attempt; the two retries exist only to absorb a
-  # *transient* fault (a blip reaching MLflow/DagsHub), not to paper over a real
+  # *transient* fault (a blip reaching the MLflow server), not to paper over a real
   # bug. Between attempts the Job controller applies an exponential back-off
   # (~10s, 20s, …), so a fast-failing pod cannot hot-loop.
   backoffLimit: 2
@@ -74,7 +74,7 @@ spec:
   # finishes in well under a minute of compute locally (train, the heaviest
   # stage, measured at ~2.5 s under a 1-CPU limit — see ADR-011), so a Job still
   # running after 30 minutes is stuck (e.g. a stalled network call to
-  # MLflow/DagsHub) and should fail with DeadlineExceeded rather than occupy a pod
+  # the MLflow server) and should fail with DeadlineExceeded rather than occupy a pod
   # indefinitely. Deliberately generous — it is an outer stall-guard, not a
   # performance SLO; tightening it toward the real runtime would risk killing a
   # legitimately slow-but-progressing run on a constrained node.
