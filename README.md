@@ -9,7 +9,8 @@ The pipeline focuses on training a Random Forest Classifier on the Pima Indians 
 ## Tools/Technologies used for Project
 Following tools have been used to complete the project. 
 1. Git / GitHub / GitLab
-2. DagsHub
+2. DagsHub — DVC **data** remote only; experiment tracking moved to the in-cluster
+   MLflow platform in Sprint 7 (ADR-026)
 3. DVC
 4. MLFlow
 
@@ -19,6 +20,11 @@ Following tools have been used to complete the project.
 - DVC also allows remote data storage (e.g., DagsHub, S3) for large datasets and models.
 
 ### Experiment Tracking with MLflow:
+- Tracking runs on the project's **in-cluster MLflow platform** (self-hosted server
+  + PostgreSQL + S3), not an external SaaS — see [ADR-026](docs/decisions/ADR-026-in-cluster-mlflow-platform.md)
+  and [docs/mlflow-platform.md](docs/mlflow-platform.md). The pipeline reads the
+  server URL and experiment from config (`MLFLOW_TRACKING_URI` /
+  `MLFLOW_EXPERIMENT_NAME`) and needs no credentials.
 - MLflow is used to track experiment metrics, parameters, and artifacts.
 - It logs the hyperparameters of the model (e.g., n_estimators, max_depth) and performance metrics like accuracy.
 - MLflow helps compare different runs and models to optimize the machine learning pipeline.
@@ -86,7 +92,7 @@ A development image with the full lint/type/test toolchain is available via
 **Local development with Docker Compose** — a new contributor needs only Docker:
 
 ```bash
-cp .env.example .env          # add MLflow / DagsHub credentials
+cp .env.example .env          # set MLFLOW_TRACKING_URI (no credentials needed)
 docker compose up -d          # build + start the dev environment
 docker compose exec dev bash  # shell in; run `make check`, `dvc repro`, ...
 ```
@@ -142,8 +148,9 @@ in [`k8s/README.md`](k8s/README.md).
 
 > **Status:** namespace, workload model, and the **runnable** Job + local runbook
 > are in place (Sprint 5 PR 1–2); PR 3 added externalized **configuration** (a
-> `ConfigMap`: `LOG_LEVEL`, `MLFLOW_TRACKING_URI`), a **Secret** template for the
-> DagsHub credentials (created out-of-band — never committed), and a
+> `ConfigMap`: `LOG_LEVEL`, `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT_NAME`); the
+> former DagsHub credential Secret is gone — the pipeline now logs to the
+> credential-free in-cluster MLflow server (ADR-026) — and a
 > least-privilege **ServiceAccount** with the API-token automount off (the workload
 > needs no cluster API access); PR 4 added a **hardened `securityContext`** —
 > non-root with an explicit uid/gid `10001`, `allowPrivilegeEscalation: false`, all
