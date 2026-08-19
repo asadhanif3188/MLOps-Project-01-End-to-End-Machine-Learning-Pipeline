@@ -110,7 +110,7 @@ Each finding: **status**, **evidence** (source + offline contract + live runtime
 
 | ID | Finding | Status | Evidence | Remaining limitation |
 |---|---|---|---|---|
-| **H-01** | ECR created out-of-band (not IaC) | **CLOSED** | Source: [`terraform/ecr.tf`](../../terraform/ecr.tf) — 2 private repos, immutable tags, scan-on-push, retention, `force_delete`. Offline: `terraform test` `ecr_*` runs pass. Runtime: [evidence §3](sprint-07-runtime-evidence.md#3-ecr-image-verification) — 2 images pushed, immutable tags. ADR-021. | Registry KMS encryption uses AES256 (S3-managed), not a customer CMK — a scoped follow-up, out of H-01. |
+| **H-01** | ECR created out-of-band (not IaC) | **CLOSED** | Source: [`terraform/ecr.tf`](../../terraform/ecr.tf) — 2 private repos, immutable tags, scan-on-push, retention, `force_delete`. Offline: `terraform test` `ecr_*` runs pass. Runtime: [evidence §3](sprint-07-runtime-evidence.md#3-ecr-image-verification) — 2 images pushed, immutable tags. ADR-021. | The registry uses ECR's default encryption (AES256, AWS-owned key), **not** a customer-managed KMS CMK — a scoped follow-up, out of H-01. |
 | **H-02** | EKS API public / openable to world | **CLOSED** | Source: [`terraform/eks.tf`](../../terraform/eks.tf) — `endpoint_public_access` default **false**; `0.0.0.0/0`/any `/0` rejected by variable validation + `lifecycle` precondition. Offline: `terraform test` `eks_api_*` runs pass (rejection cases green; private-by-default green in clean checkout). Runtime: [evidence §2, §14](sprint-07-runtime-evidence.md#2-eks-verification) — endpoint private + scoped `/32`. ADR-022. | Operator reach from a workstation still needs the scoped **public** `/32` opt-in; a standing private-only posture requires in-VPC access (bastion/VPN/SSM), not provisioned. |
 | **H-03** | Cluster access via implicit creator-admin | **CLOSED** | Source: [`terraform/eks.tf`](../../terraform/eks.tf) — `authentication_mode = API`, `bootstrap_cluster_creator_admin_permissions = false`. Offline: `terraform test` `eks_access_*` / `eks_rejects_*` runs pass. Runtime: [evidence §2](sprint-07-runtime-evidence.md#2-eks-verification) — access-entries-only, creator-admin off. ADR-023. | Operator access is granted by an explicit access entry recorded in git-ignored `terraform.tfvars`; the access model is not itself GitOps-managed. |
 | **M-01** | VPC CNI uses node instance role | **CLOSED** | Source: [`terraform/iam.tf`](../../terraform/iam.tf) + `eks.tf` — dedicated CNI role via Pod Identity; `AmazonEKS_CNI_Policy` **not** on the node role. Offline: `terraform test` `cni_policy_is_not_on_the_node_role` + 5 CNI runs pass. Runtime: [evidence §4](sprint-07-runtime-evidence.md#4-workload-identity-eks-pod-identity) — 4 Pod Identity associations, no static keys. ADR-024. | Isolation is at the IAM-role boundary; no network-policy micro-segmentation of `aws-node` is claimed. |
@@ -139,6 +139,7 @@ commit `4f85974`; environment destroyed same session):
 | ↓ train | GridSearchCV → accuracy **0.7398**; model registered | §7–9 |
 | ↓ evaluate | held-out accuracy **0.7078** (disjoint test set) | §7–9 |
 | ↓ in-cluster MLflow | 2 runs `FINISHED`; metadata in **PostgreSQL** | §9–12 |
+| ↓ MLflow persistence | metadata persists in PostgreSQL, **surviving server-pod recreation** (stateless server; StatefulSet + Bound PVC) | §6, §9–12 |
 | ↓ metrics/artifacts | 7 artifacts (incl. `model.skops`) in **SSE-KMS S3** via Pod Identity | §13 |
 | ↓ Job exit 0 | Job `Complete`; successful pod `Succeeded`, **exit 0** | §14 |
 
@@ -247,12 +248,13 @@ residual limitation.
   at runtime, and an in-cluster PostgreSQL+S3 MLflow platform — **ran the MLOps pipeline
   to completion on real EKS 1.35 (Job `Complete`, exit 0)** and was destroyed
   verified-clean.
-- Offline, credential-free security contracts (`terraform test` **42/42**,
-  `k8s/validate.py` **158/158**) and the application test suite (`pytest` **152
-  passed**) are green.
+- Offline, credential-free security contracts (`terraform test` **42/42** in a clean
+  checkout — see [§6](#6-the-terraform-test-observation-non-blocking); `k8s/validate.py`
+  **158/158**) and the application test suite (`pytest` **152 passed**) are green.
 - Neither **GitOps** nor a **Terraform remote-state backend** was introduced (verified:
   no Argo/Flux/Fleet controller anywhere; no `backend`/`cloud` stanza; no tracked
-  `tfstate`/`tfvars`).
+  `tfstate`, and no real state committed — only the secrets-free `terraform.tfvars.example`
+  template is tracked, while the operator's `terraform.tfvars` is git-ignored).
 
 ### 7.6 — Claims that must NOT be made
 
