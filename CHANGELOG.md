@@ -205,6 +205,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     default, the scoped opt-in, and the in-VPC-reachability limitation. No
     credentials or account-specific values committed.
 
+### Documentation
+
+- **DVC data-flow correction — verified, no change required** (Sprint 7, PR 9) —
+  audited the declared DVC DAG (`dvc.yaml` + `params.yaml`) against the actual
+  `src/*.py` execution to close out the historical mismatch (orphaned preprocess
+  output; stage param/input/output name drift). The mismatch **no longer exists** —
+  it was resolved across Sprint 4 (`dvc-pipeline`/`ml-stage-refactor`/
+  `pipeline-contract`/`pipeline-tests`) and the held-out-evaluation work (closed
+  deviations D1/D4/D5/D8; ADR-006/007/008) and is guarded by the offline
+  `tests/contract/` suite. Verification (traced runtime graph, before/after
+  data-flow diagram, `ruff`, full `pytest` — 152 passed incl. 13 contract tests and
+  the fixture reproducibility integration test, `dvc dag`, and Docker/K8s path
+  consistency) is recorded in
+  [docs/proof/sprint-07-dvc-dataflow-correction-evidence.md](docs/proof/sprint-07-dvc-dataflow-correction-evidence.md).
+  No pipeline, parameter, or code change was needed.
+
 ### Added
 
 - **Pipeline ↔ in-cluster MLflow integration, proven live** (Sprint 7, PR 7) —
