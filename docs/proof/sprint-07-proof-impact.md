@@ -135,12 +135,14 @@ operator IP redacted; the environment was destroyed the same session.
   (sha256 == pinned identity, verified in-cluster).
 
 ### 2.8 "The full hardened platform runs the pipeline to completion on real EKS, then destroys clean."
-- `terraform apply` created **63** resources from a clean-slate account; the cluster
-  came up **ACTIVE** (control plane **v1.35**, 1 node **Ready** in a private subnet);
-  the Job reached **`Complete`** with the successful pod **exit 0**, all four DVC
-  stages ran, and the security controls were verified on the live pod. Teardown:
-  `terraform destroy` → **65 destroyed**, state empty, buckets/repos gone, verified
-  three ways.
+- `terraform apply` created **63** resources from a clean-slate account (a second
+  `apply` added **2 more** — the operator access entry + policy association — for the
+  documented kubectl access path, bringing the environment to **65** managed
+  resources); the cluster came up **ACTIVE** (control plane **v1.35**, 1 node
+  **Ready** in a private subnet); the Job reached **`Complete`** with the successful
+  pod **exit 0**, all four DVC stages ran, and the security controls were verified on
+  the live pod. Teardown: `terraform destroy` → **65 destroyed**, state empty,
+  buckets/repos gone, verified three ways.
 - **Evidence:** [Sprint 7 Runtime Evidence](sprint-07-runtime-evidence.md) (§§1–15),
   [Cloud Operations](../cloud-operations.md),
   [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md).

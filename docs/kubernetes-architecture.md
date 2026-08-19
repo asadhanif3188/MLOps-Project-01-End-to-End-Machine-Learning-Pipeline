@@ -10,8 +10,10 @@ locally validatable today versus deferred to a production cluster.
 > **Scope note.** Through PR 7 the manifests in [`k8s/`](../k8s/) define the
 > namespace, a **runnable** batch `Job` — the real `ml-pipeline:local` image, the
 > real `dvc repro` command, and a finite-run lifecycle — plus externalized
-> **configuration** (`ConfigMap`), a **Secret** template (created out-of-band,
-> never committed), a least-privilege **ServiceAccount** with the API-token
+> **configuration** (`ConfigMap`; the pipeline carries **no tracking-credential
+> Secret** — experiment tracking is credential-free against the in-cluster MLflow
+> platform, [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), a
+> least-privilege **ServiceAccount** with the API-token
 > automount off, a **hardened `securityContext`** (non-root with an explicit
 > uid/gid, no privilege escalation, all capabilities dropped, seccomp
 > `RuntimeDefault`), and **resource requests/limits chosen from measured usage**
