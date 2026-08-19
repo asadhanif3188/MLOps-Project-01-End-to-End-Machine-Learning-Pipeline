@@ -115,6 +115,17 @@ parity, ADR-026). Both repositories enforce **immutable tags**, so a pushed vers
 can never be repointed. Kubelet pulls via the node instance role
 (`AmazonEC2ContainerRegistryReadOnly`) — no pod-level registry credential.
 
+> **Release-tag reconciliation (post-gate).** The pipeline image was **tagged `1.3.1` at
+> capture time**, but it was built from the Sprint 7 (`v1.6.0`) code on `main` — Sprint 7
+> changed application code (`src/fetch_dataset.py`, `src/mlflow_config.py`, MLflow
+> integration), so those bytes are **not** the historical `v1.3.1` release image. A post-gate
+> second-eye review corrected that mislabel: the committed AWS overlay, the render script, and
+> the build runbooks now pin the pipeline image to **`1.6.0`**, matching the release tag. This
+> evidence deliberately **preserves the capture-time tag and digest** above (`1.3.1` /
+> `sha256:fe4e…f4c22`) as the honest record of what ran on 2026-08-19; the `v1.6.0` release
+> rebuilds and pushes the **same code** as `mlops-pipeline:1.6.0`. The retag is a
+> version-label alignment only — **no functional change to the image**.
+
 ---
 
 ## 4. Workload identity (EKS Pod Identity)

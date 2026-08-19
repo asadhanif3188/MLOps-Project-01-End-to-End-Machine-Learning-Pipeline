@@ -68,7 +68,7 @@ Add an `aws_ecr_repository` (plus an `aws_ecr_lifecycle_policy`) to the root mod
    needed.
 
 2. **Immutable tags** (`image_tag_mutability = "IMMUTABLE"`). A version tag such as
-   `1.3.1` can never be repointed at a different image, so a deployed digest is
+   `1.6.0` can never be repointed at a different image, so a deployed digest is
    reproducible — matching the "explicit, immutable version, never `:latest`"
    convention the AWS overlay already relies on ([ADR-018](ADR-018-aws-eks-deployment-overlay.md)).
 

@@ -150,7 +150,7 @@ Design of record: [ADR-018](../docs/decisions/ADR-018-aws-eks-deployment-overlay
 
 | Difference | Local overlay | AWS overlay | Why |
 |---|---|---|---|
-| **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
+| **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.6.0` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
 | **`imagePullPolicy`** | unset (side-loaded) | `Always` | Guarantees the node runs exactly the image just pushed to ECR; avoids the stale-image failure mode. |
 | **Dataset** | `fetch-dataset` init container pulls from in-cluster **MinIO** → `/app/data/raw` | same init container pulls from real **S3** via EKS Pod Identity | Retrieval mechanism is shared (base); only the SOURCE (bucket/endpoint/creds) differs. Replaces the former ConfigMap (Sprint 7 PR 8, closes M-04 — [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). |
 | **MLflow backend** | in-cluster `mlflow` Service; the server's artifact store is local **MinIO** | in-cluster `mlflow` Service; the server's artifact store is real **Amazon S3** (via Pod Identity) | Both overlays log over HTTP to the **same** base `MLFLOW_TRACKING_URI` (the in-cluster `mlflow` Service DNS) with **no tracking credential Secret** — DagsHub is not on the tracking path. Only the MLflow server's artifact backend differs (MinIO locally vs Amazon S3 on EKS — [ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)). |
@@ -255,7 +255,7 @@ pull from yet (see the root README § "Running with Docker").
 ```bash
 docker build \
   --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
-  --build-arg BUILD_VERSION="1.3.1" \
+  --build-arg BUILD_VERSION="1.6.0" \
   -t ml-pipeline:local .
 ```
 
@@ -548,32 +548,22 @@ deliberately **excluded from its kustomization**, so no render or apply can ever
 it, and the real Secret is created straight from a local, git-ignored source and never
 passes through git or a rendered manifest.
 
-**Create it** (once per cluster/namespace, after the namespace exists):
+**The one out-of-band Secret the platform still needs** is the MLflow metadata-DB
+credential — template [`base/mlflow/secret.example.yaml`](base/mlflow/secret.example.yaml).
+Copy it, fill in real values from a git-ignored source, and apply it into the `mlops`
+namespace before deploying the MLflow platform; like every credential template here it is
+excluded from its kustomization, so no render or apply ever emits a real value. The
+pipeline `Job` itself carries **no** tracking Secret.
 
-```bash
-# From your local .env (see .env.example for the three variables):
-kubectl create secret generic mlops-pipeline-secret \
-  --namespace mlops \
-  --from-env-file=.env
-
-# …or supply just the two credential keys explicitly:
-kubectl create secret generic mlops-pipeline-secret \
-  --namespace mlops \
-  --from-literal=MLFLOW_TRACKING_USERNAME='<dagshub-username>' \
-  --from-literal=MLFLOW_TRACKING_PASSWORD='<dagshub-token>'
-```
-
-**Lifecycle.** Rotate by replacing it (the next Job run picks up new values):
-
-```bash
-kubectl create secret generic mlops-pipeline-secret --namespace mlops \
-  --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Remove it with `kubectl -n mlops delete secret mlops-pipeline-secret`. Because the
-Job's `secretRef` is `optional: true`, the pipeline still *starts* without it —
-the MLflow calls then fail with a clear auth error rather than the pod refusing to
-schedule.
+> **Historical note (pre-Sprint-7).** The pipeline used to read a DagsHub tracking
+> credential from a `mlops-pipeline-secret`
+> (`MLFLOW_TRACKING_USERNAME`/`MLFLOW_TRACKING_PASSWORD`), created out-of-band with
+> `kubectl create secret …`. That workflow is **superseded by
+> [ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)** — tracking now runs
+> on the credential-free in-cluster MLflow platform — and is retained only in the
+> historical decision records
+> ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md), the Sprint 5 proof
+> and retrospective), not in this current runbook.
 
 ### Does the workload need Kubernetes API access? No.
 

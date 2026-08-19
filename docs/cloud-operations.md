@@ -202,11 +202,11 @@ aws ecr get-login-password --region "$region" \
   | docker login --username AWS --password-stdin "${repo%%/*}"
 
 docker build --platform linux/amd64 --provenance=false --sbom=false \
-  -t "$repo:1.3.1" .
-docker push "$repo:1.3.1"
+  -t "$repo:1.6.0" .
+docker push "$repo:1.6.0"
 ```
 
-The tag is an explicit, immutable version (`1.3.1`), never `:latest` — and the
+The tag is an explicit, immutable version (`1.6.0`), never `:latest` — and the
 repository enforces **immutable tags**, so that version can never be repointed. (The
 MLflow server image is built and pushed to its own ECR repository the same way — see
 [MLflow Platform](mlflow-platform.md).)

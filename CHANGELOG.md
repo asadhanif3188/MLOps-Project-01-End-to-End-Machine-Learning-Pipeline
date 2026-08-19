@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes yet. The Sprint 7 work below is the content of the `v1.6.0`
+release currently being cut (see the [release gate](docs/proof/sprint-07-release-gate.md))._
+
+## [1.6.0] - 2026-08-19
+
+Sprint 7 — Cloud-Native MLOps Hardening: take the Sprint 6 cloud platform and close
+**every** HIGH/MEDIUM finding from the Sprint 6 review — Terraform-managed ECR, a
+private-by-default EKS API, explicit access entries, EKS Pod Identity for the VPC CNI
+and the application workloads, KMS-encrypted EKS Secrets, an in-cluster MLflow platform
+(server + PostgreSQL + S3) that replaces external DagsHub on the experiment-tracking
+path, and S3-backed runtime dataset retrieval — hardening it into a defensible
+cloud-native MLOps platform, verified by a live end-to-end run on real EKS.
+
 ### Added
 
 - **Account-neutral cloud-manifest renderer** (Sprint 7, post-gate hardening) — a new
@@ -279,16 +292,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Release-version reconciliation: Sprint 7 = `v1.6.0`** (Sprint 7, post-gate hardening) —
-  resolved a version collision surfaced by a second-eye review: the Sprint 7 release artifacts
-  labelled the release **`v1.4.0`**, which both collided with Sprint 5's `v1.4.0` and
-  contradicted Sprint 7's own plan (`v1.6.0`). Reconciled to the project's one-MINOR-per-sprint
-  sequence — Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`, Sprint 7 = `v1.6.0` — across the
+- **Release-version reconciliation: Sprint 7 = `v1.6.0`, changelog split into per-version
+  sections** (Sprint 7, post-gate hardening) — resolved a version collision surfaced by a
+  second-eye review: the Sprint 7 release artifacts labelled the release **`v1.4.0`**, which
+  both collided with Sprint 5's `v1.4.0` and contradicted Sprint 7's own plan (`v1.6.0`).
+  Reconciled to the project's one-MINOR-per-sprint sequence — Sprint 5 = `v1.4.0`, Sprint 6 =
+  `v1.5.0`, Sprint 7 = `v1.6.0` — across the
   [retrospective](docs/retrospectives/sprint-07-retrospective.md), the
   [release gate](docs/proof/sprint-07-release-gate.md) §7.7, the
-  [docs index](docs/README.md), and this changelog, with the reasoning made honest about the
-  tag gap: Sprints 5–6 were merged to `main` but never tagged, so the last released tag is
-  `v1.3.1` and cutting `v1.6.0` jumps `v1.3.1 → v1.6.0`. No source or capability change.
+  [docs index](docs/README.md), and this changelog. A follow-up review then checked the actual
+  git history and corrected a **second** error: **`v1.4.0` (Sprint 5) and `v1.5.0` (Sprint 6)
+  were both tagged on `origin`** (2026-08-14 and 2026-08-15; `v1.4.0` was also published as a
+  GitHub release) — there is **no tag gap**, and the earlier claim that "Sprints 5–6 were never
+  tagged" was false. The real release sequence is the continuous
+  `v1.3.1 → v1.4.0 → v1.5.0 → v1.6.0`, and this changelog was split from a single accreted
+  `[Unreleased]` block into proper `[1.4.0]`, `[1.5.0]`, and `[1.6.0]` sections (with comparison
+  links) to match. No source or capability change.
+- **Pipeline image version aligned to the release: `1.3.1` → `1.6.0`** (Sprint 7, post-gate
+  hardening) — the same second-eye review noted the deployable pipeline image was still pinned
+  to **`1.3.1`** even though Sprint 7 changed application code (`src/fetch_dataset.py`,
+  `src/mlflow_config.py`, MLflow integration), so a `v1.6.0` platform would have run a
+  `1.3.1`-labelled image whose bytes are **not** the historical `v1.3.1` release. Retagged the
+  current artifact to **`1.6.0`** across the AWS overlay
+  ([`k8s/overlays/aws/kustomization.yaml`](k8s/overlays/aws/kustomization.yaml) `newTag`), the
+  [render script](scripts/render-cloud-manifests.sh) default + retag pattern, the
+  `BUILD_VERSION` build examples ([README.md](README.md), [k8s/README.md](k8s/README.md)), the
+  [cloud runbook](docs/cloud-operations.md) build/push, and
+  [ADR-018](docs/decisions/ADR-018-aws-eks-deployment-overlay.md) /
+  [ADR-021](docs/decisions/ADR-021-terraform-managed-ecr.md) /
+  [terraform/README.md](terraform/README.md). The captured
+  [runtime evidence](docs/proof/sprint-07-runtime-evidence.md) intentionally keeps its
+  **capture-time** `1.3.1` tag and digest as the honest record of the 2026-08-19 run, with a
+  reconciliation note; the release rebuilds the **same code** as `mlops-pipeline:1.6.0`. **No
+  functional image change** — a version-label alignment only.
 - **DagsHub documentation archaeology** (Sprint 7, post-gate hardening) — a full audit of all
   154 DagsHub references across 48 files, classifying each as historical (**kept**: ADRs, sprint
   reviews, retrospectives, proof/evidence, sprint plans) or current (**corrected**). Fixed living
@@ -448,6 +484,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     node role's existing read-only ECR pull is unchanged), and no security feature is
     disabled to simplify. No credentials, account IDs, or environment-specific secrets
     are committed.
+
+## [1.5.0] - 2026-08-15
+
+Sprint 6 — Terraform + AWS EKS Cloud Platform: stand up the project's cloud platform as
+Infrastructure-as-Code — a Terraform-defined VPC, IAM, and managed EKS cluster with an
+ECR image source and a cost-controlled `provision → prove → destroy` lifecycle — and run
+the existing Kubernetes workload on real EKS to completion via a thin AWS overlay that
+reuses the Sprint 5 base unchanged.
+
+### Added
 
 - **Cloud cost controls, teardown & lifecycle documentation** (Sprint 6, PR 8 —
   the final Sprint 6 PR) — completes the cloud lifecycle documentation and prepares
@@ -690,6 +736,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     [ADR index](docs/decisions/README.md). Scope is strictly foundation: no VPC,
     IAM, or EKS yet, and the existing CI workflow is unchanged (Terraform CI gates
     are Sprint 6, PR 6).
+
+## [1.4.0] - 2026-08-14
+
+Sprint 5 — Kubernetes Platform Engineering: express the containerized pipeline as a
+secured Kubernetes batch workload (Kustomize base + local overlay), harden it (non-root,
+dropped capabilities, seccomp, least-privilege ServiceAccount, resource limits), validate
+the manifests statically in CI, and prove the complete ML pipeline runs to completion
+inside the Job on a local cluster.
+
+### Added
+
 - **Kubernetes Runtime Execution** (Sprint 5, PR 8) — closes the last Sprint 5 proof
   gap: the **complete ML pipeline now runs to completion inside the secured
   Kubernetes Job**. Design of record:
@@ -1296,7 +1353,10 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
