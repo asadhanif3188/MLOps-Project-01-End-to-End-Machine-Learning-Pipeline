@@ -251,8 +251,8 @@ the pull request template used to standardize contributions, plus
 - **`.dvc/config`** — defines the S3-compatible DagsHub remote.
 
 ### Environment & tooling
-- **`requirements.txt`** — runtime Python dependencies (`dvc`, `dagshub`,
-  `scikit-learn`, `mlflow`, `dvc-s3`, `python-dotenv`).
+- **`requirements.txt`** — runtime Python dependencies (`dvc`, `scikit-learn`,
+  `mlflow`, `dvc-s3`, `boto3`, `python-dotenv`).
 - **`requirements-dev.txt`** — development dependencies (`ruff`, `mypy`,
   `pytest`, `pytest-cov`, `pre-commit`); includes the runtime dependencies.
 - **`pyproject.toml`** — single source of truth for tool configuration:
@@ -264,8 +264,9 @@ the pull request template used to standardize contributions, plus
   them: format, lint, typecheck, test, coverage, check, repro, …).
 - **`.vscode/`** — workspace settings and recommended extensions aligned with
   the toolchain.
-- **`.env.example`** — template listing required MLflow/DagsHub credentials;
-  copy to `.env` (never commit real secrets).
+- **`.env.example`** — template for the MLflow tracking URI and optional runtime
+  settings (no DagsHub credentials since Sprint 7); copy to `.env` (never commit
+  real secrets).
 - **`.editorconfig`** — cross-editor formatting conventions.
 
 See the [Developer Guide](developer-guide.md) for how these fit together and

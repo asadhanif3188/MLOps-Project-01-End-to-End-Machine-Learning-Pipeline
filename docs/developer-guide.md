@@ -61,7 +61,7 @@ conda activate myenv
 make install-dev
 
 # 3. Provide configuration. Copy the template and fill in the values
-#    (MLflow tracking URI and DagsHub credentials — see the README).
+#    (MLflow tracking URI — see the README; no DagsHub credentials since Sprint 7).
 cp .env.example .env
 ```
 

@@ -250,7 +250,7 @@ repository's existing [Security Policy](../SECURITY.md). The controls:
   image ([§6](#6-multi-stage-build-strategy), [§7](#7-base-image-selection)).
 - **Non-root user** — the container runs as an unprivileged user
   ([§9](#9-non-root-user-rationale)).
-- **No secrets in the image.** Credentials (DagsHub/MLflow tokens, S3 keys) are
+- **No secrets in the image.** Credentials (the DVC-remote token, S3/MinIO keys) are
   **never** baked into layers or `ENV`. They arrive at runtime via environment
   variables or mounted secrets ([§10](#10-environment-variable-strategy)). The
   existing `.env`/`.env.example` pattern stays **host-only** and is excluded via
@@ -312,8 +312,9 @@ image.**
   - *Non-secret config* (e.g. `LOG_LEVEL`, already consumed by
     [`src/logging_config.py`](../src/logging_config.py); MLflow tracking URI) may
     have safe defaults set via `ENV` in the `Dockerfile`.
-  - *Secrets* (DagsHub token, MLflow credentials, S3 keys) are **never** in the
-    image or in `ENV`. They are supplied at run time.
+  - *Secrets* (the DVC-remote token, S3/MinIO keys) are **never** in the
+    image or in `ENV`. They are supplied at run time. (The in-cluster MLflow
+    tracking server is credential-free since Sprint 7.)
 - **Local development.** Keep using the existing `python-dotenv` + `.env` pattern
   (see [`.env.example`](../.env.example)). `.env` is **host-only** and
   `.dockerignore`d; in a container it is passed with `--env-file` or, in Compose,
@@ -554,9 +555,9 @@ read-only.
 
 - **`dvc repro` prerequisites.** The default command operates on the DVC
   pipeline: it needs the DVC-tracked `data/` (mounted, and/or fetched with
-  `dvc pull`) and valid MLflow/DagsHub credentials in the environment. Without a
-  configured remote and data, run individual stages or use the development image
-  for exploration.
+  `dvc pull`, which uses the DVC remote's credentials) and a reachable
+  `MLFLOW_TRACKING_URI`. Without a configured remote and data, run individual
+  stages or use the development image for exploration.
 - **No `HEALTHCHECK`** by design — this is a run-to-completion batch job, not a
   service ([§8](#8-security-considerations)). A liveness/readiness probe belongs
   to the future serving component (Roadmap v6). A build-time import smoke test in

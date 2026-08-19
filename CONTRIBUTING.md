@@ -27,7 +27,7 @@ enable the git hooks:
 ```bash
 conda create -p myenv python=3.12 -y && conda activate myenv
 make install-dev            # installs dev deps + registers pre-commit hooks
-cp .env.example .env        # then set the MLflow / DagsHub values (see README)
+cp .env.example .env        # then set the MLflow tracking URI (see README)
 ```
 
 If you do not have `make`, the equivalent is `pip install -r requirements-dev.txt`

@@ -21,10 +21,9 @@
 #      (terraform/datasets.tf) by the base `fetch-dataset` init container. This
 #      overlay supplies only the SOURCE:
 #        * DATASET_S3_URI      — a committed PLACEHOLDER (account id 000000000000),
-#          filled in for the operator's OWN account WITHOUT editing this file:
-#              cd k8s/overlays/aws
-#              kustomize edit add configmap ...   # or set the value below from:
-#              terraform -chdir=../../../terraform output -raw dataset_s3_uri
+#          filled in for the operator's OWN account WITHOUT editing this file by
+#          scripts/render-cloud-manifests.sh (from
+#          `terraform output -raw dataset_s3_uri`).
 #          (equivalently s3://<name_prefix>-datasets-<account>/pima-indians-diabetes/v1/data.csv)
 #        * AWS_DEFAULT_REGION  — boto3's region for real S3.
 #      What is deliberately ABSENT is the workload-identity design (ADR-027):

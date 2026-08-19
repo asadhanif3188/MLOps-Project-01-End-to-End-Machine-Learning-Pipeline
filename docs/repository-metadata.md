@@ -17,7 +17,7 @@ results. Recommended:
 If a slightly longer form is preferred where space allows:
 
 > Production-oriented MLOps pipeline for tabular classification using DVC for
-> data/pipeline versioning and MLflow (via DagsHub) for experiment tracking.
+> data/pipeline versioning and self-hosted MLflow for experiment tracking.
 
 Keep the primary description under ~120 characters so it isn't truncated.
 

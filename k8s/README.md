@@ -164,16 +164,18 @@ from the base verbatim**. The rendered pod/container `securityContext`,
 **byte-identical** to the local overlay's, and both overlays pass the same 45-check
 static contract (`python k8s/validate.py k8s/overlays/aws`).
 
-**Point the image at your account** (no file edit — done at deploy time, PR 7):
+**Render it for your account** (no tracked-file edit). The committed overlay uses
+`000000000000` / `us-east-1` **placeholders** so no real account ID is stored in git;
+[`scripts/render-cloud-manifests.sh`](../scripts/render-cloud-manifests.sh) substitutes
+the ECR registry, S3 buckets, and region from `terraform output` into a temp copy,
+`kustomize build`s it, and refuses to emit if a placeholder survived:
 
 ```bash
-cd k8s/overlays/aws
-kustomize edit set image \
-  ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1
+scripts/render-cloud-manifests.sh | kubectl apply -f -   # or: -o FILE to inspect first
 ```
 
-The committed `newName` uses a `000000000000` / `us-east-1` **placeholder** so no
-real account ID is stored in git.
+See [Cloud Operations § deploy](../docs/cloud-operations.md) for the full
+provision → render → apply → destroy runbook.
 
 > **Delivered static (PR 5), executed for real (PR 7).** PR 5 delivered a
 > **validated, admissible** overlay (`kustomize build`, `kubeconform -strict`,
@@ -323,19 +325,19 @@ is one `aws s3 cp` to the Terraform-provisioned bucket — see the
 > object then re-create the Job (`kubectl -n mlops delete job mlops-pipeline` and
 > re-apply) if it failed before the upload.
 
-### 4. (Optional) create the credential Secret
+### 4. (No pipeline tracking Secret needed)
 
-**Not needed for a local green run:** the local overlay overrides
-`MLFLOW_TRACKING_URI` to an in-pod file store, so tracking works offline with no
-credentials. The Secret is only for exercising the **real DagsHub** path locally
-(create it, then drop the overlay's `MLFLOW_*` override). It is created
-**out-of-band** so nothing is committed — full rationale in
-[§ Secrets](#secrets--creation-lifecycle-and-why-nothing-is-committed):
-
-```bash
-kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -   # if not yet applied
-kubectl create secret generic mlops-pipeline-secret --namespace mlops --from-env-file=.env
-```
+Since Sprint 7 the pipeline Job needs **no** credential Secret for experiment
+tracking: the base ConfigMap already points `MLFLOW_TRACKING_URI` at the
+**credential-free in-cluster MLflow Service**, so there is no `MLFLOW_*`
+username/password and no `mlops-pipeline-secret`
+([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)). The only
+out-of-band Secret the local platform uses is `mlflow-s3-credentials` (the MinIO
+artifact-store keys), created before deploying per
+[`overlays/local/secret.example.yaml`](overlays/local/secret.example.yaml) and
+[docs/mlflow-platform.md](../docs/mlflow-platform.md). The pre-Sprint-7 DagsHub
+credential Secret is **superseded** — its historical procedure is kept for the
+record in [§ Secrets](#secrets--creation-lifecycle-and-why-nothing-is-committed).
 
 ### 5. Apply the workload
 
@@ -506,23 +508,27 @@ client) — none are invented.
 | Value | Sensitive? | Carrier | Committed? |
 |---|---|---|---|
 | `LOG_LEVEL` (default `INFO`) | No | `ConfigMap` `mlops-pipeline-config` | Yes |
-| `MLFLOW_TRACKING_URI` (DagsHub endpoint) | No — an endpoint, not a credential | `ConfigMap` `mlops-pipeline-config` | Yes |
-| `MLFLOW_TRACKING_USERNAME` | **Yes** — auth | `Secret` `mlops-pipeline-secret` | **No — created out-of-band** |
-| `MLFLOW_TRACKING_PASSWORD` | **Yes** — auth token | `Secret` `mlops-pipeline-secret` | **No — created out-of-band** |
+| `MLFLOW_TRACKING_URI` (in-cluster `mlflow` Service endpoint) | No — an endpoint, not a credential | `ConfigMap` `mlops-pipeline-config` | Yes |
+| `MLFLOW_EXPERIMENT_NAME` (default `mlops-pipeline`) | No | `ConfigMap` `mlops-pipeline-config` | Yes |
+| `DATASET_SHA256` (pinned dataset digest) | No | `ConfigMap` `mlops-pipeline-config` | Yes |
 
-Both carriers are wired into the Job with `envFrom` (see
-[`base/job.yaml`](base/job.yaml)): the ConfigMap is always present (it is part of
-the Kustomize base); the Secret reference is `optional: true` so
-`kubectl apply -k` succeeds *before* the Secret exists.
+The ConfigMap is wired into the Job with `envFrom` (see
+[`base/job.yaml`](base/job.yaml)) and is always present (it is part of the
+Kustomize base). Since Sprint 7 the pipeline Job carries **no** tracking Secret —
+experiment tracking runs on the credential-free in-cluster MLflow platform
+([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)), so the former
+`MLFLOW_TRACKING_USERNAME`/`MLFLOW_TRACKING_PASSWORD` and `mlops-pipeline-secret`
+are gone. (Locally, the `fetch-dataset` init container does read the
+`mlflow-s3-credentials` MinIO keys to pull the dataset from MinIO — a data-remote
+credential, not a tracking one.)
 
 ### ConfigMap usage
 
 `kustomize build k8s/overlays/local` renders the ConfigMap and the Job's
-`envFrom`. The `MLFLOW_TRACKING_URI` is the project's public DagsHub MLflow
-endpoint — the same host already committed as the DVC S3 remote in
-[`.dvc/config`](../.dvc/config), so committing it leaks nothing. A future
-staging/prod overlay overrides it with a patch or `configMapGenerator` without
-touching the base.
+`envFrom`. `MLFLOW_TRACKING_URI` points at the **in-cluster MLflow Tracking
+Server** Service (`http://mlflow.mlops.svc.cluster.local:5000`) — an internal
+endpoint, not a credential (ADR-026). A future staging/prod overlay overrides it
+with a patch or `configMapGenerator` without touching the base.
 
 ### Secrets — creation, lifecycle, and why nothing is committed
 
@@ -572,8 +578,8 @@ schedule.
 ### Does the workload need Kubernetes API access? No.
 
 The pipeline runs `dvc repro` (preprocess → split → train → evaluate) and talks
-only to MLflow/DagsHub over HTTPS — it never creates, reads, or watches cluster
-objects. So it gets a dedicated **ServiceAccount** (`mlops-pipeline`) purely as a
+only to the in-cluster MLflow tracking server and the S3/DVC data remotes over the
+network — it never creates, reads, or watches cluster objects. So it gets a dedicated **ServiceAccount** (`mlops-pipeline`) purely as a
 named identity, with **`automountServiceAccountToken: false`** (set on both the
 ServiceAccount and the Job's pod template): no API token is mounted, so there is
 no unused, exfiltratable credential in the pod. For the same reason **no
@@ -699,7 +705,7 @@ fits), so capping at 1 CPU is leaner **and** faster.
 - **`restartPolicy: Never`** — each retry is a fresh, independently-inspectable
   pod (a Job requires `Never` or `OnFailure`).
 - **`backoffLimit: 2`** — the pipeline is deterministic, so retries only absorb a
-  *transient* MLflow/DagsHub blip; the controller back-offs exponentially between
+  *transient* MLflow or object-store blip; the controller back-offs exponentially between
   attempts, so a fast-failing pod cannot hot-loop.
 - **`activeDeadlineSeconds: 1800`** — an outer stall-guard (e.g. a hung network
   call), not a performance SLO; deliberately generous.

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Account-neutral cloud-manifest renderer** (Sprint 7, post-gate hardening) — a new
+  [`scripts/render-cloud-manifests.sh`](scripts/render-cloud-manifests.sh) renders the AWS
+  overlay into a concrete, deployable manifest from live Terraform outputs **without editing
+  any tracked file**. It copies `k8s/` to a temp directory and substitutes the ECR registry,
+  the dataset and MLflow-artifact S3 buckets, and the region from `terraform output`
+  (`ecr_repository_url`, `mlflow_server_ecr_repository_url`, `dataset_s3_uri`,
+  `mlflow_artifact_bucket_name`, `aws_region`), runs `kustomize build`, and **refuses to emit
+  if the `000000000000` placeholder survives**. This replaces the former
+  `kustomize edit set image` + hand-edited `DATASET_S3_URI` flow (which mutated tracked files
+  and needed a `git checkout --` on teardown): the committed overlay stays account-neutral in
+  git, and the runbook is now provision → **render** → apply → destroy
+  ([docs/cloud-operations.md](docs/cloud-operations.md), [k8s/README.md](k8s/README.md)).
+  Renders to stdout, `-o FILE`, or `--apply`; `IMAGE_TAG`/`MLFLOW_IMAGE_TAG` default to the
+  committed tags. No source or capability change — the committed overlay still passes
+  `k8s/validate.py` **130/130**.
+
 ### Security
 
 - **Fleet-wide workload security-context contract** (Sprint 7, PR 11) — the executable
@@ -261,6 +279,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Release-version reconciliation: Sprint 7 = `v1.6.0`** (Sprint 7, post-gate hardening) —
+  resolved a version collision surfaced by a second-eye review: the Sprint 7 release artifacts
+  labelled the release **`v1.4.0`**, which both collided with Sprint 5's `v1.4.0` and
+  contradicted Sprint 7's own plan (`v1.6.0`). Reconciled to the project's one-MINOR-per-sprint
+  sequence — Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`, Sprint 7 = `v1.6.0` — across the
+  [retrospective](docs/retrospectives/sprint-07-retrospective.md), the
+  [release gate](docs/proof/sprint-07-release-gate.md) §7.7, the
+  [docs index](docs/README.md), and this changelog, with the reasoning made honest about the
+  tag gap: Sprints 5–6 were merged to `main` but never tagged, so the last released tag is
+  `v1.3.1` and cutting `v1.6.0` jumps `v1.3.1 → v1.6.0`. No source or capability change.
+- **DagsHub documentation archaeology** (Sprint 7, post-gate hardening) — a full audit of all
+  154 DagsHub references across 48 files, classifying each as historical (**kept**: ADRs, sprint
+  reviews, retrospectives, proof/evidence, sprint plans) or current (**corrected**). Fixed living
+  docs that still presented DagsHub as the *current* experiment-tracking backend or that were
+  factually stale against the repo — `.env.example` carries no DagsHub credentials and `dagshub`
+  is not in `requirements.txt`, yet several docs still listed them; `exception-strategy.md` quoted
+  a DagsHub error string the code no longer emits; and `k8s/README.md` still documented a runnable
+  DagsHub credential-Secret deploy step. Corrected across
+  [design-principles.md](docs/design-principles.md),
+  [repository-metadata.md](docs/repository-metadata.md),
+  [project-structure.md](docs/project-structure.md), [type-safety.md](docs/type-safety.md),
+  [containerization.md](docs/containerization.md), [docker-development.md](docs/docker-development.md),
+  [exception-strategy.md](docs/exception-strategy.md), [k8s/README.md](k8s/README.md), and others.
+  The **DVC data/model remote remains DagsHub** (`.dvc/config`) — a separate versioning concern,
+  intentionally kept and documented as such ([roadmap](docs/roadmap.md) tracks its future
+  migration). No source or capability change.
 - **Sprint 7 release gate, retrospective, and release-evidence consolidation** (Sprint 7,
   PR 13) — the final Sprint 7 verification. Adds the
   [Sprint 7 Release Gate](docs/proof/sprint-07-release-gate.md): a pre-release run of the
@@ -272,7 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifacts → Job exit 0**) holds against the captured
   [runtime evidence](docs/proof/sprint-07-runtime-evidence.md), and confirmation that
   **neither GitOps nor a Terraform remote-state backend** was introduced. Verdict:
-  **CONDITIONAL PASS**, **no release blockers**, recommended release **`v1.4.0`** (tag not
+  **CONDITIONAL PASS**, **no release blockers**, recommended release **`v1.6.0`** (tag not
   cut here). Adds the [Sprint 7 Retrospective](docs/retrospectives/sprint-07-retrospective.md).
   Honestly records the gate's own limits — `tflint`/`trivy`/`kubeconform` were not runnable
   in this environment (delegated to CI) and no live cluster was standing (runtime claims

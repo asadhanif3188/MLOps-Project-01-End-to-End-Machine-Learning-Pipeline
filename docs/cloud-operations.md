@@ -206,32 +206,43 @@ docker build --platform linux/amd64 --provenance=false --sbom=false \
 docker push "$repo:1.3.1"
 ```
 
-Point the AWS overlay at your account **without editing any committed file** (the
-committed image is a `000000000000` placeholder):
-
-```bash
-cd k8s/overlays/aws
-kustomize edit set image ml-pipeline="$repo:1.3.1"   # local, uncommitted
-cd ../../..
-```
-
 The tag is an explicit, immutable version (`1.3.1`), never `:latest` — and the
-repository enforces **immutable tags**, so that version can never be repointed.
+repository enforces **immutable tags**, so that version can never be repointed. (The
+MLflow server image is built and pushed to its own ECR repository the same way — see
+[MLflow Platform](mlflow-platform.md).)
+
+The AWS overlay stays **account-neutral in git**: the committed image, dataset, and
+MLflow-artifact values are all `000000000000` placeholders. Rather than editing —
+and later reverting — those tracked files, render a concrete manifest from the live
+Terraform outputs with
+[`scripts/render-cloud-manifests.sh`](../scripts/render-cloud-manifests.sh). It copies
+the overlay to a temp directory, substitutes the ECR registry, the dataset and
+MLflow-artifact S3 buckets, and the region from `terraform output`, runs
+`kustomize build`, and refuses to emit if any placeholder survived. **No tracked file
+is touched**, so there is nothing to `git checkout --` on teardown.
 
 ### 3.8 Run the workload
 
 Supply the runtime dataset out-of-band by uploading it to the Terraform-provisioned
 S3 bucket (never baked into the image, never committed); the `fetch-dataset` init
 container retrieves it at runtime via EKS Pod Identity (Sprint 7 PR 8 —
-[ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Then apply the AWS overlay:
+[ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Then render the overlay
+and apply it:
 
 ```bash
 aws s3 cp data/raw/data.csv "$(terraform -chdir=terraform output -raw dataset_s3_uri)" \
   --sse aws:kms --sse-kms-key-id "$(terraform -chdir=terraform output -raw dataset_kms_key_arn)"
-# set DATASET_S3_URI in k8s/overlays/aws/job-cloud.yaml to `terraform output -raw dataset_s3_uri`
-kubectl apply -k k8s/overlays/aws               # Namespace, SA, ConfigMaps, Job
+
+# Render the account-neutral overlay into a deployable manifest from Terraform
+# outputs (no tracked file is edited). Inspect it, then apply:
+scripts/render-cloud-manifests.sh -o /tmp/aws-manifests.yaml
+kubectl apply -f /tmp/aws-manifests.yaml        # Namespace, SA, ConfigMaps, MLflow, Job
+#   …or render-and-apply in one step:  scripts/render-cloud-manifests.sh --apply
 kubectl -n mlops wait --for=condition=complete --timeout=300s job/mlops-pipeline
 ```
+
+(If you built the workload image under a non-default tag, pass it through:
+`IMAGE_TAG=<tag> scripts/render-cloud-manifests.sh …`.)
 
 The overlay also brings up the **in-cluster MLflow platform** (the tracking server,
 its PostgreSQL metadata backend, and — on AWS — the Terraform-provisioned S3 artifact
@@ -343,14 +354,16 @@ never assume `destroy` succeeded from the fact that you ran it.
 
 ```bash
 # 1. Remove the Kubernetes workload (frees the ECR pull / any LB before infra goes).
-kubectl delete -k k8s/overlays/aws          # Job + mlops namespace (cascades to ConfigMaps + pod)
+#    Delete via the same rendered manifest you applied (or `kubectl delete -k` if you
+#    still have it — but the render flow leaves no tracked file to revert).
+kubectl delete -f /tmp/aws-manifests.yaml   # Job + mlops namespace (cascades to ConfigMaps + pods)
 
 # 2. Destroy ALL Terraform-managed infrastructure — including the ECR repositories.
 terraform -chdir=terraform destroy           # review the plan, then confirm
 #   -> Destroy complete! Resources: 65 destroyed.
 
-# 3. Revert any local, uncommitted overlay edits from the run.
-git checkout -- k8s/overlays/aws/kustomization.yaml   # restore the 000000000000 image placeholder
+# 3. Nothing to revert: render-cloud-manifests.sh never edits a tracked file, so the
+#    committed overlay is already at its 000000000000-placeholder state.
 ```
 
 `terraform destroy` removes everything in the state — EKS cluster, node group, NAT
@@ -416,9 +429,10 @@ The cloud lifecycle keeps the repository safe to publish (full posture in
 - **No kubeconfig in git** — `update-kubeconfig` writes to the operator's home
   directory, not the repo.
 - **No account ID in git** — the committed ECR reference is a `000000000000`
-  placeholder; the operator's real account is supplied at deploy time via
-  `kustomize edit set image` (uncommitted). Evidence docs redact account IDs and
-  the operator IP.
+  placeholder; the operator's real account is supplied at deploy time by
+  [`scripts/render-cloud-manifests.sh`](../scripts/render-cloud-manifests.sh), which
+  renders into a temp directory and never writes a tracked file. Evidence docs redact
+  account IDs and the operator IP.
 - **Least-privilege IAM** — dedicated cluster/node roles, AWS-managed policies only,
   no `AdministratorAccess`, no project-authored wildcard
   ([ADR-016](decisions/ADR-016-aws-iam-foundation.md)).

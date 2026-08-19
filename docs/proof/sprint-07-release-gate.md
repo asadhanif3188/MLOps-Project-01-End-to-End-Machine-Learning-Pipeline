@@ -7,8 +7,11 @@
   green CI run of the release commit (which executes the three linters this local gate
   could not run) and on accepting the captured 2026-08-19 runtime proof (see
   [§7](#7-final-verdict)).
-- **Recommended release version:** **`v1.4.0`** (MINOR) — consolidates the
-  `[Unreleased]` Sprint 5–7 work; the tag is **not** cut in this PR.
+- **Recommended release version:** **`v1.6.0`** (MINOR) — the Sprint 7 milestone in the
+  project's one-MINOR-per-sprint sequence (Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`).
+  Sprints 5–6 were merged to `main` but never tagged, so cutting `v1.6.0` publishes the
+  accumulated `[Unreleased]` Sprint 5–7 work; the tag jumps `v1.3.1 → v1.6.0` and is
+  **not** cut in this PR.
 - **Related:** [Sprint 7 Proof-Impact](sprint-07-proof-impact.md),
   [Sprint 7 Runtime Evidence](sprint-07-runtime-evidence.md),
   [Sprint 7 Retrospective](../retrospectives/sprint-07-retrospective.md),
@@ -270,11 +273,14 @@ residual limitation.
 
 ### 7.7 — Recommended release version
 
-**`v1.4.0`** — a MINOR bump over the last released tag `v1.3.1`, consolidating the
-`[Unreleased]` Sprint 5–7 additions (all backward-compatible new capability, no
-breaking change to the pipeline contract), per [docs/versioning.md](../versioning.md).
-Per the task, **the git tag and GitHub release are NOT created in this PR** — cutting
-`v1.4.0` is a separate, explicitly-requested step, gated on condition **C1** above.
+**`v1.6.0`** — the Sprint 7 milestone in the project's one-MINOR-per-sprint sequence
+(Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`, Sprint 7 = `v1.6.0`, per each sprint's plan
+and [docs/versioning.md](../versioning.md)). Sprints 5 and 6 were merged to `main` but
+their tags were never cut, so the last released tag is `v1.3.1`; cutting `v1.6.0` now
+publishes the accumulated `[Unreleased]` Sprint 5–7 additions (all backward-compatible
+new capability, no breaking change to the pipeline contract) and the git tag jumps
+`v1.3.1 → v1.6.0`. Per the task, **the git tag and GitHub release are NOT created in this
+PR** — cutting `v1.6.0` is a separate, explicitly-requested step, gated on condition **C1** above.
 
 ---
 

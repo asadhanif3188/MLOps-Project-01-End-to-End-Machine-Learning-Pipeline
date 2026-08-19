@@ -44,7 +44,7 @@ Exception
     ├── ConfigError          # missing/invalid params.yaml or env vars
     ├── DataError            # dataset cannot be read/written or has wrong shape
     ├── ModelError           # model cannot be (de)serialized or used
-    └── TrackingError        # MLflow / DagsHub interaction failed
+    └── TrackingError        # MLflow tracking interaction failed
 ```
 
 | Exception | Raised when | Example trigger |
@@ -53,7 +53,7 @@ Exception
 | `ConfigError` | Configuration is missing or invalid. | `params.yaml` absent, missing key, or `MLFLOW_TRACKING_URI` unset. |
 | `DataError` | A dataset can't be read/written or lacks a required column. | `data/raw/data.csv` missing; no `Outcome` column. |
 | `ModelError` | A model artifact can't be (de)serialized or used. | `models/model.pkl` missing/corrupt; `predict` fails. |
-| `TrackingError` | Experiment tracking fails at a network boundary. | DagsHub unreachable or credentials rejected. |
+| `TrackingError` | Experiment tracking fails at a network boundary. | MLflow tracking server unreachable or a logging call rejected. |
 
 `PipelineError` is intentionally **behavior-free** (message only) and the module
 is **dependency-free** (standard library only) so it can be imported anywhere
@@ -218,7 +218,7 @@ The pipeline runs as command-line stages (directly or via `dvc repro`), so the
   | Env var unset | `Required environment variable MLFLOW_TRACKING_URI is not set. Copy .env.example to .env and set MLFLOW_TRACKING_URI (see the README), then re-run.` |
   | Model missing | `Model file not found: 'models/model.pkl'. Run the train stage first to produce it.` |
   | Wrong schema | `Dataset 'data/raw/data.csv' is missing required column(s): Outcome. Found columns: [...]` |
-  | Tracking down | `MLflow tracking failed against '<uri>': <detail>. Check the tracking URI and your DagsHub credentials / network connection.` |
+  | Tracking down | `MLflow tracking failed against '<uri>': <detail>. Check that MLFLOW_TRACKING_URI points at a reachable MLflow tracking server and that the server is healthy.` |
 
 - **Non-zero exit code.** Every failure exits `1`, so `dvc repro` and CI treat a
   failed stage as failed instead of proceeding on partial or missing outputs.

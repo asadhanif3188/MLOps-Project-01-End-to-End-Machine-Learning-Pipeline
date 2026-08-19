@@ -68,8 +68,11 @@ The full rationale and alternatives are in
 **MLflow** provides experiment tracking and an optional model registry. Training
 produces many candidate models; MLflow records their parameters, metrics, and
 artifacts so runs are comparable and results are not trapped on one machine.
-Hosting it on DagsHub keeps tracking and DVC storage on one platform. The full
-rationale and alternatives are in [ADR-002](decisions/ADR-002-why-mlflow.md).
+The project runs its **own MLflow Tracking Server in-cluster** (PostgreSQL metadata
++ S3 artifacts); earlier sprints used DagsHub-hosted MLflow, removed in Sprint 7.
+The full rationale and alternatives are in
+[ADR-002](decisions/ADR-002-why-mlflow.md) and
+[ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md).
 
 ## Why Modular Code?
 
@@ -152,7 +155,7 @@ the [Developer Guide](developer-guide.md).
 | Random Forest | Strong, interpretable tabular baseline | This document (benchmark pending) |
 | Python | First-class ML ecosystem support | This document |
 | DVC | Data/pipeline versioning and reproducibility | [ADR-003](decisions/ADR-003-why-dvc.md) |
-| MLflow (DagsHub) | Experiment tracking and model registry | [ADR-002](decisions/ADR-002-why-mlflow.md) |
+| MLflow (self-hosted, in-cluster) | Experiment tracking and model registry | [ADR-002](decisions/ADR-002-why-mlflow.md), [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md) |
 | Modular code | Single-responsibility stages, 1:1 with DVC | [ADR-001](decisions/ADR-001-repository-structure.md) |
 | YAML config | Readable, diff-able, DVC-tracked parameters | This document |
 | Centralized logging (stdlib) | One config, console + rotating file, env-controlled | [Logging Strategy](logging.md) |

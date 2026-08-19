@@ -170,11 +170,13 @@ Expected. Those paths are bind-mounted, so Docker creates the host directory if
 it is missing. `models/` is a pipeline output directory and is safe to leave
 empty; it fills in when you run `dvc repro`.
 
-**`dvc repro` / MLflow fails with an auth or tracking-URI error.**
-Credentials are missing. Ensure `.env` exists (`cp .env.example .env`) and has
-valid `MLFLOW_TRACKING_URI` / `MLFLOW_TRACKING_USERNAME` /
-`MLFLOW_TRACKING_PASSWORD`. `.env` is optional for lint/type/test but **required**
-for anything that talks to MLflow/DagsHub.
+**`dvc repro` / MLflow fails with a tracking-URI or connection error.**
+`MLFLOW_TRACKING_URI` is unset or unreachable. Ensure `.env` exists
+(`cp .env.example .env`) and points `MLFLOW_TRACKING_URI` at a reachable MLflow
+tracking server — since Sprint 7 this is the credential-free in-cluster MLflow
+platform (e.g. `kubectl -n mlops port-forward svc/mlflow 5000:5000`), so there is
+no username/password. `.env` is optional for lint/type/test but **required** for
+anything that talks to MLflow or the DVC remote.
 
 **A tool (e.g. `ruff`) is "not found" after `docker compose exec dev bash`.**
 The default `bash` shell is non-login and keeps the image's `PATH`

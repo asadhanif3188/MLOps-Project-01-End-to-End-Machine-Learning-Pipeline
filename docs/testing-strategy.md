@@ -132,7 +132,7 @@ fixtures, all built on pytest's `tmp_path` so nothing touches the real data tree
 | `training_frame` / `training_csv` | A balanced 30-row dataset (and its CSV) large enough for the train stage's 3-fold CV. |
 | `stub_tracking` | Swaps the lazily-imported `tracking` module for an in-memory recorder, so a stage's read → compute → persist path runs without importing MLflow or touching the network. |
 
-The real network boundary (MLflow, DagsHub) is never contacted: the ML compute
+The real network boundary (the MLflow tracking server) is never contacted: the ML compute
 imports no MLflow, and `stub_tracking` neutralizes the one place a stage crosses
 the tracking boundary. No live service or credential is required by any test.
 

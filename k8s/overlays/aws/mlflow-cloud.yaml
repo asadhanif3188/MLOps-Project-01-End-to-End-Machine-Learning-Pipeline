@@ -8,12 +8,8 @@
 #   * MLFLOW_ARTIFACTS_DESTINATION — overridden (an `env` entry wins over the base
 #     ConfigMap's `envFrom` value) to the real S3 bucket. This is a committed
 #     PLACEHOLDER, filled in for the operator's OWN account from Terraform output,
-#     WITHOUT editing this file:
-#
-#         cd k8s/overlays/aws
-#         kustomize edit add configmap ... # (or edit MLFLOW_ARTIFACTS_DESTINATION)
-#         # bucket name: terraform -chdir=../../../terraform output -raw mlflow_artifact_bucket_name
-#         # => s3://<bucket>/artifacts
+#     WITHOUT editing this file by scripts/render-cloud-manifests.sh (bucket name from
+#     `terraform output -raw mlflow_artifact_bucket_name` => s3://<bucket>/artifacts).
 #
 #   * AWS_DEFAULT_REGION — boto3's region for real S3.
 #

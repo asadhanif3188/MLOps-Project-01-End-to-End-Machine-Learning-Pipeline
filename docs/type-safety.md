@@ -94,8 +94,8 @@ reasons:
   stub packages (`pandas-stubs`, `types-PyYAML`) that are not currently
   dependencies.
 
-(`dagshub` and `dvc` are used only as command-line tools here, never imported,
-so they are not part of the type-checked surface at all.)
+(`dvc` is used only as a command-line tool here, never imported, so it is not
+part of the type-checked surface at all.)
 
 All are listed under a `[[tool.mypy.overrides]]` block with
 `ignore_missing_imports = true`, which scopes "untyped" strictly to those
