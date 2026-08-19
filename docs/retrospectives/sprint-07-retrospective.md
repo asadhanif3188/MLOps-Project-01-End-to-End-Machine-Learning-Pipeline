@@ -3,10 +3,10 @@
 - **Date:** 2026-08-19
 - **Release:** `v1.6.0` — Cloud-Native MLOps Hardening (pending; the Sprint 7 milestone
   in the project's one-MINOR-per-sprint sequence — Sprint 5 = `v1.4.0`, Sprint 6 =
-  `v1.5.0`, Sprint 7 = `v1.6.0`. Sprints 5–6 were merged to `main` but never tagged
-  individually, so the last released tag is `v1.3.1`; cutting `v1.6.0` publishes the
-  accumulated `[Unreleased]` Sprint 5–7 work and the tag jumps `v1.3.1 → v1.6.0`. The
-  tag is a separate, explicitly-requested step gated by the
+  `v1.5.0`, Sprint 7 = `v1.6.0`. `v1.4.0` and `v1.5.0` were both tagged and released
+  (2026-08-14 / 2026-08-15), so the sequence is continuous — `v1.3.1 → v1.4.0 → v1.5.0 →
+  v1.6.0`, with **no tag gap**; `v1.6.0` is the next tag. Cutting it is a separate,
+  explicitly-requested step gated by the
   [release gate](../proof/sprint-07-release-gate.md)).
 - **Scope:** Take the Sprint 6 cloud platform — a Terraform-defined EKS environment the
   pipeline had run on **once** — and **close every HIGH/MEDIUM finding** from the Sprint

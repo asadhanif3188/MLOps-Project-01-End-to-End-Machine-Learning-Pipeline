@@ -40,7 +40,7 @@
 #   -h, --help     show this help and exit
 #
 # Environment overrides (rarely needed; defaults match the committed image tags):
-#   IMAGE_TAG          workload image tag         (default: 1.3.1)
+#   IMAGE_TAG          workload image tag         (default: 1.6.0)
 #   MLFLOW_IMAGE_TAG   MLflow server image tag    (default: 0.1.0)
 #   TF_DIR             Terraform root directory   (default: <repo>/terraform)
 #
@@ -55,7 +55,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${TF_DIR:-${REPO_ROOT}/terraform}"
 OVERLAY_REL="k8s/overlays/aws"
 
-IMAGE_TAG="${IMAGE_TAG:-1.3.1}"
+IMAGE_TAG="${IMAGE_TAG:-1.6.0}"
 MLFLOW_IMAGE_TAG="${MLFLOW_IMAGE_TAG:-0.1.0}"
 
 OUTFILE=""
@@ -135,7 +135,7 @@ subst "${OVERLAY}/kustomization.yaml" "s|newName: .*/mlops-pipeline$|newName: ${
 subst "${OVERLAY}/kustomization.yaml" "s|newName: .*/mlflow-server$|newName: ${MLFLOW_ECR_URL}|"
 # Retag: the committed literals equal the script defaults, so this is a no-op unless
 # IMAGE_TAG / MLFLOW_IMAGE_TAG were overridden in the environment.
-subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"1.3.1\"|newTag: \"${IMAGE_TAG}\"|"
+subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"1.6.0\"|newTag: \"${IMAGE_TAG}\"|"
 subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"0.1.0\"|newTag: \"${MLFLOW_IMAGE_TAG}\"|"
 
 # 2. Runtime dataset source (job-cloud.yaml) — the whole DATASET_S3_URI value.

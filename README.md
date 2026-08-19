@@ -70,7 +70,7 @@ they are mounted and injected at run time.
 ```bash
 docker build \
   --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
-  --build-arg BUILD_VERSION="1.3.1" \
+  --build-arg BUILD_VERSION="1.6.0" \
   -t ml-pipeline:local .
 ```
 

@@ -63,10 +63,10 @@ registry**. Amazon ECR is the natural choice: the node role already carries
 so the **kubelet authenticates the pull with the node's instance role** — no
 pod-level credential and no IRSA. The overlay's `images` transformer repoints
 `ml-pipeline` to an ECR reference pinned to an explicit, immutable tag
-(`1.3.1`, the image `BUILD_VERSION`), never `:latest`. The account ID and region
+(`1.6.0`, the image `BUILD_VERSION`), never `:latest`. The account ID and region
 are a committed **placeholder** (`000000000000` / `us-east-1`) that the operator
 sets for their **own** account in PR 7 without editing the file
-(`kustomize edit set image ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1`).
+(`kustomize edit set image ml-pipeline=<account>.dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.6.0`).
 
 **2. Image pull policy + runtime dataset — the `job-cloud.yaml` patch.**
 A single strategic-merge patch adds:

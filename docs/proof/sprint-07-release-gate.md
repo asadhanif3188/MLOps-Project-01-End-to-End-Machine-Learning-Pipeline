@@ -8,10 +8,10 @@
   could not run) and on accepting the captured 2026-08-19 runtime proof (see
   [§7](#7-final-verdict)).
 - **Recommended release version:** **`v1.6.0`** (MINOR) — the Sprint 7 milestone in the
-  project's one-MINOR-per-sprint sequence (Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`).
-  Sprints 5–6 were merged to `main` but never tagged, so cutting `v1.6.0` publishes the
-  accumulated `[Unreleased]` Sprint 5–7 work; the tag jumps `v1.3.1 → v1.6.0` and is
-  **not** cut in this PR.
+  project's one-MINOR-per-sprint sequence (Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`,
+  Sprint 7 = `v1.6.0`). `v1.4.0` and `v1.5.0` were both tagged and released, so the
+  sequence is continuous — `v1.3.1 → v1.4.0 → v1.5.0 → v1.6.0`, **no tag gap** — and
+  `v1.6.0` is the next tag, **not** cut in this PR.
 - **Related:** [Sprint 7 Proof-Impact](sprint-07-proof-impact.md),
   [Sprint 7 Runtime Evidence](sprint-07-runtime-evidence.md),
   [Sprint 7 Retrospective](../retrospectives/sprint-07-retrospective.md),
@@ -275,12 +275,13 @@ residual limitation.
 
 **`v1.6.0`** — the Sprint 7 milestone in the project's one-MINOR-per-sprint sequence
 (Sprint 5 = `v1.4.0`, Sprint 6 = `v1.5.0`, Sprint 7 = `v1.6.0`, per each sprint's plan
-and [docs/versioning.md](../versioning.md)). Sprints 5 and 6 were merged to `main` but
-their tags were never cut, so the last released tag is `v1.3.1`; cutting `v1.6.0` now
-publishes the accumulated `[Unreleased]` Sprint 5–7 additions (all backward-compatible
-new capability, no breaking change to the pipeline contract) and the git tag jumps
-`v1.3.1 → v1.6.0`. Per the task, **the git tag and GitHub release are NOT created in this
-PR** — cutting `v1.6.0` is a separate, explicitly-requested step, gated on condition **C1** above.
+and [docs/versioning.md](../versioning.md)). `v1.4.0` (Sprint 5) and `v1.5.0` (Sprint 6)
+were both tagged and released on `origin` (2026-08-14 / 2026-08-15), so the release
+sequence is continuous — `v1.3.1 → v1.4.0 → v1.5.0 → v1.6.0`, with **no tag gap** — and
+cutting `v1.6.0` publishes only the Sprint 7 additions (all backward-compatible new
+capability, no breaking change to the pipeline contract). Per the task, **the git tag and
+GitHub release are NOT created in this PR** — cutting `v1.6.0` is a separate,
+explicitly-requested step, gated on condition **C1** above.
 
 ---
 

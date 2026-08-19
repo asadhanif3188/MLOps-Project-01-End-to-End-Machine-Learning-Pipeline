@@ -588,7 +588,7 @@ below (immutable tags, scan-on-push, private, AES256 at rest, lifecycle retentio
   [`k8s/overlays/aws`](../k8s/overlays/aws) (override with `ecr_repository_name` if
   needed). The tracking-server repository is fixed at `mlflow-server`.
 - **Immutable tags** (`image_tag_mutability = "IMMUTABLE"`) — a version tag such as
-  `1.3.1` can never be repointed, so a deployed digest is reproducible and the
+  `1.6.0` can never be repointed, so a deployed digest is reproducible and the
   overlay's static image-pinning contract holds. This matches the "explicit,
   immutable version, never `:latest`" convention the AWS overlay already relies on.
 - **Scan on push** (`scan_on_push = true`) — image vulnerability scanning stays on; it
