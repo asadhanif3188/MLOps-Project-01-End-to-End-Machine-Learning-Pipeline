@@ -34,6 +34,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-024](ADR-024-vpc-cni-pod-identity.md) | VPC CNI Identity via EKS Pod Identity (dedicated role, off the node role) — closes M-01 | Accepted (design) | 2026-08-17 |
 | [ADR-025](ADR-025-eks-secrets-kms-encryption.md) | EKS Secret Envelope Encryption with a Customer-Managed KMS Key — closes M-02 | Accepted (design) | 2026-08-17 |
 | [ADR-026](ADR-026-in-cluster-mlflow-platform.md) | Persistent In-Cluster MLflow Tracking Platform (PostgreSQL + S3); removes DagsHub | Accepted (validated) | 2026-08-18 |
+| [ADR-027](ADR-027-s3-dataset-runtime-retrieval.md) | S3-Backed Runtime Dataset Retrieval (init container + Pod Identity) — closes M-04 | Accepted (validated) | 2026-08-19 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and

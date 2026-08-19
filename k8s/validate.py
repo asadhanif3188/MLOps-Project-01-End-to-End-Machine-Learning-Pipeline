@@ -140,6 +140,10 @@ def pod_spec_of(job: dict) -> dict:
     return job.get("spec", {}).get("template", {}).get("spec", {}) or {}
 
 
+def init_containers_of(job: dict) -> list[dict]:
+    return pod_spec_of(job).get("initContainers", []) or []
+
+
 def volumes_of(job: dict) -> list[dict]:
     return pod_spec_of(job).get("volumes", []) or []
 
@@ -495,27 +499,120 @@ def validate() -> int:
         "no read-only subPath mount of the no-SCM ConfigMap at /app/.dvc/config.local",
     )
 
-    # (c) Runtime dataset: the Job mounts an input dataset at /app/data/raw (the
-    # preprocess stage's `data/raw/data.csv` input; the image ships no data). The
-    # backing volume must exist. The dataset ConfigMap itself is created
-    # out-of-band (like the Secret), so it is intentionally NOT in the render.
+    # (c) Runtime dataset via S3 init-container retrieval (Sprint 7, PR 8 — closes
+    # M-04). The dataset is no longer delivered by a ConfigMap: a `fetch-dataset`
+    # init container downloads it from S3 (real S3 on EKS via Pod Identity;
+    # S3-compatible MinIO locally) into a shared emptyDir that the pipeline
+    # container reads at /app/data/raw. These checks assert that wiring on the
+    # rendered overlay. The dataset OBJECT lives in S3, created out-of-band, so it
+    # is intentionally NOT in the render — only the retrieval contract is.
+    init_containers = init_containers_of(job)
+    fetch = next((c for c in init_containers if c.get("name") == "fetch-dataset"), None)
+    r.check(
+        sec,
+        "fetch-dataset init container present",
+        fetch is not None,
+        "no initContainer named 'fetch-dataset' (the S3 dataset retrieval step)",
+    )
+
+    # The pipeline container consumes the dataset read-only at /app/data/raw.
     data_mounts = [
         m for m in volume_mounts_of(c0) if m.get("mountPath") == "/app/data/raw"
     ]
     r.check(
         sec,
-        "runtime dataset mounted at /app/data/raw",
-        bool(data_mounts),
-        "no volumeMount at /app/data/raw (the preprocess input directory)",
+        "runtime dataset mounted read-only at /app/data/raw (pipeline)",
+        bool(data_mounts) and all(m.get("readOnly") is True for m in data_mounts),
+        "the pipeline container must mount /app/data/raw read-only "
+        "(the init container is the sole writer)",
     )
-    declared_vol_names = {v.get("name") for v in volumes_of(job)}
-    mount_names = [m.get("name") for m in data_mounts]
-    backed_ok = bool(data_mounts) and all(n in declared_vol_names for n in mount_names)
+
+    # That mount must be an emptyDir (the init->main hand-off buffer), NOT a
+    # ConfigMap (M-04) and NOT a hostPath (explicit sprint constraint).
+    volumes_by_name = {v.get("name"): v for v in volumes_of(job)}
+    data_vol_names = {m.get("name") for m in data_mounts}
+    dataset_vols = [volumes_by_name.get(n, {}) for n in data_vol_names]
     r.check(
         sec,
-        "dataset mount is backed by a declared volume",
-        backed_ok,
-        f"mount names {mount_names} not all in volumes {sorted(declared_vol_names)}",
+        "dataset volume is an emptyDir (not ConfigMap, not hostPath)",
+        bool(dataset_vols)
+        and all(
+            "emptyDir" in v and "configMap" not in v and "hostPath" not in v
+            for v in dataset_vols
+        ),
+        f"dataset volume(s) must be emptyDir; got {dataset_vols}",
+    )
+
+    # The init container writes the SAME volume at /app/data/raw (writable — no
+    # readOnly), so the download lands where the pipeline reads it.
+    if fetch is not None:
+        fetch_data_mounts = [
+            m
+            for m in volume_mounts_of(fetch)
+            if m.get("mountPath") == "/app/data/raw" and m.get("name") in data_vol_names
+        ]
+        r.check(
+            sec,
+            "fetch-dataset writes the shared dataset volume at /app/data/raw",
+            bool(fetch_data_mounts)
+            and all(m.get("readOnly") is not True for m in fetch_data_mounts),
+            "the fetch-dataset init container must mount the dataset volume "
+            "writable at /app/data/raw",
+        )
+        # It must run the first-party retrieval script and know its S3 source.
+        fcmd = fetch.get("command", []) or []
+        fargs = fetch.get("args", []) or []
+        runs_fetch = any("fetch_dataset" in str(t) for t in [*fcmd, *fargs])
+        r.check(
+            sec,
+            "fetch-dataset runs the retrieval script (src/fetch_dataset.py)",
+            runs_fetch,
+            f"command/args do not reference fetch_dataset: {fcmd} {fargs}",
+        )
+        fetch_env = container_env(fetch)
+        r.check(
+            sec,
+            "fetch-dataset has DATASET_S3_URI configured",
+            "DATASET_S3_URI" in fetch_env,
+            "the fetch-dataset init container must set DATASET_S3_URI "
+            "(the S3 object to retrieve)",
+        )
+
+    # The old ConfigMap dataset mechanism must be fully gone: no volume may be
+    # backed by a ConfigMap named 'mlops-pipeline-dataset', anywhere in the render.
+    dataset_cm_refs = [
+        v.get("name")
+        for v in volumes_of(job)
+        if (v.get("configMap", {}) or {}).get("name") == "mlops-pipeline-dataset"
+    ]
+    r.check(
+        sec,
+        "no ConfigMap-backed dataset volume (M-04 closed)",
+        not dataset_cm_refs,
+        f"dataset must not be delivered via ConfigMap; found volumes {dataset_cm_refs}",
+    )
+
+    # Defence-in-depth against the sprint's explicit "no hostPath" constraint: no
+    # volume anywhere in the pipeline pod may be a hostPath.
+    hostpath_vols = [v.get("name") for v in volumes_of(job) if "hostPath" in v]
+    r.check(
+        sec,
+        "no hostPath volumes in the pipeline pod",
+        not hostpath_vols,
+        f"hostPath volumes are forbidden; found {hostpath_vols}",
+    )
+
+    # The pinned dataset identity is present so the init container can verify
+    # integrity (documents dataset version/checksum in-manifest — requirement 11).
+    dataset_sha_present = any(
+        "DATASET_SHA256" in (cm.get("data", {}) or {})
+        for cm in by_kind.get("ConfigMap", [])
+    )
+    r.check(
+        sec,
+        "DATASET_SHA256 pinned in a ConfigMap (dataset integrity/identity)",
+        dataset_sha_present,
+        "no ConfigMap carries DATASET_SHA256 (the pinned dataset checksum)",
     )
 
     # (d) MLflow tracking endpoint is configured for the container — either an

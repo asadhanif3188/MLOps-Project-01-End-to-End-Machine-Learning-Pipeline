@@ -1,30 +1,34 @@
-# Local-overlay runtime patch (Sprint 5, PR 8; updated Sprint 7, PR 6).
+# Local-overlay runtime patch (Sprint 5, PR 8; MLflow rewire Sprint 7, PR 6;
+# dataset rewire Sprint 7, PR 8 — closes M-04).
 #
-# The BASE Job is environment-independent: it mounts only the DVC no-SCM config
-# (needed in every environment) and reads MLFLOW_TRACKING_URI from the base
-# ConfigMap. This patch layers the one thing still specific to a LOCAL run:
+# The BASE Job now owns the whole retrieval MECHANISM: the `fetch-dataset` init
+# container, the shared `dataset` emptyDir, and the read-only mount at
+# /app/data/raw. What is still LOCAL-specific — and all this patch layers — is the
+# dataset SOURCE and how the init container authenticates to it:
 #
-#   The runtime DATASET, mounted read-only at /app/data/raw from a ConfigMap the
-#   operator creates OUT-OF-BAND from the local, git-ignored dataset file — exactly
-#   like the credential Secret. The dataset is therefore never committed and never
-#   baked into the image. `optional: true` means the Job still applies (and starts)
-#   when the dataset ConfigMap is absent; the pipeline then fails fast at the
-#   preprocess stage with a clear DataError ("Dataset not found:
-#   'data/raw/data.csv'"), the intended graceful missing-input failure mode
-#   (see the failure test in ADR-013).
+#   * DATASET_S3_URI       — the dataset object in the in-cluster MinIO (the local
+#     stand-in for Amazon S3). The bucket is created by minio-setup-job.yaml and the
+#     object is uploaded out-of-band (see k8s/README.md § "Dataset" and the proof
+#     runbook) — never committed, never baked into the image.
+#   * AWS_S3_ENDPOINT_URL  — redirect boto3 from Amazon S3 to the MinIO Service.
+#     src/fetch_dataset.py switches to path-style addressing when this is set.
+#   * AWS_DEFAULT_REGION   — boto3 requires a region even for MinIO; any value works.
+#   * envFrom the MinIO credential Secret — locally the init container authenticates
+#     to MinIO with the SAME out-of-band `mlflow-s3-credentials` Secret the MLflow
+#     server/MinIO already use (AWS_ACCESS_KEY_ID/SECRET). These are THROWAWAY MinIO
+#     creds for local validation, created out-of-band and never committed. On AWS
+#     there is NO such Secret: the init container gets short-lived, pod-scoped S3
+#     credentials from EKS Pod Identity (terraform/datasets.tf) — no static keys.
 #
-#   >> This is a LOCAL VALIDATION mechanism and is NOT presented as production
-#   >> storage. A ConfigMap caps at 1 MiB and is the wrong carrier for a real
-#   >> dataset; production would use a PVC / object store / `dvc pull` from the
-#   >> DVC remote.
+# The former dataset ConfigMap (and its volume/mount) is GONE — requirement 4
+# ("do not use ConfigMap for dataset delivery") is satisfied here too, not only on
+# AWS, and running against MinIO lets the identical retrieval code path be
+# validated locally.
 #
-# MLflow (Sprint 7, PR 6 — ADR-026): the former in-pod FILE-STORE override is
-# REMOVED. The base ConfigMap now points MLFLOW_TRACKING_URI at the PERSISTENT
-# in-cluster MLflow Tracking Server Service (PostgreSQL + MinIO/S3), so a local run
-# logs to the REAL platform — the same tracking path exercised on AWS, differing
-# only in the server's artifact backend. There is nothing MLflow-specific left to
-# patch here: the pipeline needs no MLflow credentials (internal server, no client
-# auth) and no S3 access (artifacts are proxied through the server).
+# NOTE: strategic-merge REPLACES a container's `envFrom` list (it has no merge
+# key), so the init container's full envFrom is restated below (the base
+# ConfigMap PLUS the local Secret), not just the addition. Container `env` entries
+# merge by name, so DATASET_S3_URI etc. are additive.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -33,19 +37,24 @@ metadata:
 spec:
   template:
     spec:
-      containers:
-        - name: pipeline
-          # Appended to the base container's volumeMounts (merge key: mountPath).
-          volumeMounts:
-            - name: dataset
-              mountPath: /app/data/raw
-              readOnly: true
-      # Appended to the base pod's volumes (merge key: name).
-      volumes:
-        - name: dataset
-          configMap:
-            name: mlops-pipeline-dataset
-            # Apply/start succeed even before the dataset ConfigMap exists; the
-            # pipeline then fails fast at preprocess (missing input) rather than
-            # the pod being stuck unschedulable.
-            optional: true
+      initContainers:
+        - name: fetch-dataset
+          env:
+            - name: DATASET_S3_URI
+              value: "s3://datasets/pima-indians-diabetes/v1/data.csv"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "http://minio:9000"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+          envFrom:
+            # Base ConfigMap (DATASET_SHA256, LOG_LEVEL) — restated because this
+            # patch also adds the Secret below and envFrom is replaced wholesale.
+            - configMapRef:
+                name: mlops-pipeline-config
+            # MinIO credentials (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
+            # optional: true so the Job still applies before the Secret exists; the
+            # init container then fails fast with a clear "no credentials / access
+            # denied" DataError rather than the pod being stuck unschedulable.
+            - secretRef:
+                name: mlflow-s3-credentials
+                optional: true

@@ -318,3 +318,57 @@ output "ebs_csi_role_arn" {
   value       = aws_iam_role.ebs_csi.arn
   sensitive   = true
 }
+
+# --- Dataset store / S3 + Pod Identity (Sprint 7, PR 8 — closes M-04) ----------
+# The S3 bucket holding the pipeline's raw input dataset and the READ-ONLY
+# workload identity that grants the pipeline pod (and only it) access. Set the S3
+# URI on the k8s AWS overlay's DATASET_S3_URI from the bucket output + object key,
+# and upload the dataset object to it out-of-band (see the proof runbook). Role
+# ARNs embed the account ID and are marked sensitive, consistent with the other
+# ARN outputs; the bucket NAME embeds the account ID for global uniqueness, so it
+# is treated as sensitive too.
+
+output "dataset_bucket_name" {
+  description = "Name of the S3 bucket that stores the pipeline's raw input dataset. Combine with dataset_object_key to form DATASET_S3_URI on k8s/overlays/aws (s3://<bucket>/<key>). Sensitive: the name embeds the AWS account ID for global uniqueness."
+  value       = aws_s3_bucket.datasets.bucket
+  sensitive   = true
+}
+
+output "dataset_bucket_arn" {
+  description = "ARN of the dataset S3 bucket. Sensitive: contains the AWS account ID."
+  value       = aws_s3_bucket.datasets.arn
+  sensitive   = true
+}
+
+output "dataset_object_key" {
+  description = "Canonical, version-pathed object key the pipeline reads (e.g. pima-indians-diabetes/v1/data.csv). Non-sensitive: it names the dataset identity/version, not a location. Upload the dataset to s3://<dataset_bucket_name>/<this key>."
+  value       = local.dataset_object_key
+}
+
+output "dataset_s3_uri" {
+  description = "Fully-formed s3:// URI (bucket + object key) to set as DATASET_S3_URI on the k8s AWS overlay. Sensitive: embeds the bucket name (and therefore the account ID)."
+  value       = "s3://${aws_s3_bucket.datasets.bucket}/${local.dataset_object_key}"
+  sensitive   = true
+}
+
+output "dataset_reader_role_arn" {
+  description = "ARN of the READ-ONLY IAM role the pipeline pod assumes via EKS Pod Identity for dataset access (bound to the mlops/mlops-pipeline service account). Sensitive: contains the AWS account ID."
+  value       = aws_iam_role.dataset_reader.arn
+  sensitive   = true
+}
+
+output "dataset_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key encrypting the dataset bucket (SSE-KMS). Sensitive: contains the AWS account ID."
+  value       = aws_kms_key.datasets.arn
+  sensitive   = true
+}
+
+output "dataset_kms_key_alias" {
+  description = "Human-readable alias of the dataset CMK (alias/<project>-<environment>-datasets). Non-sensitive identifier for the console/CloudTrail."
+  value       = aws_kms_alias.datasets.name
+}
+
+output "dataset_reader_pod_identity_association_id" {
+  description = "ID of the EKS Pod Identity association binding the mlops/mlops-pipeline service account to the dataset-reader role. Confirms the pipeline draws dataset S3 credentials via workload identity, not static keys."
+  value       = aws_eks_pod_identity_association.dataset_reader.association_id
+}

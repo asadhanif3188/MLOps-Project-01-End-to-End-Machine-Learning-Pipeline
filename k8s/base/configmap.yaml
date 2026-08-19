@@ -47,3 +47,13 @@ data:
   # defaults to "mlops-pipeline" — but set explicitly so the grouping is legible
   # in the manifest and easy to repoint per environment.
   MLFLOW_EXPERIMENT_NAME: "mlops-pipeline"
+  # Pinned dataset identity (Sprint 7, PR 8 — ADR-027). The SHA-256 of the exact
+  # dataset bytes the pipeline expects. The `fetch-dataset` init container
+  # (src/fetch_dataset.py) verifies the object it downloads from S3 against this
+  # value and fails the Job on a mismatch, so a swapped/corrupt object cannot
+  # silently enter a run. It lives in the BASE because the dataset identity is the
+  # SAME in every environment; the environment-specific SOURCE (DATASET_S3_URI /
+  # endpoint / credentials) is layered by the overlays. This is the Pima Indians
+  # Diabetes dataset (23,872 bytes; DVC md5 739f3c9177b13d1c15aa060046cfb023 — see
+  # data/raw/data.csv.dvc and docs/dataset.md).
+  DATASET_SHA256: "ee5b0c92d5ad461e86151c544b3b76bd6269c6052c5eb628c4b0618a08cffc89"

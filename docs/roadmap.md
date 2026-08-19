@@ -281,8 +281,16 @@ infrastructure defined as code.
   (the same Terraform-provisioned bucket family the MLflow artifact store uses),
   authorized by EKS Pod Identity rather than committed keys, so the whole platform
   is self-hosted with no external SaaS in any runtime path. Deliberately deferred:
-  in-cluster runs already avoid the remote (`core.no_scm` + a mounted dataset), so
-  this is not blocking. Ratify as an ADR.
+  in-cluster runs already avoid the remote (`core.no_scm` + the S3-retrieved runtime
+  dataset, below), so this is not blocking. Ratify as an ADR.
+- ✅ **Runtime dataset from S3, not a ConfigMap** (Sprint 7, PR 8 — closes finding
+  **M-04**). The dataset is delivered at runtime from a private, CMK-encrypted,
+  versioned S3 bucket ([`terraform/datasets.tf`](../terraform/datasets.tf)) by a
+  `fetch-dataset` init container, authorized by EKS Pod Identity (least-privilege
+  read-only, no static keys) and integrity-checked against a pinned checksum — no
+  ConfigMap, no baked-in data, no hostPath
+  ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Proven live locally
+  against MinIO; the EKS exercise is operator-gated.
 
 **Expected outcome:** Production-deployable infrastructure, provisioned
 reproducibly from code with clear separation of environments.

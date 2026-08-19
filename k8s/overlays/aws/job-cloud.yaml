@@ -1,45 +1,47 @@
-# AWS-overlay runtime patch (Sprint 6, PR 5 — Cloud Runtime Integration).
+# AWS-overlay runtime patch (Sprint 6, PR 5 — Cloud Runtime Integration; dataset
+# rewire Sprint 7, PR 8 — closes M-04).
 #
 # Strategic-merge patch onto the base Job. It carries ONLY the cloud-specific
 # runtime inputs; everything else — the pod/container securityContext
-# (runAsNonRoot + uid/gid 10001, seccomp RuntimeDefault, allowPrivilegeEscalation
-# false, capabilities drop ALL), the resource requests/limits, the finite-run
-# lifecycle, the ServiceAccount, and the DVC no-SCM config mount — is inherited
-# UNCHANGED from the base. This patch weakens nothing: it adds an image pull
-# policy and a read-only dataset mount, and touches no security field.
+# (runAsNonRoot + uid/gid 10001, fsGroup 10001, seccomp RuntimeDefault,
+# allowPrivilegeEscalation false, capabilities drop ALL), the resource
+# requests/limits, the finite-run lifecycle, the ServiceAccount, the DVC no-SCM
+# config mount, the fetch-dataset init container, and the shared dataset emptyDir —
+# is inherited UNCHANGED from the base. This patch weakens nothing: it adds an
+# image pull policy and the cloud dataset SOURCE, and touches no security field.
 #
 # What differs on EKS versus the LOCAL overlay:
 #
 #   1. imagePullPolicy — the base sets none (a locally side-loaded image needs
-#      no pull). On EKS the image is pulled from ECR, so an explicit policy
-#      belongs here. `Always` guarantees the node runs exactly the image just
-#      pushed to ECR for this validation run, removing the "stale cached image"
-#      class of confusion (the same failure mode the k8s README documents for
-#      Docker Desktop). The pull cost is negligible for a one-shot batch Job.
+#      no pull). On EKS the image is pulled from ECR, so an explicit `Always`
+#      belongs here (runs exactly the image just pushed for this validation).
 #
-#   2. Runtime DATASET — mounted read-only at /app/data/raw from a ConfigMap the
-#      operator creates OUT-OF-BAND, exactly as in the local overlay. Dataset
-#      provisioning is a per-ENVIRONMENT concern by design (the base "does not
-#      presume how the data arrives" — see base/job.yaml), so each overlay
-#      declares its own source; this is not base duplication. The bundled Pima
-#      dataset is tiny (~23 KiB, well under the 1 MiB ConfigMap cap), so the same
-#      portable mechanism works on EKS. `optional: true` keeps the Job appliable
-#      before the ConfigMap exists; it then fails fast at preprocess with a clear
-#      missing-input error (the intended graceful failure — ADR-013).
+#   2. Runtime DATASET (M-04 CLOSED). The dataset is retrieved at runtime from a
+#      real, Terraform-provisioned, private, CMK-encrypted S3 bucket
+#      (terraform/datasets.tf) by the base `fetch-dataset` init container. This
+#      overlay supplies only the SOURCE:
+#        * DATASET_S3_URI      — a committed PLACEHOLDER (account id 000000000000),
+#          filled in for the operator's OWN account WITHOUT editing this file:
+#              cd k8s/overlays/aws
+#              kustomize edit add configmap ...   # or set the value below from:
+#              terraform -chdir=../../../terraform output -raw dataset_s3_uri
+#          (equivalently s3://<name_prefix>-datasets-<account>/pima-indians-diabetes/v1/data.csv)
+#        * AWS_DEFAULT_REGION  — boto3's region for real S3.
+#      What is deliberately ABSENT is the workload-identity design (ADR-027):
+#        * NO AWS_S3_ENDPOINT_URL — boto3 talks to real Amazon S3, not MinIO.
+#        * NO credential Secret / envFrom — the init container obtains SHORT-LIVED,
+#          POD-SCOPED credentials from EKS Pod Identity (the dataset-reader role
+#          bound to the mlops/mlops-pipeline service account in terraform/datasets.tf).
+#          There are NO static AWS keys on the cluster, and no
+#          AWS_ACCESS_KEY_ID/SECRET anywhere. The DATASET_SHA256 integrity pin and
+#          the base ConfigMap envFrom are inherited unchanged (this patch adds only
+#          `env`, which merges by name and preserves the base envFrom).
+#      The former dataset ConfigMap (and its volume/mount) is GONE: the dataset is
+#      no longer carried in a ConfigMap, baked into the image, or committed to Git.
 #
-#      >> Still a VALIDATION mechanism, not production storage. A production
-#      >> cloud dataset path would be S3 / a PVC / `dvc pull` from the DVC remote;
-#      >> the ConfigMap is used here only because the validation dataset is small
-#      >> and this keeps PR 5 to configuration, not new AWS storage services
-#      >> (a Sprint 6 non-goal). See ADR-018.
-#
-#   3. MLflow backend — DELIBERATELY NOT patched here. Both overlays use the SAME
-#      in-cluster MLflow Service from the base ConfigMap (ADR-026); the AWS overlay
-#      adds no MLFLOW_TRACKING_URI override. The pipeline needs no credentials (the
-#      server is internal-only) and no S3 access (artifacts are proxied through the
-#      server). The only cloud difference is the server's OWN artifact store — real
-#      Amazon S3 vs local MinIO — which is transparent to the pipeline. (Pre-Sprint-7
-#      this was a DagsHub endpoint + out-of-band credential Secret; both are gone.)
+#   3. MLflow backend — DELIBERATELY NOT patched here (both overlays use the same
+#      in-cluster MLflow Service; ADR-026). See mlflow-cloud.yaml for the server's
+#      own S3 artifact store.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -48,23 +50,19 @@ metadata:
 spec:
   template:
     spec:
+      initContainers:
+        - name: fetch-dataset
+          # Pull the ECR image on every run, consistent with the pipeline
+          # container below (both are the same image).
+          imagePullPolicy: Always
+          # SOURCE only — identity (DATASET_SHA256) and LOG_LEVEL come from the base
+          # ConfigMap via the inherited envFrom; credentials come from Pod Identity.
+          env:
+            - name: DATASET_S3_URI
+              value: "s3://mlops-pipeline-dev-datasets-000000000000/pima-indians-diabetes/v1/data.csv"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
       containers:
         - name: pipeline
           # Pull the ECR image on every run (see header rationale).
           imagePullPolicy: Always
-          # Appended to the base container's volumeMounts (merge key: mountPath);
-          # the base's read-only /app/.dvc/config.local mount is preserved.
-          volumeMounts:
-            - name: dataset
-              mountPath: /app/data/raw
-              readOnly: true
-      # Appended to the base pod's volumes (merge key: name); the base's
-      # dvc-runtime-config volume is preserved.
-      volumes:
-        - name: dataset
-          configMap:
-            name: mlops-pipeline-dataset
-            # Apply/start succeed even before the dataset ConfigMap exists; the
-            # pipeline then fails fast at preprocess (missing input) rather than
-            # the pod being stuck unschedulable.
-            optional: true
