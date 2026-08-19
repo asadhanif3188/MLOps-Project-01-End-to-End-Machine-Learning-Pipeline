@@ -72,3 +72,21 @@ images:
 patches:
   - path: job-cloud.yaml
   - path: mlflow-cloud.yaml
+  # Pin the Postgres PVC to EKS's gp2 StorageClass (Sprint 7, PR 10). The base
+  # volumeClaimTemplate intentionally leaves storageClassName unset to use the
+  # cluster DEFAULT class (portable to Docker Desktop / kind); EKS 1.35 ships a gp2
+  # class served by the EBS CSI driver (terraform/ebs-csi.tf) but marks NO default,
+  # so the claim binds to nothing ("no storage class is set") and Postgres — hence
+  # the whole MLflow platform — never starts. A surgical JSON6902 add (not a
+  # strategic merge, which would replace the whole claim spec and drop accessModes/
+  # resources) sets ONLY the class, an env-specific concern that belongs in the
+  # overlay, not the shared base.
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: mlflow-postgres
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: gp2
