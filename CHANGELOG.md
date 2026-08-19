@@ -261,6 +261,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Sprint 7 release gate, retrospective, and release-evidence consolidation** (Sprint 7,
+  PR 13) — the final Sprint 7 verification. Adds the
+  [Sprint 7 Release Gate](docs/proof/sprint-07-release-gate.md): a pre-release run of the
+  full local toolchain (`ruff`, `terraform fmt`/`validate`/`test`, `kustomize build`,
+  `k8s/validate.py`, `pytest`) with raw results, an **individual assessment of all seven
+  Sprint 6 HIGH/MEDIUM findings** (H-01…H-03, M-01…M-04 — each with status, layered
+  evidence, and residual limitation; **7/7 closed**), verification that the required
+  runtime chain (**S3 → DVC → preprocess → split → train → evaluate → in-cluster MLflow →
+  artifacts → Job exit 0**) holds against the captured
+  [runtime evidence](docs/proof/sprint-07-runtime-evidence.md), and confirmation that
+  **neither GitOps nor a Terraform remote-state backend** was introduced. Verdict:
+  **CONDITIONAL PASS**, **no release blockers**, recommended release **`v1.4.0`** (tag not
+  cut here). Adds the [Sprint 7 Retrospective](docs/retrospectives/sprint-07-retrospective.md).
+  Honestly records the gate's own limits — `tflint`/`trivy`/`kubeconform` were not runnable
+  in this environment (delegated to CI) and no live cluster was standing (runtime claims
+  rest on the 2026-08-19 captured evidence) — and notes that the workstation-only
+  `terraform test` 41/1 result is a git-ignored-`terraform.tfvars` artifact, **42/42** in a
+  clean checkout. No source or capability changes.
 - **Architecture & operations reconciled with the Sprint 7 platform** (Sprint 7, PR 12)
   — a factual reconciliation pass that aligned the narrative documentation with the
   as-built cloud-native implementation and **removed obsolete claims** rather than
