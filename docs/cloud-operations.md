@@ -15,8 +15,9 @@ drivers** and **why the environment is deliberately small**.
 > multi-region or disaster-recovery posture, and **no** always-on service — those
 > are roadmap items ([roadmap.md](roadmap.md) v5–v6), not capabilities this
 > repository has. See [§7 Limitations](#7-limitations). The real run this runbook
-> describes was executed once and torn down; its evidence is in
-> [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md).
+> describes was executed once and torn down; the current full-platform evidence is in
+> [Sprint 7 — Runtime Evidence](proof/sprint-07-runtime-evidence.md) (the earlier
+> Sprint 6 EKS run is in [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md)).
 
 **Design of record:**
 [ADR-020 — Cloud Environment Lifecycle & Cost Control](decisions/ADR-020-cloud-lifecycle-cost-control.md),
@@ -132,12 +133,14 @@ terraform -chdir=terraform plan -out=tfplan
 ```
 
 `plan` **contacts AWS** (to resolve caller identity and AZ data sources), so valid
-credentials are required. With the defaults it proposes **36 resources** — 18
-network + 7 IAM + 7 EKS + 2 ECR + 2 KMS (the ECR repository + lifecycle policy from
-Sprint 7 PR 1, the VPC-CNI role + Pod Identity association + agent addon from PR 4,
-and the customer-managed KMS key + alias for Secret encryption from PR 5). Review
-the plan; the EKS control plane, the node, and the NAT gateway are the resources
-that will start billing on apply.
+credentials are required. With the defaults it proposes **~63 resources** across
+network, IAM (six roles: cluster, node, VPC-CNI, EBS-CSI, MLflow-S3, dataset-reader),
+EKS (control plane + node group + five addons including `eks-pod-identity-agent` and
+`aws-ebs-csi-driver`), **two** ECR repositories (`mlops-pipeline` + `mlflow-server`)
+with lifecycle policies, **three** customer-managed KMS keys (EKS Secrets, dataset,
+MLflow artifacts), and **two** private SSE-KMS S3 buckets (dataset + MLflow artifacts)
+with their Pod Identity associations. Review the plan; the EKS control plane, the
+node, and the NAT gateway are the resources that will start billing on apply.
 
 ### 3.4 `terraform apply`
 
@@ -147,11 +150,12 @@ terraform -chdir=terraform apply tfplan
 
 Creates the environment (~10–15 min, dominated by EKS control-plane provisioning).
 **Billing starts now** — start a mental clock; the sooner you destroy, the cheaper
-the run. Expect `Apply complete! Resources: 36 added, 0 changed, 0 destroyed.` (The
-original PR 7 integration run predated the Sprint 7 hardening PRs and applied 29;
-Sprint 7 adds the ECR repository + lifecycle policy (PR 1), the VPC-CNI role + Pod
-Identity association + agent addon (PR 4), and the KMS key + alias (PR 5), bringing
-a fresh apply to 36.)
+the run. Expect `Apply complete! Resources: 63 added, 0 changed, 0 destroyed.` (the
+figure the Sprint 7 full-platform run recorded; an additional `apply` of a couple of
+resources enables the documented operator access path — see
+[Sprint 7 runtime evidence § 1](proof/sprint-07-runtime-evidence.md)). Earlier
+snapshots recorded fewer resources: the Sprint 6 integration run predated the Sprint 7
+hardening PRs.
 
 ### 3.5 Verify EKS
 
@@ -229,19 +233,23 @@ kubectl apply -k k8s/overlays/aws               # Namespace, SA, ConfigMaps, Job
 kubectl -n mlops wait --for=condition=complete --timeout=300s job/mlops-pipeline
 ```
 
-To exercise the **real DagsHub MLflow** path, also create the credential Secret
-out-of-band from your `.env` before applying:
+The overlay also brings up the **in-cluster MLflow platform** (the tracking server,
+its PostgreSQL metadata backend, and — on AWS — the Terraform-provisioned S3 artifact
+bucket reached via EKS Pod Identity). Experiment tracking is **self-hosted**: the
+pipeline logs to the `mlflow` Service over HTTP and needs **no MLflow credentials and
+no DagsHub** ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md),
+[MLflow Platform](mlflow-platform.md)). The only out-of-band Secret the platform needs
+is the Postgres DB credential:
 
 ```bash
-kubectl create secret generic mlops-pipeline-secret -n mlops --from-env-file=.env \
-  --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic mlflow-db-credentials -n mlops \
+  --from-literal=POSTGRES_USER=mlflow \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
 ```
 
-Without that Secret the `train`/`evaluate` stages would fail on a 401
-([`src/tracking.py`](../src/tracking.py)); the PR 7 run instead used a transient
-offline file-store override to prove end-to-end execution without connectivity —
-documented as a limitation in the [runtime evidence](proof/sprint-06-runtime-evidence.md#limitations),
-**not** committed. Either way, no security field changes.
+Do **not** create an `mlflow-s3-credentials` Secret on AWS — the MLflow server draws
+short-lived, pod-scoped S3 credentials from EKS Pod Identity. No security field
+changes.
 
 ### 3.9 Capture evidence
 
@@ -256,10 +264,11 @@ kubectl -n mlops get pod "$pod" -o jsonpath=\
 kubectl -n mlops logs job/mlops-pipeline          # preprocess -> split -> train -> evaluate
 ```
 
-In the real run: **Job `Complete`, duration 52s, pod `Succeeded`, exit 0**, all four
-stages, security controls verified live. See the
-[runtime evidence](proof/sprint-06-runtime-evidence.md). **Redact** account IDs, the
-operator IP, and anything credential-shaped from anything you keep.
+In the real run: **Job `Complete`, pod `Succeeded`, exit 0**, all four stages,
+in-cluster MLflow runs logged (metadata in PostgreSQL, artifacts in SSE-KMS S3), and
+security controls verified live. See the
+[Sprint 7 runtime evidence](proof/sprint-07-runtime-evidence.md). **Redact** account
+IDs, the operator IP, and anything credential-shaped from anything you keep.
 
 ### 3.10 Destroy
 
@@ -282,7 +291,7 @@ drivers, not to quote a bill.
 |---|---|---|---|
 | **EKS control plane** | flat **per-cluster-hour** (~$0.10/hr order-of-magnitude) | **High** — unavoidable while the cluster exists | One charge per cluster regardless of node count; starts at `apply`, stops at `destroy`. |
 | **EC2 worker node(s)** | **per-instance-hour** (`t3.medium`, on-demand) | **High** — scales with node count | The run used **1** node; the default is 2. `SPOT` capacity or a smaller type reduces this. |
-| **NAT gateway** | **per-hour** *plus* **per-GB processed** | **Medium–High** | One shared NAT (not one per AZ). The image pull from ECR and any DagsHub traffic flow through it. Removable entirely (`enable_nat_gateway=false`) if nodes sit in public subnets. |
+| **NAT gateway** | **per-hour** *plus* **per-GB processed** | **Medium–High** | One shared NAT (not one per AZ). The image pull from ECR and the S3 dataset/artifact traffic flow through it. Removable entirely (`enable_nat_gateway=false`) if nodes sit in public subnets. |
 | **EBS volumes** | per-GB-month (gp3), prorated hourly | **Low** | 20 GiB root volume per node. |
 | **Elastic IP** | free **while attached** to the running NAT | **~Zero** | Billable only if left allocated and unattached — which `destroy` prevents. |
 | **CloudWatch Logs** | ingestion + storage | **Low** | Only `api`/`audit`/`authenticator` control-plane logs; set `cluster_enabled_log_types=[]` to drop. |
@@ -336,21 +345,23 @@ never assume `destroy` succeeded from the fact that you ran it.
 # 1. Remove the Kubernetes workload (frees the ECR pull / any LB before infra goes).
 kubectl delete -k k8s/overlays/aws          # Job + mlops namespace (cascades to ConfigMaps + pod)
 
-# 2. Destroy ALL Terraform-managed infrastructure — including the ECR repository.
+# 2. Destroy ALL Terraform-managed infrastructure — including the ECR repositories.
 terraform -chdir=terraform destroy           # review the plan, then confirm
-#   -> Destroy complete! Resources: 31 destroyed.
+#   -> Destroy complete! Resources: 65 destroyed.
 
 # 3. Revert any local, uncommitted overlay edits from the run.
 git checkout -- k8s/overlays/aws/kustomization.yaml   # restore the 000000000000 image placeholder
 ```
 
 `terraform destroy` removes everything in the state — EKS cluster, node group, NAT
-gateway, EIP, VPC, subnets, route tables, internet gateway, IAM roles, **and the ECR
-repository** (with its lifecycle policy). As of Sprint 7 PR 1 the registry is
-Terraform-managed ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)) and set to
-`force_delete`, so `destroy` removes it and any images it still holds in the same
-pass — the old separate `aws ecr delete-repository --force` step is **no longer
-needed**.
+gateway, EIP, VPC, subnets, route tables, internet gateway, IAM roles, the KMS keys
+and S3 buckets, **and the two ECR repositories** (with their lifecycle policies). As
+of Sprint 7 the registries are Terraform-managed
+([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)) and set to `force_delete`, and
+the S3 buckets to `force_destroy`, so `destroy` removes them and any images/objects
+they still hold in the same pass — the old separate `aws ecr delete-repository
+--force` step is **no longer needed**. (The customer-managed KMS keys move to a
+scheduled-deletion window rather than vanishing instantly — see the runtime evidence.)
 
 ### 5.2 Verify AWS resources are gone
 
@@ -385,9 +396,9 @@ silently.
 > **Do not falsely claim cleanup.** If teardown must be *delayed* (e.g. a follow-up
 > depends on the live environment), say so explicitly and state that resources are
 > still billing — do not report "torn down" until [§5.2](#52-verify-aws-resources-are-gone)
-> passes. In the real PR 7 run, teardown was **not** delayed: all 29 resources were
-> destroyed and verified clean the same day
-> ([runtime evidence § Teardown](proof/sprint-06-runtime-evidence.md#teardown)).
+> passes. In the Sprint 7 run, teardown was **not** delayed: all 65 resources were
+> destroyed and verified clean the same session
+> ([runtime evidence § Teardown](proof/sprint-07-runtime-evidence.md#15-teardown)).
 
 ---
 
@@ -450,9 +461,9 @@ it is **not**:
   ([ADR-022](decisions/ADR-022-eks-secure-api-access.md)).
 - **No disaster-recovery proof** — no backup/restore, no state replication, no RTO/RPO
   target; teardown is intentional deletion, not a recovery drill.
-- **Real DagsHub MLflow connectivity not exercised in the recorded run** — the PR 7
-  run used an offline file store; the real tracking path is configuration-validated,
-  not connectivity-tested (see [runtime evidence](proof/sprint-06-runtime-evidence.md#limitations)).
+- **No Terraform remote state** — local state only; a remote backend (S3 + lock
+  table) is deliberately deferred (it would add billable AWS resources whose only
+  purpose is the portfolio itself — [ADR-014](decisions/ADR-014-terraform-architecture.md)).
 - **`readOnlyRootFilesystem: false`** — deferred by design
   ([ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)); DVC writes state
   in-tree.
@@ -461,18 +472,22 @@ it is **not**:
   the profile.
 
 The credible claim is narrow and evidenced: **the existing MLOps pipeline runs to
-completion on a real, Terraform-provisioned EKS cluster, with the Sprint 5 security
-controls intact, and the environment is destroyed and verified clean afterward.**
-Everything beyond that is future work ([roadmap.md](roadmap.md) v5–v6), not a
-present capability.
+completion on a real, Terraform-provisioned EKS cluster — with Terraform-managed ECR,
+KMS-encrypted S3 dataset and MLflow artifact stores, EKS Pod Identity workload
+identity (no static keys), and the in-cluster PostgreSQL+S3 MLflow tracking server —
+with the Sprint 5 security controls intact, and the environment is destroyed and
+verified clean afterward.** Everything beyond that — GitOps, Terraform remote state,
+multi-region, HA/DR, and production observability — is future work
+([roadmap.md](roadmap.md) v5–v6), not a present capability.
 
 ---
 
 ## Related documentation
 
 - [`terraform/README.md`](../terraform/README.md) — Terraform reference (resources, variables, state)
-- [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md) — the executed PR 7 run
-- [Sprint 6 — Proof Impact](proof/sprint-06-proof-impact.md) — before/after credible claims
+- [Sprint 7 — Runtime Evidence](proof/sprint-07-runtime-evidence.md) — the executed full-platform EKS run
+- [Sprint 7 — Proof Impact](proof/sprint-07-proof-impact.md) — before/after credible claims
+- [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md) — the earlier Sprint 6 EKS run
 - [Kubernetes Operations](kubernetes-operations.md) — in-cluster day-2 operations (local + cloud)
 - [ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md) · [ADR-014](decisions/ADR-014-terraform-architecture.md) · [ADR-015](decisions/ADR-015-aws-network-architecture.md) · [ADR-016](decisions/ADR-016-aws-iam-foundation.md) · [ADR-017](decisions/ADR-017-eks-platform.md) · [ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md) · [ADR-019](decisions/ADR-019-terraform-ci-validation.md)
 - [SECURITY.md](../SECURITY.md) — repository security policy

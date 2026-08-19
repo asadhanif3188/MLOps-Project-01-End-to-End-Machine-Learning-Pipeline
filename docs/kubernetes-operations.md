@@ -53,11 +53,14 @@ container exit code, and the diagnosis comes from the structured logs.
 > the runtime contract in
 > [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md): DVC no-SCM
 > (`core.no_scm=true` via a mounted `config.local`) replaces the earlier
-> `/app is not a git repository` abort; the dataset is mounted read-only at
-> `/app/data/raw` from an out-of-band ConfigMap; and the local overlay points MLflow
-> at an in-pod file store (offline, no credentials). See
-> [§6](#6-operational-evidence). The dataset ConfigMap and MLflow file store are
-> **local-validation mechanisms, not production storage**.
+> `/app is not a git repository` abort; the dataset is retrieved at runtime from
+> in-cluster **MinIO** (the local S3) by the `fetch-dataset` init container into a
+> shared `emptyDir` ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)); and
+> the local overlay runs experiment tracking on the **in-cluster MLflow platform**
+> (MinIO artifact store + PostgreSQL backend, no pipeline credentials —
+> [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)). See
+> [§6](#6-operational-evidence). These are **local-validation mechanisms, not
+> production storage**.
 
 ---
 
@@ -105,7 +108,8 @@ pod=$(kubectl -n mlops get pods -o jsonpath='{.items[0].metadata.name}')
 kubectl -n mlops get pod "$pod" -o jsonpath=\
 'QoS={.status.qosClass}{"\n"}sc={.spec.securityContext}{"\n"}res={.spec.containers[0].resources}{"\n"}vol={.spec.volumes}{"\n"}'
 # Expect: QoS=Burstable; runAsNonRoot/10001 + seccomp RuntimeDefault; the 250m/256Mi–1/512Mi
-# block; and exactly TWO read-only ConfigMap volumes (dvc-runtime-config, dataset) —
+# block; one read-only ConfigMap volume (dvc-runtime-config) plus one emptyDir
+# (dataset, populated at runtime by the fetch-dataset init container) —
 # and NO `kube-api-access-*` projected token (automountServiceAccountToken:false). The
 # no-API-token check is now "no projected serviceaccount-token volume", not "empty volumes"
 # (PR 8 added the two read-only runtime mounts; see ADR-013).
@@ -142,15 +146,20 @@ kubectl apply -k k8s/overlays/local           # applies the updated ConfigMap
 kubectl -n mlops delete job/mlops-pipeline && kubectl apply -k k8s/overlays/local   # re-run to pick it up
 ```
 
-### Rotate the credential Secret
+### Rotate the MLflow platform DB Secret
 
-The Secret is created **out-of-band** (never committed — see
-[kubernetes-security.md](kubernetes-security.md)). Rotate by replacing it; the next
-run picks up the new values:
+The **pipeline** carries no tracking-credential Secret — experiment tracking runs on
+the credential-free in-cluster MLflow platform ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
+The one out-of-band Secret the platform needs is the PostgreSQL DB credential
+(`mlflow-db-credentials`, never committed — see
+[mlflow-platform.md](mlflow-platform.md)). Rotate by replacing it and recreating the
+DB/pods that consume it:
 
 ```bash
-kubectl create secret generic mlops-pipeline-secret --namespace mlops \
-  --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic mlflow-db-credentials --namespace mlops \
+  --from-literal=POSTGRES_USER=mlflow \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')" \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 ### Tear down
@@ -179,11 +188,11 @@ rationale is in [ADR-011 §Failure modes](decisions/ADR-011-kubernetes-resource-
 | Pod runs **stale code** (DVC errors about stages/params not matching the repo; unexpected old behaviour) | Docker Desktop k8s uses a containerd image store separate from `docker build`; the kubelet has an **old cached** `ml-pipeline:local`. | `kubectl -n mlops exec <pod> -- md5sum dvc.yaml` vs `docker run --rm --entrypoint md5sum ml-pipeline:local dvc.yaml` (differ ⇒ stale). | Import the fresh image into the node's `k8s.io` containerd namespace ([k8s/README §2](../k8s/README.md#2-make-the-image-available-to-the-cluster)); delete + re-apply the Job. |
 | Pod `OOMKilled`, exit `137` | Container exceeded `limits.memory` (512Mi) — e.g. a much larger dataset or a wider grid than the measured envelope. | `kubectl -n mlops get pod <pod> -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}'` → `OOMKilled`. | Re-measure the workload and raise `limits.memory` deliberately (ADR-011 documents the measured 1-CPU ≈133 MiB peak); do not raise blindly. The limit is kernel-enforced by design. |
 | Job `Failed` with `BackoffLimitExceeded` | The pod failed `backoffLimit + 1 = 3` times. | `kubectl -n mlops describe job/mlops-pipeline` → `Events`; then the **pod logs** for the real cause. | Fix the underlying pod error (see the exit-code rows above); `backoffLimit: 2` is intentional fail-fast for a deterministic pipeline. |
-| Job terminated `DeadlineExceeded` | The run exceeded `activeDeadlineSeconds` (1800s) — a stall (e.g. a hung MLflow/DagsHub call), not normal compute (which is sub-minute). | `kubectl -n mlops describe job/mlops-pipeline` → condition `DeadlineExceeded`. | Investigate the stall (network to the tracking endpoint); the deadline is an outer stall-guard, not an SLO (ADR-011). |
-| Container starts, then MLflow **auth** error in logs | The optional `mlops-pipeline-secret` is absent or holds wrong credentials (`secretRef.optional: true`, so the pod still starts). | `kubectl -n mlops get secret mlops-pipeline-secret`; read the logs at the tracking boundary. | Create/rotate the Secret out-of-band from `.env` (see [§2 Rotate](#rotate-the-credential-secret)). |
+| Job terminated `DeadlineExceeded` | The run exceeded `activeDeadlineSeconds` (1800s) — a stall (e.g. a hung in-cluster MLflow call), not normal compute (which is sub-minute). | `kubectl -n mlops describe job/mlops-pipeline` → condition `DeadlineExceeded`. | Investigate the stall (network to the `mlflow` Service); the deadline is an outer stall-guard, not an SLO (ADR-011). |
+| Pipeline `TrackingError` / connection refused to MLflow | The in-cluster `mlflow` Service is not reachable/ready (e.g. mid-rollout, or the server pod not yet Ready). | `kubectl -n mlops get pods`; `kubectl -n mlops logs deploy/mlflow`. | Wait for the `mlflow` Deployment to be Ready (the Job's `wait-for-mlflow` init gates this; it retries per `backoffLimit`). See [mlflow-platform.md](mlflow-platform.md). |
 | `kubectl apply -k` fails: "may not add resource with an already registered id" or a Kustomize render error | A malformed manifest or a duplicate resource in `base`/overlay. | `kustomize build k8s/overlays/local` locally to see the render error; run `python k8s/validate.py`. | Fix the manifest; the CI `k8s-validate` job catches this class before merge ([ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md)). |
 | `kubectl apply -k` rejected by the API server (`--dry-run=server` or real apply) | A schema-invalid field (wrong type, unknown key) that renders but the API server rejects. | Reproduce offline: `kustomize build …` piped to `kubeconform -strict …`; or `kubectl apply -k … --dry-run=server`. | Fix the field; `kubeconform -strict` in CI rejects unknown/mistyped fields ([ci-cd.md](ci-cd.md)). |
-| Pod carries a `/var/run/secrets/kubernetes.io/serviceaccount` mount | `automountServiceAccountToken` was flipped/removed — the pipeline needs **no** API token. | `kubectl -n mlops get pod <pod> -o jsonpath='{.spec.volumes[*].name}'` — expect only `dvc-runtime-config` and `dataset` (both read-only ConfigMaps), and **no** `kube-api-access-*` projected-token volume. | Restore `automountServiceAccountToken: false` on both the ServiceAccount and the pod template ([kubernetes-security.md](kubernetes-security.md)). |
+| Pod carries a `/var/run/secrets/kubernetes.io/serviceaccount` mount | `automountServiceAccountToken` was flipped/removed — the pipeline needs **no** API token. | `kubectl -n mlops get pod <pod> -o jsonpath='{.spec.volumes[*].name}'` — expect `dvc-runtime-config` (a read-only ConfigMap) and `dataset` (an `emptyDir` populated by the fetch-dataset init container), and **no** `kube-api-access-*` projected-token volume. | Restore `automountServiceAccountToken: false` on both the ServiceAccount and the pod template ([kubernetes-security.md](kubernetes-security.md)). |
 
 ---
 
@@ -271,6 +280,13 @@ stale image) are diagnosable and fixable. **Still not claimed:** production stor
 production MLflow connectivity (the local run uses a file store), or any
 production/cloud deployment ([§7](#7-known-limitations)).
 
+> **Superseded (Sprint 7).** This 2026-08-14 record is kept as dated history. Sprint 7
+> PR 8 replaced the out-of-band dataset ConfigMap with S3-via-EKS-Pod-Identity
+> retrieval into a shared `emptyDir` (the `fetch-dataset` init container,
+> [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)), and the file-store
+> MLflow with the in-cluster MLflow platform (MinIO + PostgreSQL,
+> [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
+
 ---
 
 ## 7. Known limitations
@@ -286,7 +302,9 @@ Explicitly, so nothing here is over-read:
   and MLflow runs on the in-cluster platform locally
   ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)). A live **EKS** run is
   operator-gated.
-  DagsHub connectivity is configuration-validated, not connectivity-tested locally.
+  The in-cluster MLflow platform is exercised **live** locally (tracking server +
+  PostgreSQL backend + MinIO artifact store), not merely configuration-validated
+  ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
 - **No production cloud deployment**, **no GitOps** (Argo CD/Flux), **no HA**, and
   **no model serving** — all roadmap v5–v6, none present.
 - **No production observability stack** — diagnosis is `kubectl` + structured logs

@@ -132,7 +132,7 @@ The Kubernetes objects and their responsibilities:
 | `mlops` | `Namespace` | Environment / RBAC / quota / Pod Security boundary | ✅ |
 | `mlops-pipeline` | `Job` (`batch/v1`) | Run the pipeline once to completion, with bounded retries | ✅ (runnable, PR 2) |
 | `mlops-pipeline-config` | `ConfigMap` | Non-secret runtime config (`LOG_LEVEL`, `MLFLOW_TRACKING_URI`) | ✅ PR 3 |
-| `mlops-pipeline-secret` | `Secret` | MLflow/DagsHub credentials — template only, real Secret created out-of-band | ✅ PR 3 (template) |
+| _(none)_ | — | **No tracking-credential Secret.** Experiment tracking is credential-free against the in-cluster `mlflow` Service ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)); see [mlflow-platform.md](mlflow-platform.md) | ✅ ADR-026 |
 | `mlops-pipeline` | `ServiceAccount` | Least-privilege identity, **no API access** (`automountServiceAccountToken: false`) | ✅ PR 3 |
 
 Note the absence of a `Service`, `Ingress`, or `Deployment`. That absence is a
@@ -177,14 +177,14 @@ Pending ─▶ Running ─▶ (pipeline executes) ─▶ Succeeded  ─▶ Job: 
   clean run of the deterministic pipeline.
 - **backoffLimit: `2`** — the pipeline is deterministic, so a genuine failure (bad
   input, config error) fails identically on every attempt; the two retries exist
-  only to absorb a *transient* MLflow/DagsHub blip. The controller back-offs
+  only to absorb a *transient* in-cluster MLflow blip. The controller back-offs
   exponentially between attempts (~10 s, 20 s, …), so a fast-failing pod cannot
   hot-loop.
 - **activeDeadlineSeconds: `1800`** — a wall-clock ceiling for the whole Job (all
   retries). This is a completion-semantics stall-guard, **not** a performance SLO:
   compute finishes in well under a minute locally (`train`, the heaviest stage,
   measured at ~2.5 s under a 1-CPU limit), so a Job still running after 30 minutes
-  is stuck (e.g. a stalled MLflow/DagsHub call) and should fail with
+  is stuck (e.g. a stalled in-cluster MLflow call) and should fail with
   `DeadlineExceeded` rather than hold a pod indefinitely. Deliberately generous;
   `ttlSecondsAfterFinished` (finished-Job cleanup) remains a future item.
 - **Resource requests/limits (PR 5)** — `requests: {cpu: 250m, memory: 256Mi}`,
@@ -219,21 +219,25 @@ classification is by sensitivity, not convenience:
 |---|---|---|---|
 | Image | Application code + dependencies | Container image | Code only |
 | Non-secret config | `LOG_LEVEL`, `MLFLOW_TRACKING_URI` (an endpoint, not a credential) | `ConfigMap` `mlops-pipeline-config` | Yes (no secrets) |
-| Secrets | `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD` | `Secret` `mlops-pipeline-secret` | **Template only, never values** |
+| Experiment tracking | In-cluster MLflow needs **no credentials** — no `MLFLOW_TRACKING_USERNAME`/`_PASSWORD`, no tracking `Secret` ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)) | _(none)_ | **No credential Secret** |
 
-Both are wired into the Job with `envFrom` — the ConfigMap unconditionally (it is
-in the Kustomize base) and the Secret with `optional: true`, so `kubectl apply -k`
-succeeds before the operator creates the real Secret out-of-band from a git-ignored
-`.env`. The classifying rule: `MLFLOW_TRACKING_URI` is a public endpoint (the same
-host already committed as the DVC S3 remote in `.dvc/config`) and carries no
-authority, so it is config; the username/token authenticate to it, so they are
-secret. `LOG_LEVEL` is the pipeline's own knob.
+The ConfigMap is wired into the Job with `envFrom` unconditionally (it is in the
+Kustomize base). The classifying rule: `MLFLOW_TRACKING_URI` is the in-cluster
+`mlflow` Service DNS (`http://mlflow.mlops.svc.cluster.local:5000`, an internal
+ClusterIP endpoint) and carries no authority, so it is config; experiment tracking
+against the in-cluster MLflow platform needs no credentials, so there is **no**
+tracking Secret ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
+`LOG_LEVEL` is the pipeline's own knob.
 
-Contract, held: **no real credentials are ever committed.** The repo ships only
-[`k8s/base/secret.example.yaml`](../k8s/base/secret.example.yaml) with placeholder
-values, and it is excluded from `base/kustomization.yaml` so no render or apply can
-emit it. A *green* run still needs the remaining "make it runnable" work (an SCM in
-the image + a mounted dataset); credentials are now injectable.
+Contract, held: **no real credentials are ever committed.** The pipeline carries no
+credential Secret at all; the only out-of-band Secret in the platform is the MLflow
+metadata DB credential, whose placeholder template
+([`k8s/base/mlflow/secret.example.yaml`](../k8s/base/mlflow/secret.example.yaml)) is
+excluded from `base/mlflow/kustomization.yaml` so no render or apply can emit it. The
+pipeline now runs **green** in-cluster (Sprint 5 PR 8, then on EKS in Sprint 6/7):
+DVC no-SCM config, the S3-retrieved runtime dataset
+([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)), and the in-cluster
+MLflow platform ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
 
 ---
 
@@ -242,8 +246,8 @@ the image + a mounted dataset); credentials are now injectable.
 **Identity (implemented in PR 3).** The workload runs under a dedicated
 `ServiceAccount` (`mlops-pipeline`) rather than the namespace `default`, giving it
 a named identity to scope any future policy to. Because the pipeline never calls
-the Kubernetes API — it runs `dvc repro` and reaches only MLflow/DagsHub over
-HTTPS — the account sets **`automountServiceAccountToken: false`** (on both the
+the Kubernetes API — it runs `dvc repro` and reaches only the in-cluster MLflow
+Service (HTTP, ClusterIP-internal) — the account sets **`automountServiceAccountToken: false`** (on both the
 ServiceAccount and the Job's pod template), so no API token is projected into the
 pod. Verified on a live cluster: the applied pod had an empty `spec.volumes` and
 empty container `volumeMounts` (no `kube-api-access-*` token volume, no
@@ -305,10 +309,11 @@ A reviewer should be able to tell exactly what is proven today.
   and **no** health probes.
 - Config/identity wiring is asserted (PR 3): the rendered Job carries
   `serviceAccountName: mlops-pipeline`, `automountServiceAccountToken: false`, and
-  an `envFrom` pulling the `mlops-pipeline-config` ConfigMap plus the optional
-  `mlops-pipeline-secret`; the `ConfigMap` holds exactly `LOG_LEVEL` and
-  `MLFLOW_TRACKING_URI` (no credential keys), and the **Secret template is not
-  emitted** by the build.
+  an `envFrom` pulling the `mlops-pipeline-config` ConfigMap (non-secret config:
+  `LOG_LEVEL`, `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT_NAME`, and the dataset
+  identity pin `DATASET_SHA256` — **no credential keys**). The pipeline carries **no
+  tracking-credential Secret** — experiment tracking runs on the credential-free
+  in-cluster MLflow platform ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
 - Security context is asserted (PR 4): 21 field/scope checks pass — the pod
   carries `runAsNonRoot`, `runAsUser`/`runAsGroup: 10001`, and
   `seccompProfile: RuntimeDefault`; the container carries

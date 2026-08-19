@@ -75,11 +75,11 @@ model ───────▶ evaluate (stage)     (model + held-out data → m
                metrics              (artifact)
 ```
 
-Experiment metadata (parameters, metrics, model registry) is logged to **MLflow
-on DagsHub** as a side channel from `train` and `evaluate`; it is a boundary, not
-a pipeline stage (see [§9](#9-external-service-boundaries)). Data and artifact
-lineage is owned by **DVC** (see
-[ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
+Experiment metadata (parameters, metrics, model registry) is logged to the
+**in-cluster MLflow tracking server** as a side channel from `train` and
+`evaluate`; it is a boundary, not a pipeline stage (see
+[§9](#9-external-service-boundaries)). Data and artifact lineage is owned by
+**DVC** (see [ADR-006](decisions/ADR-006-pipeline-reproducibility.md)).
 
 **As wired today** (`dvc.yaml`), confirmed by `dvc dag`:
 
@@ -324,7 +324,7 @@ single-owner rule; `test_processed_data_is_consumed_not_orphaned` and
 | `data/processed/test.csv` | `split` | `evaluate` only | DVC stage output |
 | `models/model.pkl` | `train` | `evaluate` | DVC stage output |
 | `metrics/metrics.json` | `evaluate` | downstream reporting / CI | DVC metric (`cache: false`) |
-| MLflow run (params, metrics, registry) | `train`, `evaluate` | MLflow/DagsHub UI | MLflow (external) |
+| MLflow run (params, metrics, registry) | `train`, `evaluate` | In-cluster MLflow UI | MLflow (in-cluster tracking server) |
 
 **Rules:**
 
@@ -470,19 +470,27 @@ interval. See [§11](#11-deviation-status-sprint-4).
 
 ## 9. External Service Boundaries
 
-The pipeline touches two external systems. Both are **boundaries**, isolated from
-core ML logic.
+The pipeline touches two service boundaries — the in-cluster MLflow tracking server
+and the DVC data/model remote. Both are **boundaries**, isolated from core ML logic.
 
 | Boundary | Used by | Purpose | Required to run? | Testability |
 |----------|---------|---------|------------------|-------------|
-| **MLflow on DagsHub** | `train`, `evaluate` | Experiment tracking, metric logging, model registry | **Yes to run a stage end-to-end** — both stages call `require_env("MLFLOW_TRACKING_URI")`. | **Not required for tests.** All MLflow access is funneled through [`src/tracking.py`](../src/tracking.py), imported *lazily* at the boundary. The stages' ML computation (`run_training`, `compute_metrics`) imports no MLflow, and tests replace `tracking` with an in-memory stub. |
+| **In-cluster MLflow tracking server** | `train`, `evaluate` | Experiment tracking, metric logging, model registry | **Yes to run a stage end-to-end** — both stages call `require_env("MLFLOW_TRACKING_URI")`. In-cluster the value is the `mlflow` Service DNS from the base ConfigMap; the pipeline needs **no credentials** (artifacts are proxied through the server). | **Not required for tests.** All MLflow access is funneled through [`src/tracking.py`](../src/tracking.py), imported *lazily* at the boundary. The stages' ML computation (`run_training`, `compute_metrics`) imports no MLflow, and tests replace `tracking` with an in-memory stub. |
 | **DVC remote (S3-compatible, DagsHub)** | data/model retrieval | Store/fetch DVC-tracked data & models | Needed to `dvc pull`/`push` artifacts; **not** needed to reason about or validate the graph. | Graph validation in CI (`dvc dag`, local `dvc status`, contract tests) requires no remote credentials. |
+
+The MLflow boundary is the project's **own** in-cluster tracking platform
+(self-hosted server + PostgreSQL + S3), not an external SaaS — see
+[ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md) and
+[MLflow Platform](mlflow-platform.md). (Through Sprint 6 this was MLflow on DagsHub;
+Sprint 7 replaced it.) The DVC *data/model* remote remains DagsHub — a separate
+versioning concern.
 
 **Environment/config boundary:**
 
-- `MLFLOW_TRACKING_URI` (and DagsHub credentials) are provided via `.env`
-  (`python-dotenv`); see [`.env.example`](../.env.example). Secrets are never
-  committed.
+- `MLFLOW_TRACKING_URI` is provided in-cluster by the base ConfigMap (the `mlflow`
+  Service DNS) and locally via `.env` (`python-dotenv`); see
+  [`.env.example`](../.env.example). No MLflow credentials are needed against the
+  in-cluster server; any DVC-remote credentials are never committed.
 - **Contract rule (enforced):** ordinary **unit tests do not require** live MLflow,
   DagsHub, network access, or production credentials. The `stub_tracking` fixture
   neutralizes the tracking boundary; the `contract` tests parse files only. Tests

@@ -261,6 +261,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- **Architecture & operations reconciled with the Sprint 7 platform** (Sprint 7, PR 12)
+  — a factual reconciliation pass that aligned the narrative documentation with the
+  as-built cloud-native implementation and **removed obsolete claims** rather than
+  leaving contradictions. Corrected across the docs: experiment tracking is the
+  **in-cluster MLflow platform** (server + PostgreSQL + S3), not external DagsHub, in
+  every place it was still described as DagsHub-hosted
+  ([architecture.md](docs/architecture.md), [docs/README.md](docs/README.md),
+  [pipeline-contract.md](docs/pipeline-contract.md), the `kubernetes-*` docs, and the
+  root [README.md](README.md)); **ECR is Terraform-managed** with **two** repositories
+  (pipeline + `mlflow-server`), fixing the "one repository" undercount and the manual
+  `create-repository` framing ([terraform/README.md](terraform/README.md),
+  [cloud-operations.md](docs/cloud-operations.md)); the EKS posture — **private-by-default
+  API** (no `0.0.0.0/0`), **explicit access entries** (no creator-admin), **VPC CNI and
+  app workloads on EKS Pod Identity** (no static keys), and **KMS-encrypted Secrets** —
+  is stated accurately with evidence pointers; the runtime **dataset is S3-retrieved via
+  Pod Identity** into an emptyDir (not a ConfigMap), fixing the stale "dataset ConfigMap"
+  / "two read-only ConfigMap volumes" descriptions; stale Terraform **resource counts**
+  (36/31/29) were reconciled to the Sprint 7 run's **63 applied / 65 destroyed**; and the
+  false root-README claim that the in-cluster pipeline "does **not** complete yet" was
+  removed (it runs green — [Sprint 7 runtime evidence](docs/proof/sprint-07-runtime-evidence.md)).
+  Documents now **explicitly state as deferred**: GitOps, Terraform remote state,
+  multi-region, enterprise HA/DR, and full observability. Adds the
+  [Sprint 7 Proof-Impact Assessment](docs/proof/sprint-07-proof-impact.md) (conservative
+  Before/After with per-claim evidence), a superseding banner on the
+  [Sprint 6 Proof-Impact](docs/proof/sprint-06-proof-impact.md), the missing ADR-023…027
+  index rows, and the roadmap v5 Sprint 7 status. Every corrected claim points to an
+  implementation file, an ADR, a manifest, or the runtime evidence; no new capability is
+  claimed.
 - **Cloud-native MLOps E2E — runtime proof on EKS** (Sprint 7, PR 10) — provisioned
   the full hardened platform from scratch (Terraform: **63 resources** — VPC/NAT,
   EKS 1.35, 1-node group, 2 ECR repos, 3 KMS keys, 2 SSE-KMS S3 buckets, EBS CSI, 4
@@ -809,7 +837,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `MLFLOW_TRACKING_URI` (`require_env` in `src/train.py`/`src/evaluate.py`). The
     URI is a public endpoint (the same host already committed as the DVC S3 remote
     in `.dvc/config`), not a credential.
-  - A **`Secret` template** ([`k8s/base/secret.example.yaml`](k8s/base/secret.example.yaml))
+  - A **`Secret` template** (`k8s/base/secret.example.yaml`, since removed in Sprint 7
+    when tracking moved to the credential-free in-cluster MLflow platform — ADR-026)
     for the sensitive values — `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD`
     — with placeholders only. It is **excluded from the Kustomize base**, so no
     render or apply can emit it; the real Secret is created out-of-band from a
