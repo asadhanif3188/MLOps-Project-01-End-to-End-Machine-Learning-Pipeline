@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Fleet-wide workload security-context contract** (Sprint 7, PR 11) — the executable
+  Kubernetes security gate ([`k8s/validate.py`](k8s/validate.py)) now enforces the
+  hardened pod-security baseline across **every** pod-bearing workload the overlay
+  renders — the pipeline `Job` (**including its `fetch-dataset` and `wait-for-mlflow`
+  init containers**), the MLflow `Deployment`, and the PostgreSQL / MinIO `StatefulSet`s
+  and `minio-setup` `Job` — not just the pipeline's main containers as before. For each
+  it asserts, semantically on the rendered manifest, pod `runAsNonRoot` + a non-root
+  numeric `runAsUser`, `seccompProfile: RuntimeDefault`, `automountServiceAccountToken:
+  false`, **no host-namespace sharing** (`hostNetwork`/`hostPID`/`hostIPC`), **no
+  `hostPath` volume**, and for **every** container (init and main)
+  `allowPrivilegeEscalation: false`, **not `privileged`**, and `capabilities.drop:
+  [ALL]` — the container-escape–relevant half of the restricted Pod Security Standard.
+  - **What it protects** — this closes the real regression holes the earlier per-workload
+    spot-checks left open: an init container, or a newly added Deployment/StatefulSet,
+    could previously ship without privilege-escalation/capability hardening or a seccomp
+    profile and no check would fail. Any such gap now fails CI by construction. Still a
+    **static** contract — it proves the manifest declares the hardening, not that the
+    kernel enforces it at runtime.
+  - **CI** — runs unchanged in the existing `k8s-validate` job over **both** the `local`
+    and `aws` overlays; requires no cluster, no AWS, and no credentials. The Sprint 7
+    infrastructure security requirements (EKS private-by-default, no `0.0.0.0/0` API CIDR,
+    creator-admin disabled, explicit access entries, CNI/dataset/MLflow workload identity,
+    KMS encryption, Terraform-managed ECR, S3 dataset store) remain enforced offline by
+    the `terraform test` contract suite (`terraform/tests/*.tftest.hcl`) and the Trivy IaC
+    scan, both already wired into the `terraform-validate` job.
+  - **Namespace-level enforcement backstop** — the `mlops` Namespace
+    ([`k8s/base/namespace.yaml`](k8s/base/namespace.yaml)) now carries the Pod Security
+    Admission labels `pod-security.kubernetes.io/enforce: restricted` (plus `warn`/`audit`),
+    with the policy version pinned to `v1.31` (the CI-validated schema/admission baseline).
+    The cluster's built-in admission controller therefore **rejects** any pod that violates
+    the `restricted` standard at admission — the standing counterpart to the static checks
+    above. The whole fleet already satisfies `restricted`, so this rejects only a future
+    regression, never a current workload. `k8s/validate.py` asserts the Namespace declares
+    it (enforce = restricted, a pinned version, warn-or-audit at restricted).
+  - **Verified** — `k8s/validate.py` passes on both overlays (158/158 local, 130/130 aws);
+    negative tests (weakening one init container's context; injecting `hostPID: true`;
+    downgrading the Namespace to `enforce: baseline`) each fail exactly the intended
+    assertions. `terraform test` is 42/42 in the CI-equivalent (no operator tfvars) run;
+    `pytest` 152 passed / 1 skipped.
 - **S3-backed runtime dataset retrieval — closes finding M-04** (Sprint 7, PR 8) —
   the pipeline no longer receives its dataset through a Kubernetes **ConfigMap**. It is
   retrieved at runtime from a private, encrypted, versioned **S3 bucket** by an init

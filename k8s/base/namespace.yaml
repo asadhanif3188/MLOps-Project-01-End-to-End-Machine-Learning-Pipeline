@@ -19,3 +19,21 @@ metadata:
     app.kubernetes.io/part-of: mlops-pipeline
     app.kubernetes.io/component: namespace
     app.kubernetes.io/managed-by: kustomize
+    # Pod Security Admission (Sprint 7, PR 11). Make the cluster's built-in Pod
+    # Security admission controller ENFORCE the `restricted` Pod Security Standard
+    # for every pod scheduled into this namespace — the standing, kernel-adjacent
+    # backstop for exactly the controls k8s/validate.py asserts statically (non-root,
+    # no privilege escalation, drop ALL, seccomp RuntimeDefault, no host namespaces,
+    # no hostPath, not privileged). `enforce` REJECTS a violating pod at admission;
+    # `warn`/`audit` add a client warning + audit-log annotation so a violation is
+    # visible even where enforcement might later be relaxed. The whole fleet already
+    # satisfies `restricted`, so this rejects only a future regression, never a
+    # current workload. The policy version is pinned (not `latest`) so the admitted
+    # ruleset is deterministic across cluster upgrades — matching the pinned schema
+    # (kubeconform) and admission (kind v1.31) gates in CI; bump it deliberately.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.31
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.31
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.31

@@ -152,6 +152,35 @@ def volume_mounts_of(container: dict) -> list[dict]:
     return container.get("volumeMounts", []) or []
 
 
+# Every pod-bearing (workload) kind whose template embeds a pod spec. These are
+# the objects the uniform security-context contract (Section 7) applies to —
+# their `spec.template.spec` is a PodSpec, so pod_spec_of/containers_of/
+# init_containers_of all work on them unchanged.
+WORKLOAD_KINDS = ("Job", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet")
+
+
+def workloads_in(by_kind: dict[str, list[dict]]) -> list[tuple[str, str, dict]]:
+    """Every pod-bearing workload in the render, as (kind, name, manifest)."""
+    out: list[tuple[str, str, dict]] = []
+    for kind in WORKLOAD_KINDS:
+        for d in by_kind.get(kind, []):
+            out.append((kind, d.get("metadata", {}).get("name", "?"), d))
+    return out
+
+
+def all_containers_of(workload: dict) -> list[tuple[str, dict]]:
+    """Every container in a workload's pod, init and main alike, as (role, container).
+
+    Both are ordinary containers as far as the security-context contract is
+    concerned: an init container that could escalate privileges or keep the full
+    capability set is exactly as much of a hole as a main one, so the contract
+    must reach both (the pre-Sprint-7 checks only covered the main containers).
+    """
+    return [("init", c) for c in init_containers_of(workload)] + [
+        ("main", c) for c in containers_of(workload)
+    ]
+
+
 def container_env(container: dict) -> dict[str, object]:
     """Map env var name -> its `value` (or the whole entry when valueFrom-based)."""
     out: dict[str, object] = {}
@@ -807,6 +836,174 @@ def validate() -> int:
         any(uri.startswith("http") and "mlflow" in uri for uri in tracking_uri_vals),
         f"mlops-pipeline-config MLFLOW_TRACKING_URI values: {tracking_uri_vals}",
     )
+
+    # ------------------------------------------------------------------ #
+    # Section 7 — Uniform workload security-context contract (Sprint 7 PR 11).
+    # ------------------------------------------------------------------ #
+    # Requirement 11 ("Kubernetes workload security context") applies to the WHOLE
+    # fleet, not just the pipeline Job. Sections 3 and 6 spot-check individual
+    # workloads (the pipeline's main containers; part of the MLflow platform), but
+    # that left real holes a regression could slip through unnoticed:
+    #   * the pipeline's INIT containers (fetch-dataset, wait-for-mlflow) — never
+    #     checked, yet an init container that gained privilege escalation or kept
+    #     the full capability set is exactly as much of a breakout surface as the
+    #     main one (it runs in the same pod, with the same fsGroup-owned volumes);
+    #   * the PostgreSQL StatefulSet and the local MinIO StatefulSet + minio-setup
+    #     Job — their container hardening (allowPrivilegeEscalation/drop ALL) and
+    #     seccomp profile were unverified;
+    #   * seccompProfile RuntimeDefault was asserted only for the pipeline pod.
+    # This section enforces ONE hardened baseline across EVERY pod-bearing workload
+    # the overlay renders — Job, Deployment, StatefulSet (and DaemonSet/ReplicaSet
+    # if ever added) — and across EVERY container in each, init and main alike. It
+    # is semantic: it reads the rendered securityContext, not a keyword. A new
+    # workload (or a new init container) that is not hardened to this baseline now
+    # fails CI by construction, instead of silently shipping under-hardened because
+    # no bespoke check was written for it. STILL static: it proves the manifest
+    # declares the hardening, not that the kernel enforces it at runtime.
+    sec = "7. Uniform workload security-context contract (all pods)"
+
+    # (a) Namespace-level backstop: the mlops Namespace must make Pod Security
+    # Admission ENFORCE the `restricted` standard, so the cluster itself rejects a
+    # violating pod at admission — the standing counterpart to the static per-pod
+    # checks below. The policy version must be pinned (not `latest`) so the admitted
+    # ruleset is deterministic. `warn` (or `audit`) at `restricted` is also required
+    # so a violation is surfaced even if `enforce` is ever dialled back.
+    PSA = "pod-security.kubernetes.io"
+    mlops_ns = next(
+        (
+            n
+            for n in by_kind.get("Namespace", [])
+            if n.get("metadata", {}).get("name") == EXPECTED_NAMESPACE
+        ),
+        None,
+    )
+    ns_labels = ((mlops_ns or {}).get("metadata", {}) or {}).get("labels", {}) or {}
+    r.check(
+        sec,
+        f"Namespace/{EXPECTED_NAMESPACE} enforces the restricted Pod Security Standard",
+        ns_labels.get(f"{PSA}/enforce") == "restricted",
+        f"{PSA}/enforce={ns_labels.get(f'{PSA}/enforce')!r} (must be 'restricted')",
+    )
+    enforce_ver = ns_labels.get(f"{PSA}/enforce-version")
+    r.check(
+        sec,
+        f"Namespace/{EXPECTED_NAMESPACE} pins the enforce policy version",
+        bool(enforce_ver) and enforce_ver != "latest",
+        f"{PSA}/enforce-version={enforce_ver!r} "
+        f"(must be a pinned version, not 'latest')",
+    )
+    r.check(
+        sec,
+        f"Namespace/{EXPECTED_NAMESPACE} warns or audits at restricted",
+        ns_labels.get(f"{PSA}/warn") == "restricted"
+        or ns_labels.get(f"{PSA}/audit") == "restricted",
+        f"neither {PSA}/warn nor {PSA}/audit is 'restricted' "
+        f"(warn={ns_labels.get(f'{PSA}/warn')!r}, "
+        f"audit={ns_labels.get(f'{PSA}/audit')!r})",
+    )
+
+    workloads = workloads_in(by_kind)
+    r.check(
+        sec,
+        "at least one pod-bearing workload rendered",
+        bool(workloads),
+        "no Job/Deployment/StatefulSet found to apply the security contract to",
+    )
+    for kind, name, wl in workloads:
+        wpod = pod_spec_of(wl)
+        wsc = wpod.get("securityContext", {}) or {}
+
+        # Pod-level: must refuse to run as root, pin a non-root numeric uid (a name
+        # the kubelet cannot resolve would fail runAsNonRoot admission), apply the
+        # runtime's default seccomp profile, and never auto-mount an API token.
+        r.check(
+            sec,
+            f"{kind}/{name}: pod runAsNonRoot true",
+            wsc.get("runAsNonRoot") is True,
+            f"runAsNonRoot={wsc.get('runAsNonRoot')!r}",
+        )
+        wuid = wsc.get("runAsUser")
+        r.check(
+            sec,
+            f"{kind}/{name}: pod runAsUser is a non-root uid",
+            isinstance(wuid, int) and wuid != 0,
+            f"runAsUser={wuid!r} (must be an explicit numeric uid != 0)",
+        )
+        r.check(
+            sec,
+            f"{kind}/{name}: pod seccompProfile RuntimeDefault",
+            (wsc.get("seccompProfile", {}) or {}).get("type") == "RuntimeDefault",
+            f"seccompProfile.type="
+            f"{(wsc.get('seccompProfile', {}) or {}).get('type')!r}",
+        )
+        r.check(
+            sec,
+            f"{kind}/{name}: automountServiceAccountToken false",
+            wpod.get("automountServiceAccountToken") is False,
+            f"automountServiceAccountToken={wpod.get('automountServiceAccountToken')!r}",
+        )
+
+        # No host-namespace sharing. hostNetwork/hostPID/hostIPC dissolve the pod's
+        # isolation from the node (a classic container-breakout surface, forbidden
+        # by the restricted Pod Security Standard). Each is a boolean that defaults
+        # to false when absent, so "unset" is compliant and only an explicit `true`
+        # fails.
+        for host_ns in ("hostNetwork", "hostPID", "hostIPC"):
+            r.check(
+                sec,
+                f"{kind}/{name}: {host_ns} not enabled",
+                wpod.get(host_ns) in (None, False),
+                f"{host_ns}={wpod.get(host_ns)!r} "
+                f"(host-namespace sharing is forbidden)",
+            )
+
+        # No hostPath volume. A hostPath mounts a node-filesystem path into the pod
+        # (host access / breakout), also forbidden by the restricted PSS. Section 5
+        # already guards the pipeline pod against this; here it is enforced across
+        # every workload the overlay renders.
+        hostpath_vols = [v.get("name") for v in volumes_of(wl) if "hostPath" in v]
+        r.check(
+            sec,
+            f"{kind}/{name}: no hostPath volumes",
+            not hostpath_vols,
+            f"hostPath volumes are forbidden; found {hostpath_vols}",
+        )
+
+        # Container-level (every container, init AND main): no privilege escalation,
+        # never privileged, and the entire default capability set dropped.
+        every = all_containers_of(wl)
+        r.check(
+            sec,
+            f"{kind}/{name}: has at least one container",
+            bool(every),
+            "the workload declares no containers",
+        )
+        for role, c in every:
+            cname = c.get("name", "?")
+            csc = c.get("securityContext", {}) or {}
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} container {cname} "
+                f"allowPrivilegeEscalation false",
+                csc.get("allowPrivilegeEscalation") is False,
+                f"allowPrivilegeEscalation={csc.get('allowPrivilegeEscalation')!r}",
+            )
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} container {cname} not privileged",
+                csc.get("privileged") is not True,
+                f"privileged={csc.get('privileged')!r}",
+            )
+            drops = {
+                str(x).upper()
+                for x in (csc.get("capabilities", {}) or {}).get("drop", [])
+            }
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} container {cname} capabilities drop ALL",
+                "ALL" in drops,
+                f"capabilities.drop={sorted(drops)}",
+            )
 
     return r.render()
 
