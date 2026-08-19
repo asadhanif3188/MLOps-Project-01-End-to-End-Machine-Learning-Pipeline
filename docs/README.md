@@ -12,9 +12,11 @@ For a general project introduction and quick start, see the
 
 This project is a reproducible, batch ML pipeline that trains a Random Forest
 classifier on the Pima Indians Diabetes dataset. It uses **DVC** for
-data/pipeline versioning and **MLflow** (hosted on **DagsHub**) for experiment
-tracking. Start with the [architecture](architecture.md) for a system-level view,
-or the [project structure](project-structure.md) to navigate the repository.
+data/pipeline versioning and the project's **in-cluster MLflow platform**
+(self-hosted server + PostgreSQL + S3; [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md))
+for experiment tracking. Start with the [architecture](architecture.md) for a
+system-level view, or the [project structure](project-structure.md) to navigate the
+repository.
 
 ---
 
@@ -35,6 +37,8 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Kubernetes Operations](kubernetes-operations.md) | Day-2 operations runbook: deploy/observe/logs/re-run/cleanup, a troubleshooting matrix, and the honest observability posture (local only) |
 | [Kubernetes Security](kubernetes-security.md) | Identity, `securityContext`, secret handling, controls→evidence checklist, and what is explicitly not claimed |
 | [Cloud Operations](cloud-operations.md) | AWS/EKS lifecycle runbook (auth → init → plan → apply → verify → run → evidence → **destroy → verify clean**), the **AWS cost drivers**, safe teardown, and the honest limitations of the ephemeral validation environment |
+| [MLflow Platform](mlflow-platform.md) | The in-cluster MLflow tracking platform (server + PostgreSQL + S3): deploy, operate, the persistence test, and the AWS (EKS Pod Identity) notes |
+| [Dataset](dataset.md) | Dataset identity, version, and integrity — the S3 runtime-retrieval source of truth and how the `fetch-dataset` init container verifies it |
 | [Type Safety](type-safety.md) | Typing conventions, dynamic boundaries, and the mypy configuration |
 | [Roadmap](roadmap.md) | Versioned milestones (v1–v6) with objectives and outcomes |
 | [Architecture Decision Records](decisions/) | Records of significant technical decisions |
@@ -68,6 +72,11 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md) | Cloud Environment Lifecycle & Cost Control (Provision → Prove → Destroy) |
 | [ADR-021](decisions/ADR-021-terraform-managed-ecr.md) | Terraform-Managed Container Registry (Amazon ECR) — closes H-01 |
 | [ADR-022](decisions/ADR-022-eks-secure-api-access.md) | Secure-by-Default EKS API Access (private default, no `0.0.0.0/0`) — closes H-02 |
+| [ADR-023](decisions/ADR-023-eks-access-control.md) | EKS Access Control via Explicit Access Entries (no creator-admin) — closes H-03 |
+| [ADR-024](decisions/ADR-024-vpc-cni-pod-identity.md) | VPC CNI Identity via EKS Pod Identity (off the node role) — closes M-01 |
+| [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md) | EKS Secrets Envelope Encryption with a Customer-Managed KMS Key — closes M-02 |
+| [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md) | In-Cluster MLflow Platform (server + PostgreSQL + S3) |
+| [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md) | S3 Dataset Runtime Retrieval via EKS Pod Identity — closes M-04 |
 
 ### Engineering Reviews
 
@@ -94,6 +103,8 @@ or the [project structure](project-structure.md) to navigate the repository.
 | [Sprint 5 — Proof Impact](proof/sprint-05-proof-impact.md) | Evidence-based statement of the Kubernetes platform-engineering claims after Sprint 5 (workload model, security, resources, validation, operations) with a conservative Before/After and explicit known limitations |
 | [Sprint 6 — Proof Impact](proof/sprint-06-proof-impact.md) | Evidence-based statement of the cloud-platform claims after Sprint 6 (Terraform IaC, least-privilege cloud IAM, credential-free CI gate, a green run on real EKS, live-pod security, verified teardown) with a conservative Before/After and explicit known limitations |
 | [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md) | Redacted record of the PR 7 cloud integration test: 29 resources applied, Job `Complete` (exit 0) on real EKS, six security controls verified live, then destroyed and verified clean |
+| [Sprint 7 — Proof Impact](proof/sprint-07-proof-impact.md) | Evidence-based statement of the hardened cloud-native claims after Sprint 7 (Terraform-managed ECR, secure-by-default EKS API, access entries, VPC CNI Pod Identity, KMS-encrypted Secrets, in-cluster MLflow, S3 dataset) with a conservative Before/After and explicit deferred items |
+| [Sprint 7 — Runtime Evidence](proof/sprint-07-runtime-evidence.md) | Redacted record of the full-platform EKS run: 63 resources applied, EKS Pod Identity workload identity, in-cluster MLflow (PostgreSQL + SSE-KMS S3), Job `Complete` (exit 0), then destroyed and verified clean |
 
 ---
 

@@ -150,10 +150,22 @@ resources with the defaults), the **IAM foundation** (three EKS roles — cluste
 node, and the dedicated VPC CNI role — and their four managed-policy attachments —
 7 resources, incl. Sprint 7 PR 4), the **EKS platform** (one cluster, one managed
 node group, three core addons, the `eks-pod-identity-agent` addon, and the VPC CNI
-Pod Identity association — 7 resources), the **container registry** (one ECR
-repository + its lifecycle policy — 2 resources, Sprint 7 PR 1), and the
-**EKS-secrets KMS key** (one customer-managed CMK + its alias — 2 resources,
-Sprint 7 PR 5): **36 resources** in total. Each configured operator identity in
+Pod Identity association — 7 resources), the **container registry** (**two** ECR
+repositories — `mlops-pipeline` (Sprint 7 PR 1) and `mlflow-server` (Sprint 7 PR 6 /
+[ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)) — each with its own
+lifecycle policy), the **EKS-secrets KMS key** (one customer-managed CMK + its alias —
+2 resources, Sprint 7 PR 5), the **in-cluster MLflow platform** storage (the MLflow
+artifact S3 bucket + its CMK + the tracking-server Pod Identity role, plus the EBS CSI
+driver addon + its Pod Identity role for the Postgres PVC — `s3.tf`, `ebs-csi.tf`,
+Sprint 7 PR 6 / ADR-026), and the **dataset store** (a private dataset S3 bucket + its
+CMK + a read-only reader Pod Identity role — `datasets.tf`, Sprint 7 PR 8 /
+[ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). A full-platform
+`apply` provisions on the order of **~63 resources** (a Sprint 7 EKS run recorded **63
+added / 65 destroyed**, ~69 `terraform state list` entries — see the
+[Sprint 7 runtime evidence](../docs/proof/sprint-07-runtime-evidence.md)); there are
+**three customer-managed KMS keys** (eks-secrets, datasets, mlflow-artifacts), **two S3
+buckets**, and **six IAM roles** (eks_cluster, eks_node, vpc_cni, ebs_csi, mlflow_s3,
+dataset_reader) in total. Each configured operator identity in
 `cluster_access_entries` adds
 **2 more** (an access entry + its policy association, Sprint 7 PR 3); the default
 empty map adds none. The **EKS control
@@ -558,17 +570,23 @@ inputs, and clean plans for scoped cluster- and namespace-level entries.
 
 ## Container registry (ECR)
 
-`ecr.tf` provisions the private **Amazon ECR** repository that stores the workload
-image the EKS nodes pull at run time (Sprint 7, PR 1 — closes Sprint 6 finding
-**H-01**). Through Sprint 6 this repository was created and destroyed **out-of-band**
-with `aws ecr create-repository` / `aws ecr delete-repository --force`, leaving one
-live AWS resource outside Terraform state. It is now managed like everything else —
-provisioned, tagged, versioned, and torn down by `terraform apply`/`destroy`.
+`ecr.tf` provisions **two** private **Amazon ECR** repositories that store the
+container images the EKS nodes pull at run time: `mlops-pipeline` (the pipeline
+workload image — Sprint 7, PR 1, closes Sprint 6 finding **H-01**) and `mlflow-server`
+(the in-cluster MLflow Tracking Server image — Sprint 7, PR 6 /
+[ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)). Through Sprint 6
+the pipeline repository was created and destroyed **out-of-band** with `aws ecr
+create-repository` / `aws ecr delete-repository --force`, leaving a live AWS resource
+outside Terraform state. Both are now managed like everything else — provisioned,
+tagged, versioned, and torn down by `terraform apply`/`destroy`. The security posture
+below (immutable tags, scan-on-push, private, AES256 at rest, lifecycle retention,
+`force_delete`) applies to **each** repository identically.
 
-- **Name.** Defaults to `project_name` (`mlops-pipeline`), not the environment-scoped
-  `name_prefix`: the registry is a per-project artifact store and the name must match
-  the image reference committed in [`k8s/overlays/aws`](../k8s/overlays/aws). Override
-  with `ecr_repository_name` if needed.
+- **Names.** The pipeline repository defaults to `project_name` (`mlops-pipeline`), not
+  the environment-scoped `name_prefix`: the registry is a per-project artifact store and
+  the name must match the image reference committed in
+  [`k8s/overlays/aws`](../k8s/overlays/aws) (override with `ecr_repository_name` if
+  needed). The tracking-server repository is fixed at `mlflow-server`.
 - **Immutable tags** (`image_tag_mutability = "IMMUTABLE"`) — a version tag such as
   `1.3.1` can never be repointed, so a deployed digest is reproducible and the
   overlay's static image-pinning contract holds. This matches the "explicit,
@@ -736,7 +754,9 @@ encryption configured, the scanner passes on its own).
 | **PR 2** | **Secure-by-default EKS API access**, closing finding **H-02**. The control-plane endpoint is **private by default** (public off, CIDR list empty); public access is a scoped, explicit opt-in that **can never be `0.0.0.0/0`** — enforced by variable validation and cluster preconditions, and pinned by a new offline `terraform test` suite. The two obsolete Trivy suppressions for the old open endpoint are **removed**, not re-justified. See [ADR-022](../docs/decisions/ADR-022-eks-secure-api-access.md). |
 | **PR 3** | **Explicit EKS access entries**, closing finding **H-03**. Replaces the automatic *"cluster creator becomes cluster-admin"* bootstrap with declared, scoped access entries (`API` auth by default, creator-admin `false` and rejected by a tripwire validation, scoped `AmazonEKSAdminPolicy` default). Identities come from a git-ignored `terraform.tfvars`; pinned by an offline `terraform test` suite. See [ADR-023](../docs/decisions/ADR-023-eks-access-control.md). |
 | **PR 4** | **VPC CNI identity isolation**, closing finding **M-01**. Moves `AmazonEKS_CNI_Policy` off the worker-node instance profile onto a **dedicated VPC CNI role** assumed only by the `aws-node` service account via **EKS Pod Identity** (`eks-pod-identity-agent` addon + association); the node role keeps only its own (join + ECR-pull) permissions. Pinned by a new offline `terraform test` suite. See [ADR-024](../docs/decisions/ADR-024-vpc-cni-pod-identity.md). |
-| **PR 5 (this PR)** | **EKS Secret KMS envelope encryption**, closing finding **M-02**. Adds a dedicated, rotated, **customer-managed KMS key** (+ alias) with a least-privilege key policy and wires it into the cluster's `encryption_config` (`resources = ["secrets"]`), so Kubernetes Secrets are envelope-encrypted with a key the operator controls, audits, and can revoke — not just the AWS-owned etcd default. The obsolete `AVD-AWS-0039` Trivy suppression is **removed**, not re-justified; pinned by a new offline `terraform test` suite. See [ADR-025](../docs/decisions/ADR-025-eks-secrets-kms-encryption.md). |
+| **PR 5** | **EKS Secret KMS envelope encryption**, closing finding **M-02**. Adds a dedicated, rotated, **customer-managed KMS key** (+ alias) with a least-privilege key policy and wires it into the cluster's `encryption_config` (`resources = ["secrets"]`), so Kubernetes Secrets are envelope-encrypted with a key the operator controls, audits, and can revoke — not just the AWS-owned etcd default. The obsolete `AVD-AWS-0039` Trivy suppression is **removed**, not re-justified; pinned by a new offline `terraform test` suite. See [ADR-025](../docs/decisions/ADR-025-eks-secrets-kms-encryption.md). |
+| **PR 6** | **In-cluster MLflow platform storage**. Adds the **MLflow artifact S3 bucket** (private, versioned, SSE-KMS via a dedicated CMK) + an `mlflow_s3` IAM role bound to the `mlops/mlflow-server` ServiceAccount via EKS Pod Identity (`s3.tf`), the **`mlflow-server` ECR repository** (`ecr.tf`), and the **AWS EBS CSI driver addon** + its Pod Identity role for the MLflow Postgres PVC (`ebs-csi.tf`). Backs the self-hosted MLflow tracking path; DagsHub is removed from tracking. See [ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md) and [docs/proof/sprint-07-runtime-evidence.md](../docs/proof/sprint-07-runtime-evidence.md). |
+| **PR 8** | **Runtime dataset S3 store**, closing finding **M-04**. Adds a private, versioned, SSE-KMS (dedicated CMK) **dataset S3 bucket** with lifecycle retention + a **read-only `dataset_reader`** IAM role bound to `mlops/mlops-pipeline` via EKS Pod Identity, so the `fetch-dataset` init container retrieves the dataset at runtime with no static keys (`datasets.tf`). See [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md). |
 
 As of PR 4, `terraform apply` in this directory creates a **billable, running
 EKS platform** — the control plane and the on-demand node(s) bill hourly, on top

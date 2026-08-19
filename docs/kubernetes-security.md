@@ -41,8 +41,8 @@ enforcement actually admit and run.
 
 ## 2. Workload identity & least privilege
 
-The pipeline runs `dvc repro` and talks only to MLflow/DagsHub over HTTPS — it
-**never** calls the Kubernetes API. The identity model reflects exactly that:
+The pipeline runs `dvc repro` and talks only to the in-cluster MLflow Service
+(HTTP, ClusterIP-internal) — it **never** calls the Kubernetes API. The identity model reflects exactly that:
 
 | Control | Setting | Rationale |
 |---|---|---|
@@ -133,9 +133,9 @@ proven, deferred and recorded* — see
 
 | Concern | Handling |
 |---|---|
-| MLflow/DagsHub credentials (`MLFLOW_TRACKING_USERNAME`/`_PASSWORD`) | Held in a `Secret` created **out-of-band** from a git-ignored `.env` (`kubectl create secret … --from-env-file=.env`). The repo ships only [`k8s/base/secret.example.yaml`](../k8s/base/secret.example.yaml) with **placeholders**, and it is **excluded from `base/kustomization.yaml`** so no render or apply can ever emit it. |
-| Non-secret config (`LOG_LEVEL`, `MLFLOW_TRACKING_URI`) | In the `mlops-pipeline-config` ConfigMap. `MLFLOW_TRACKING_URI` is a public endpoint (the same host already committed as the DVC S3 remote in `.dvc/config`), not a credential. |
-| Secret reference in the Job | `secretRef … optional: true` — the pod starts even before the Secret exists; MLflow calls then fail with a clear auth error rather than the pod refusing to schedule. |
+| Experiment-tracking credentials | **None.** The pipeline targets the in-cluster `mlflow` Service and carries no `MLFLOW_TRACKING_USERNAME`/`_PASSWORD` and no tracking `Secret` — the in-cluster MLflow platform needs no pipeline credentials ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md), [mlflow-platform.md](mlflow-platform.md)). |
+| Non-secret config (`LOG_LEVEL`, `MLFLOW_TRACKING_URI`) | In the `mlops-pipeline-config` ConfigMap. `MLFLOW_TRACKING_URI` is the in-cluster `mlflow` Service DNS (`http://mlflow.mlops.svc.cluster.local:5000`, an internal ClusterIP endpoint), not a credential. |
+| Tracking Secret reference in the Job | **None** — the Job wires no tracking-credential `Secret`; the in-cluster MLflow platform needs none ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)). |
 | Dataset | Not in the image (`.dockerignore`) and DVC-tracked; retrieved at run time from a private S3 bucket by the `fetch-dataset` init container (least-privilege read via EKS Pod Identity, no static keys — [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)), checksum-verified, into a read-only `emptyDir`. No ConfigMap, no hostPath. |
 
 **Secret hygiene is enforced in CI.** `k8s/validate.py` asserts that the rendered
@@ -144,9 +144,10 @@ fingerprints anywhere in the `k8s/` tree, and that the committed template holds 
 placeholders. Manifests are **never** sent to any external scanning service.
 
 > Kubernetes `Secret` `data` is base64, **not** encryption. Committing even the
-> example with real values would leak the DagsHub token into git history
-> permanently — which is exactly why the real Secret never enters git or a rendered
-> manifest.
+> example with real values would leak a credential (e.g. the MLflow platform's
+> out-of-band PostgreSQL password) into git history permanently — which is exactly
+> why the real Secret never enters git or a rendered manifest. (On EKS, Secrets are
+> additionally KMS envelope-encrypted at rest — [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md).)
 
 ---
 
@@ -158,7 +159,7 @@ placeholders. Manifests are **never** sent to any external scanning service.
 | No privilege escalation | ✅ | `allowPrivilegeEscalation: false`; `NoNewPrivs: 1` under `docker run`. |
 | All Linux capabilities dropped | ✅ | `capabilities.drop: [ALL]`; enforced on the live pod. |
 | seccomp default profile | ✅ | `seccompProfile.type: RuntimeDefault`. |
-| No API token in pod | ✅ | `automountServiceAccountToken: false` (SA + pod); no `kube-api-access-*` projected-token volume on the live pod (the only volumes are two read-only ConfigMaps, PR 8). |
+| No API token in pod | ✅ | `automountServiceAccountToken: false` (SA + pod); no `kube-api-access-*` projected-token volume on the live pod (the only volumes are one read-only ConfigMap `dvc-runtime-config` and one `emptyDir` `dataset`, PR 8). |
 | No standing RBAC | ✅ | no `Role`/`RoleBinding` in `k8s/`. |
 | No baked-in secrets/data | ✅ | out-of-band Secret; `.dockerignore`; `k8s/validate.py` secret-hygiene checks. |
 | No host namespaces / privileged | ✅ | no `privileged`/`hostNetwork`/`hostPID`/`hostIPC`; asserted by `k8s/validate.py`. |

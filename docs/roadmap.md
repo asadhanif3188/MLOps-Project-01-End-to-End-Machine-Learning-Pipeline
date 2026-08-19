@@ -171,7 +171,11 @@ reducing regressions and manual effort.
   The pipeline is now **green in-cluster** (Sprint 5, PR 8): `dvc repro` runs the
   full pipeline to **exit 0** via the runtime contract in
   [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md) (DVC no-SCM, mounted
-  dataset, in-pod MLflow file store), on a local cluster.
+  dataset, in-pod MLflow file store), on a local cluster. *(Sprint 7 superseded the
+  Sprint 5 mechanism: the mounted-dataset ConfigMap became S3-via-Pod-Identity
+  retrieval ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)) and the
+  in-pod file store became the in-cluster MLflow platform
+  ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)); see v5.)*
 - ✅ Externalize configuration and secrets for a cluster — **implemented** (Sprint
   5, PR 3): a `ConfigMap` for non-secret runtime config (`LOG_LEVEL`,
   `MLFLOW_TRACKING_URI`), a **Secret template** for the MLflow/DagsHub credentials
@@ -289,22 +293,42 @@ infrastructure defined as code.
   `fetch-dataset` init container, authorized by EKS Pod Identity (least-privilege
   read-only, no static keys) and integrity-checked against a pinned checksum — no
   ConfigMap, no baked-in data, no hostPath
-  ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Proven live locally
-  against MinIO; the EKS exercise is operator-gated.
+  ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Proven live on real
+  EKS ([Sprint 7 runtime evidence](proof/sprint-07-runtime-evidence.md)).
+- ✅ **Cloud platform security hardening** (Sprint 7, PRs 1–5) — the Sprint 6 review
+  findings are closed: **Terraform-managed ECR** (H-01,
+  [ADR-021](decisions/ADR-021-terraform-managed-ecr.md)), **secure-by-default EKS API**
+  (private, never `0.0.0.0/0`; H-02, [ADR-022](decisions/ADR-022-eks-secure-api-access.md)),
+  **explicit EKS access entries** with no creator-admin (H-03,
+  [ADR-023](decisions/ADR-023-eks-access-control.md)), **VPC CNI via EKS Pod Identity**
+  off the node role (M-01, [ADR-024](decisions/ADR-024-vpc-cni-pod-identity.md)), and
+  **KMS-encrypted Kubernetes Secrets** (M-02,
+  [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md)).
+- ✅ **In-cluster MLflow tracking platform** (Sprint 7, PR 6) — a self-hosted MLflow
+  server + PostgreSQL metadata backend + S3 artifact store, replacing the external
+  DagsHub SaaS in the experiment-tracking path
+  ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md),
+  [MLflow Platform](mlflow-platform.md)). All AWS access is via EKS Pod Identity (no
+  static keys).
 
 **Expected outcome:** Production-deployable infrastructure, provisioned
 reproducibly from code with clear separation of environments.
 
-> **Status (Sprint 6).** The IaC foundation and a **real, evidenced EKS run** landed:
-> the pipeline was provisioned onto managed EKS, run to completion (exit 0), had its
-> Sprint 5 security controls verified on the live pod, and the environment was
-> **destroyed and verified clean** ([Sprint 6 Proof-Impact](proof/sprint-06-proof-impact.md),
-> [runtime evidence](proof/sprint-06-runtime-evidence.md),
-> [Cloud Operations](cloud-operations.md)). This is a **short-lived, single-operator
-> validation environment** — **not** production: no remote state, no credentialed
-> CI/CD apply, no HA, no multi-region, no disaster recovery, and no production
-> monitoring. Those remain the path from "validated on cloud" to "production cloud
-> platform" and are why v5 is 🚧, not ✅.
+> **Status (Sprint 6 → Sprint 7).** The IaC foundation and a **real, evidenced EKS
+> run** landed in Sprint 6; **Sprint 7 hardened the platform and made it fully
+> cloud-native**. The full platform — Terraform-managed ECR, secure-by-default EKS API
+> with explicit access entries, VPC CNI + dataset + MLflow workload identity via EKS
+> Pod Identity, KMS-encrypted Secrets and S3 stores, and the in-cluster PostgreSQL+S3
+> MLflow tracking server — was provisioned onto managed EKS, ran the pipeline to
+> completion (exit 0), had its Sprint 5 security controls verified on the live pod, and
+> the environment was **destroyed and verified clean**
+> ([Sprint 7 Proof-Impact](proof/sprint-07-proof-impact.md),
+> [Sprint 7 runtime evidence](proof/sprint-07-runtime-evidence.md),
+> [Cloud Operations](cloud-operations.md)). This remains a **short-lived,
+> single-operator validation environment** — **not** production. Deliberately
+> **deferred**: GitOps, **Terraform remote state**, credentialed CI/CD apply,
+> multi-region, enterprise HA/DR, and production observability. Those are the path from
+> "validated on cloud" to "production cloud platform" and are why v5 is 🚧, not ✅.
 >
 > **TODO:** Ratify remote-state, credentialed CI/CD (OIDC), a production module
 > structure, monitoring, and the serving mechanism as ADRs before a production

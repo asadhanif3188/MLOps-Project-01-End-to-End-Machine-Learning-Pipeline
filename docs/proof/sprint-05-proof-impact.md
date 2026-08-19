@@ -71,8 +71,9 @@ Each row was **not** defensible after Sprint 4 and **is** after Sprint 5.
 - A `ConfigMap` for non-secret config; a `Secret` **template** (placeholders only),
   excluded from the Kustomize base and created out-of-band from a git-ignored `.env`.
 - **Evidence:** [`k8s/base/configmap.yaml`](../../k8s/base/configmap.yaml),
-  [`k8s/base/secret.example.yaml`](../../k8s/base/secret.example.yaml),
-  [kubernetes-security.md §5](../kubernetes-security.md#5-secret--data-handling);
+  `k8s/base/secret.example.yaml` (the Sprint 5 pipeline Secret template, since removed
+  in Sprint 7 when tracking moved to the credential-free in-cluster MLflow platform —
+  ADR-026), [kubernetes-security.md §5](../kubernetes-security.md#5-secret--data-handling);
   `k8s/validate.py` secret-hygiene checks pass.
 
 ### 2.4 "I enforced a hardened security context at the platform layer."

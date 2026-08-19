@@ -169,13 +169,20 @@ in [`k8s/README.md`](k8s/README.md).
 > [operations runbook](docs/kubernetes-operations.md) with a troubleshooting matrix,
 > a [security document](docs/kubernetes-security.md), and a
 > [Sprint 5 Proof-Impact Assessment](docs/proof/sprint-05-proof-impact.md).
-> The Job was **executed on a local Docker Desktop cluster** (2026-08-12) and its
-> lifecycle, hardened context, and resource enforcement verified end to end; the
-> pipeline does **not** complete yet — `dvc repro` aborts with `/app is not a git
-> repository`, so a *green* in-cluster run still needs an SCM in the image +
-> mounted data. **CI validation is static** (plus the opt-in dry-run) — it does not
-> deploy or run the workload; the resource values are **not production-certified**
-> and **restricted Pod Security Standard compliance is not claimed**. Rationale:
+> The pipeline then went **green in-cluster** (Sprint 5 PR 8): the complete
+> `dvc repro` (preprocess → split → train → evaluate) runs to **exit 0** as a
+> secured Job via the runtime contract in
+> [ADR-013](docs/decisions/ADR-013-kubernetes-runtime-execution.md) (DVC no-SCM
+> config, a runtime-retrieved dataset, in-cluster MLflow). It was subsequently run
+> to completion on **real Amazon EKS** — first in Sprint 6, then on the full Sprint 7
+> hardened platform (Terraform-managed ECR, KMS-encrypted S3 dataset + MLflow
+> artifacts, EKS Pod Identity, in-cluster PostgreSQL+S3 MLflow), with the security
+> controls verified on the live pod and the environment destroyed and verified clean
+> ([Sprint 7 runtime evidence](docs/proof/sprint-07-runtime-evidence.md),
+> [Cloud Operations](docs/cloud-operations.md)). **CI validation is static** (plus the
+> opt-in dry-run) — it does not deploy or run the workload; the resource values are
+> **not production-certified** and **restricted Pod Security Standard compliance is
+> not claimed**. Rationale:
 > [Kubernetes Architecture](docs/kubernetes-architecture.md),
 > [ADR-009](docs/decisions/ADR-009-kubernetes-workload-model.md),
 > [ADR-010](docs/decisions/ADR-010-kubernetes-security-hardening.md),

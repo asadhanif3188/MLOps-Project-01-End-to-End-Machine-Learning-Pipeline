@@ -153,7 +153,7 @@ Design of record: [ADR-018](../docs/decisions/ADR-018-aws-eks-deployment-overlay
 | **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
 | **`imagePullPolicy`** | unset (side-loaded) | `Always` | Guarantees the node runs exactly the image just pushed to ECR; avoids the stale-image failure mode. |
 | **Dataset** | `fetch-dataset` init container pulls from in-cluster **MinIO** → `/app/data/raw` | same init container pulls from real **S3** via EKS Pod Identity | Retrieval mechanism is shared (base); only the SOURCE (bucket/endpoint/creds) differs. Replaces the former ConfigMap (Sprint 7 PR 8, closes M-04 — [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). |
-| **MLflow backend** | overridden to in-pod file store (offline) | **not overridden** → base DagsHub endpoint + out-of-band Secret | The overlay **targets** the real MLflow tracking path (the recorded PR 7 run used a transient offline file store — connectivity is config-validated, see the [runtime evidence](../docs/proof/sprint-06-runtime-evidence.md#limitations)). |
+| **MLflow backend** | in-cluster `mlflow` Service; the server's artifact store is local **MinIO** | in-cluster `mlflow` Service; the server's artifact store is real **Amazon S3** (via Pod Identity) | Both overlays log over HTTP to the **same** base `MLFLOW_TRACKING_URI` (the in-cluster `mlflow` Service DNS) with **no tracking credential Secret** — DagsHub is not on the tracking path. Only the MLflow server's artifact backend differs (MinIO locally vs Amazon S3 on EKS — [ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)). |
 
 Everything else — Namespace, ServiceAccount (token automount off), ConfigMaps, the
 DVC no-SCM config, and the hardened `Job` (`runAsNonRoot` + uid/gid `10001`,
@@ -199,11 +199,11 @@ real account ID is stored in git.
 | **`kustomize`** (optional) | Render the manifests standalone | `kubectl` has it built in (`kubectl kustomize …` / `kubectl apply -k …`), so a separate binary is optional. |
 
 No registry, no cloud account, and no credentials are required to render, apply,
-inspect, **or run** the workload: a local green run uses the mounted dataset
-(step 3) and the local overlay's in-pod MLflow **file store**, so no MLflow/DagsHub
-credentials are needed. Credentials are only needed to exercise the real DagsHub
-tracking path (see [§ Runtime execution record](#runtime-execution-record-pr-8) and
-[ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)).
+inspect, **or run** the workload: a local green run retrieves the dataset from the
+in-cluster **MinIO** store via the `fetch-dataset` init container (step 3) and logs to
+the in-cluster **MLflow platform** (MinIO artifact store + PostgreSQL metadata DB), so
+**no MLflow credentials are needed** — the in-cluster tracking server is credential-free
+to its clients ([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)).
 
 ### Local cluster setup
 
@@ -526,13 +526,21 @@ touching the base.
 
 ### Secrets — creation, lifecycle, and why nothing is committed
 
+> **Superseded (Sprint 7).** This subsection describes the pre-Sprint-7 DagsHub
+> pipeline credential Secret (`mlops-pipeline-secret`), which is **gone** — experiment
+> tracking now runs on the credential-free in-cluster MLflow platform
+> ([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)). The pipeline
+> carries **no** tracking Secret. The one out-of-band Secret the platform still needs
+> is the MLflow metadata DB credential; its template is
+> [`base/mlflow/secret.example.yaml`](base/mlflow/secret.example.yaml). The general
+> secret-hygiene rules below still apply.
+
 **Why credentials are never committed.** A `Secret`'s `data` is only base64, not
-encryption; committing it (even the example) would leak the DagsHub token into git
-history forever. So the repo ships **only a template** —
-[`base/secret.example.yaml`](base/secret.example.yaml), with placeholder values —
-and it is deliberately **excluded from `base/kustomization.yaml`**, so no render or
-apply can ever emit it. The real Secret is created straight from your local,
-git-ignored `.env` and never passes through git or a rendered manifest.
+encryption; committing it (even the example) would leak a credential into git
+history forever. So a credential template ships **only** with placeholder values, is
+deliberately **excluded from its kustomization**, so no render or apply can ever emit
+it, and the real Secret is created straight from a local, git-ignored source and never
+passes through git or a rendered manifest.
 
 **Create it** (once per cluster/namespace, after the namespace exists):
 

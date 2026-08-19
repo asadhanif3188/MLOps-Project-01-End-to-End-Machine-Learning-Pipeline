@@ -2,9 +2,10 @@
 
 The **End-to-End Machine Learning Pipeline** is architected around
 reproducibility: a Random Forest training workflow orchestrated with
-[DVC](https://dvc.org/) and instrumented with [MLflow](https://mlflow.org/)
-(hosted on [DagsHub](https://dagshub.com/)). This document explains how the
-pieces fit together.
+[DVC](https://dvc.org/) and instrumented with [MLflow](https://mlflow.org/),
+tracked on the project's **in-cluster MLflow platform** (self-hosted server +
+PostgreSQL + S3; Sprint 7, [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
+This document explains how the pieces fit together.
 
 > **Scope note.** This document reflects the repository as it exists today. Where
 > a component is planned but not yet implemented, it is marked with an explicit
@@ -27,8 +28,8 @@ or via `dvc repro`) and produces:
   `data/processed/test.csv`),
 - a serialized model (`models/model.pkl`),
 - a metrics artifact (`metrics/metrics.json`, DVC-tracked),
-- experiment metadata (parameters, metrics, artifacts) logged to a remote
-  MLflow tracking server on DagsHub.
+- experiment metadata (parameters, metrics, artifacts) logged to the in-cluster
+  MLflow tracking server (PostgreSQL metadata backend, S3 artifact store).
 
 The stage inputs, outputs, artifact ownership, evaluation boundary, and
 reproducibility expectations are specified in the
@@ -44,14 +45,14 @@ classification of the `Outcome` column.
 |----------|---------------|
 | Execution model | Batch, on-demand |
 | Orchestration | DVC pipeline (`dvc.yaml`) |
-| Experiment tracking | MLflow via DagsHub (remote) |
-| Data/artifact versioning | DVC with S3-compatible remote (DagsHub) |
+| Experiment tracking | In-cluster MLflow platform (self-hosted server + PostgreSQL + S3) — [MLflow Platform](mlflow-platform.md), [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md) |
+| Data/artifact versioning | DVC with S3-compatible remote (DagsHub — **data/model remote only**) |
 | Model type | `RandomForestClassifier` (scikit-learn) |
 | Packaging | Multi-stage Docker image (non-root `runtime`) — [Containerization](containerization.md) |
 | Local dev environment | Docker Compose (`dev` service) — [Docker Development](docker-development.md) |
 | Continuous integration | GitHub Actions: lint, test, image build/validate — [CI/CD](ci-cd.md) |
-| Kubernetes orchestration | ✅ `mlops` namespace + hardened `batch/v1` **Job** (Kustomize, [`k8s/`](../k8s/)); run green to completion on a **local** cluster (Sprint 5) **and on real Amazon EKS** (Sprint 6) — [Kubernetes Architecture](kubernetes-architecture.md), [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
-| Cloud platform (IaC) | ✅ AWS VPC + least-privilege IAM + managed **EKS** as **Terraform** ([`terraform/`](../terraform/)); provisioned, run, and torn down as a short-lived validation environment — [§8](#8-cloud-platform-terraform--eks), [terraform/README.md](../terraform/README.md) |
+| Kubernetes orchestration | ✅ `mlops` namespace + hardened `batch/v1` **Job** (Kustomize, [`k8s/`](../k8s/)); run green to completion on a **local** cluster (Sprint 5) **and on real Amazon EKS** (Sprint 6, and the full hardened platform in Sprint 7) — [Kubernetes Architecture](kubernetes-architecture.md), [ADR-009](decisions/ADR-009-kubernetes-workload-model.md) |
+| Cloud platform (IaC) | ✅ AWS VPC + least-privilege IAM + managed **EKS** + Terraform-managed **ECR**, **KMS**-encrypted **S3** (dataset + MLflow artifacts), and **EKS Pod Identity** workload identity, all as **Terraform** ([`terraform/`](../terraform/)); provisioned, run, and torn down as a short-lived validation environment — [§8](#8-cloud-platform-terraform--eks), [terraform/README.md](../terraform/README.md) |
 | Serving | ❌ Not implemented — see [roadmap](roadmap.md) |
 
 ---
@@ -78,7 +79,7 @@ data/raw/data.csv ─▶ [ preprocess ] ─▶ data/processed/data.csv ─▶ [ 
                         [ train ] ─▶ models/model.pkl ─▶ [ evaluate ] ─▶ metrics/metrics.json
                               │                               │
                               ▼                               ▼
-                       MLflow (DagsHub) ◀── metrics, params, artifacts
+                 In-cluster MLflow (server + PostgreSQL + S3) ◀── metrics, params, artifacts
 ```
 
 **Components:**
@@ -100,10 +101,16 @@ data/raw/data.csv ─▶ [ preprocess ] ─▶ data/processed/data.csv ─▶ [ 
 - **`src/tracking.py`** — the single MLflow boundary: every experiment-tracking
   call goes through it, and the stages import it lazily so their ML computation
   stays free of MLflow and unit-testable without it.
+  [`src/mlflow_config.py`](../src/mlflow_config.py) resolves the tracking URI and
+  experiment name from config before the (lazy) MLflow import.
 - **DVC** — defines stage dependencies and outputs (`dvc.yaml`) and versions
-  data/model artifacts to the remote.
-- **MLflow / DagsHub** — remote experiment tracking and (optionally) model
-  registry.
+  data/model artifacts to the DagsHub S3-compatible remote (data/model versioning
+  only; not the experiment-tracking path).
+- **In-cluster MLflow platform** — self-hosted tracking server (Deployment,
+  `--serve-artifacts`) backed by a PostgreSQL metadata store and an S3 artifact
+  store (MinIO locally, Amazon S3 on EKS), plus the MLflow Model Registry
+  ([MLflow Platform](mlflow-platform.md),
+  [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)).
 
 The stages share a small infrastructure layer (introduced in Sprint 2, extended
 in Sprint 4 with the tracking boundary):
@@ -199,7 +206,7 @@ disjoint held-out evaluation path.
 | Concern | Technology | Rationale (see ADR) |
 |---------|-----------|---------------------|
 | Pipeline orchestration & data versioning | DVC (+ `dvc-s3`) | [ADR-003](decisions/ADR-003-why-dvc.md) |
-| Experiment tracking / model registry | MLflow via DagsHub | [ADR-002](decisions/ADR-002-why-mlflow.md) |
+| Experiment tracking / model registry | In-cluster MLflow (server + PostgreSQL + S3) | [ADR-002](decisions/ADR-002-why-mlflow.md), [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md) |
 | Repository structure | Stage-per-script `src/` layout | [ADR-001](decisions/ADR-001-repository-structure.md) |
 | Model | `RandomForestClassifier` (scikit-learn) | Baseline for tabular classification |
 | Config | `params.yaml` (declarative parameters) | Separates config from code |
@@ -235,8 +242,9 @@ Full dependency lists: [`requirements.txt`](../requirements.txt) (runtime) and
    model, and writes `models/model.pkl` (DVC-tracked, git-ignored on disk).
 5. **Tracking.** During training and evaluation, parameters, metrics
    (`accuracy`), and artifacts (confusion matrix, classification report, model)
-   are pushed to the remote MLflow server on DagsHub through the `tracking`
-   boundary.
+   are logged to the in-cluster MLflow tracking server through the `tracking`
+   boundary — metadata to PostgreSQL, artifact bytes proxied to S3
+   (`--serve-artifacts`), so the pipeline needs no S3 or MLflow credentials.
 6. **Evaluation.** `evaluate` loads the pickled model, scores it on the
    **held-out** partition (`data/processed/test.csv`), writes
    `metrics/metrics.json`, and logs the accuracy metric.
@@ -355,37 +363,52 @@ existing workload with it — **no application logic changes**. The Terraform st
 infrastructure; the Kubernetes workload stays in Kustomize
 ([ADR-014](decisions/ADR-014-terraform-architecture.md)).
 
+Sprint 7 then hardened this platform and made it fully cloud-native: two
+Terraform-managed ECR repositories, KMS-encrypted S3 stores for the dataset and
+MLflow artifacts, EKS Pod Identity workload identity, and the in-cluster MLflow
+tracking platform.
+
 ```text
    Terraform (terraform/)                          Kubernetes (k8s/overlays/aws)
    ─────────────────────                           ─────────────────────────────
-   VPC 10.0.0.0/16                                 Namespace + ServiceAccount
-     ├─ 2 public + 2 private subnets (2 AZs)       ConfigMap(s) + out-of-band Secret
+   VPC 10.0.0.0/16                                 Namespace + ServiceAccounts
+     ├─ 2 public + 2 private subnets (2 AZs)       ConfigMaps + out-of-band DB Secret
      ├─ IGW + 1 shared NAT + EIP                   hardened batch/v1 Job (base, verbatim)
-     ├─ 3 IAM roles (cluster + node + CNI,           ├─ image ← Amazon ECR (node-role pull)
-     │   least-privilege, AWS-managed policies)      ├─ dataset mount (out-of-band)
-     ├─ ECR repository + lifecycle policy            └─ security context unchanged
-     ├─ KMS CMK (+ alias) — Secret envelope encryption
+     ├─ 6 IAM roles (cluster, node, VPC-CNI,         ├─ pipeline image ← ECR (node-role pull)
+     │   EBS-CSI, MLflow-S3, dataset-reader)         ├─ dataset ← S3 (fetch-dataset init,
+     ├─ 2 ECR repos (pipeline + mlflow-server)       │             Pod Identity, read-only)
+     │   + lifecycle policies (immutable tags)       ├─ in-cluster MLflow (server + Postgres
+     ├─ 3 KMS CMKs (+ aliases): EKS-secrets,         │             + S3 artifacts, ClusterIP)
+     │   datasets, mlflow-artifacts                  └─ security context unchanged
+     ├─ 2 S3 buckets (datasets, mlflow-artifacts) — versioned, SSE-KMS, public access blocked
+     ├─ EBS CSI driver addon (Postgres PVC)
      └─ EKS control plane (K8s 1.35)  ◀── node ───▶
          │   API endpoint: PRIVATE by default (public = scoped opt-in, never 0.0.0.0/0)
+         │   Access: explicit EKS access entries (authentication_mode=API, no creator-admin)
          │   Secrets: KMS-envelope-encrypted (customer-managed CMK)
+         │   Workload identity: EKS Pod Identity (VPC-CNI, EBS-CSI, MLflow-S3, dataset-reader)
          └─ 1 managed node group (t3.medium, AL2023, private subnets)
 ```
 
-- **What it provisions.** 36 resources (18 network + 7 IAM + 7 EKS + 2 ECR + 2 KMS)
-  — a VPC with public/private subnets across two AZs, a single shared NAT gateway,
-  three least-privilege IAM roles (cluster, node, and a dedicated VPC CNI role), a
-  managed EKS control plane + one small node group + the three core addons + the
-  `eks-pod-identity-agent` addon, a Terraform-managed **ECR** repository with a
-  lifecycle policy (Sprint 7 PR 1, closing finding H-01), and a customer-managed
-  **KMS key** (+ alias) that envelope-encrypts Kubernetes Secrets (Sprint 7 PR 5,
-  closing finding M-02). The EKS API endpoint is
-  **secure by default** — private-only, with public access only as a scoped opt-in
-  that can never be `0.0.0.0/0` (Sprint 7 PR 2, closing finding H-02); **cluster
-  access is via explicit, scoped EKS access entries**, not automatic creator-admin
-  (Sprint 7 PR 3, closing finding H-03); and the **VPC CNI runs under its own role
-  via EKS Pod Identity**, off the node instance profile (Sprint 7 PR 4, closing
-  finding M-01); and **Kubernetes Secrets are envelope-encrypted with a
-  customer-managed KMS key** (Sprint 7 PR 5, closing finding M-02). No GPUs, no
+- **What it provisions.** ~65 managed resources — a VPC with public/private subnets
+  across two AZs and a single shared NAT gateway; six least-privilege IAM roles
+  (cluster, node, VPC-CNI, EBS-CSI, MLflow-S3, dataset-reader); a managed EKS control
+  plane + one small node group + the three core addons + the `eks-pod-identity-agent`
+  and `aws-ebs-csi-driver` addons; **two** Terraform-managed **ECR** repositories
+  (`mlops-pipeline` + `mlflow-server`, immutable tags, scan-on-push, lifecycle
+  retention — Sprint 7 PR 1/PR 6, closing finding H-01); **three** customer-managed
+  **KMS keys** (+ aliases) for EKS Secret envelope encryption, the dataset bucket, and
+  the MLflow artifact bucket; and **two** private, versioned, SSE-KMS **S3 buckets**
+  (dataset store + MLflow artifact store, all public access blocked). The security
+  posture: the EKS API endpoint is **secure by default** — private-only, with public
+  access only as a scoped opt-in that can never be `0.0.0.0/0` (Sprint 7 PR 2, closing
+  finding H-02); **cluster access is via explicit, scoped EKS access entries**
+  (`authentication_mode = API`), not automatic creator-admin (Sprint 7 PR 3, closing
+  finding H-03); the **VPC CNI runs under its own role via EKS Pod Identity**, off the
+  node instance profile (Sprint 7 PR 4, closing finding M-01); **Kubernetes Secrets
+  are envelope-encrypted with a customer-managed KMS key** (Sprint 7 PR 5, closing
+  finding M-02); and the **runtime dataset is retrieved from a private S3 bucket via
+  Pod Identity**, not a ConfigMap (Sprint 7 PR 8, closing finding M-04). No GPUs, no
   autoscaler, no ingress/mesh/observability stack, no unrelated services
   ([ADR-015](decisions/ADR-015-aws-network-architecture.md),
   [ADR-016](decisions/ADR-016-aws-iam-foundation.md),
@@ -394,30 +417,39 @@ infrastructure; the Kubernetes workload stays in Kustomize
   [ADR-022](decisions/ADR-022-eks-secure-api-access.md),
   [ADR-023](decisions/ADR-023-eks-access-control.md),
   [ADR-024](decisions/ADR-024-vpc-cni-pod-identity.md),
-  [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md)).
+  [ADR-025](decisions/ADR-025-eks-secrets-kms-encryption.md),
+  [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md),
+  [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)).
 - **How the workload attaches.** A thin `k8s/overlays/aws` reuses the base unchanged
-  and layers only the three genuine cloud differences (ECR image, `imagePullPolicy:
-  Always`, dataset mount); every security field is byte-identical to the local
-  overlay ([ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md)).
+  and layers only the genuine cloud differences (ECR images, `imagePullPolicy:
+  Always`, the S3 dataset source, the MLflow artifact bucket, and the gp2 StorageClass
+  for the Postgres PVC); every security field is byte-identical to the local overlay
+  ([ADR-018](decisions/ADR-018-aws-eks-deployment-overlay.md)).
 - **Validated, not just written.** The IaC is gated in CI **statically and without
   AWS credentials** (`fmt`/`validate`/`test`/TFLint/Trivy — never `plan`/`apply`,
   [ADR-019](decisions/ADR-019-terraform-ci-validation.md)); `terraform test` runs an
   offline `mock_provider` contract suite that pins the ECR security/lifecycle
   properties **and the secure-by-default EKS API posture** (private default, no
-  `0.0.0.0/0`). The real provisioning is an operator-driven, own-account step.
-- **Proven, then destroyed.** The platform was provisioned in the operator's own
-  account, the Job ran to completion on real EKS (exit 0, 52s, all four stages,
-  security controls verified live), and the environment was **destroyed and verified
-  clean** — a short-lived `provision → prove → destroy` validation environment, not a
-  production deployment ([runtime evidence](proof/sprint-06-runtime-evidence.md),
+  `0.0.0.0/0`, creator-admin off, explicit access entries, CNI/dataset/MLflow
+  workload identity, KMS encryption, S3 dataset store). The real provisioning is an
+  operator-driven, own-account step.
+- **Proven, then destroyed.** The full hardened platform was provisioned in the
+  operator's own account, the Job ran to completion on real EKS 1.35 (exit 0, all four
+  DVC stages, all AWS access on EKS Pod Identity with no static keys, in-cluster MLflow
+  logging to PostgreSQL + SSE-KMS S3, security controls verified live), and the
+  environment was **destroyed and verified clean** — a short-lived
+  `provision → prove → destroy` validation environment, not a production deployment
+  ([Sprint 7 runtime evidence](proof/sprint-07-runtime-evidence.md),
+  [Sprint 6 runtime evidence](proof/sprint-06-runtime-evidence.md),
   [Cloud Operations](cloud-operations.md),
   [ADR-020](decisions/ADR-020-cloud-lifecycle-cost-control.md)).
 
 > **Honestly bounded.** This is a **validation environment**: single node, single
 > NAT, two AZs, one region, local Terraform state. It is **not** production, **not**
-> HA, **not** multi-region, has **no** GitOps, **no** disaster-recovery, and **no**
-> production observability. See [Cloud Operations §7](cloud-operations.md#7-limitations)
-> and the [Sprint 6 Proof-Impact](proof/sprint-06-proof-impact.md) for the full,
+> HA, **not** multi-region, has **no** GitOps, **no** Terraform remote state, **no**
+> disaster-recovery, and **no** production observability — these remain deferred (see
+> [roadmap](roadmap.md) v5–v6). See [Cloud Operations §7](cloud-operations.md#7-limitations)
+> and the [Sprint 7 Proof-Impact](proof/sprint-07-proof-impact.md) for the full,
 > explicit limits and the credible-claims boundary.
 
 ---
@@ -437,5 +469,7 @@ infrastructure; the Kubernetes workload stays in Kustomize
 - [Docker Development Workflow](docker-development.md)
 - [CI/CD](ci-cd.md)
 - [Kubernetes Architecture](kubernetes-architecture.md) · [Kubernetes Operations](kubernetes-operations.md)
+- [MLflow Platform](mlflow-platform.md) · [Dataset](dataset.md)
 - [Cloud Operations (AWS/EKS runbook, cost, teardown)](cloud-operations.md) · [terraform/README.md](../terraform/README.md)
+- [Sprint 7 — Proof Impact](proof/sprint-07-proof-impact.md) · [Sprint 7 — Runtime Evidence](proof/sprint-07-runtime-evidence.md)
 - [Sprint 6 — Proof Impact](proof/sprint-06-proof-impact.md) · [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md)

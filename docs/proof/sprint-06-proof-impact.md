@@ -1,5 +1,17 @@
 # Sprint 6 — Proof-Impact Assessment (Terraform Cloud Platform Foundation)
 
+> **Superseded by Sprint 7.** This is a **dated snapshot** of the credible claims
+> *after Sprint 6*. Several of its stated limitations were subsequently closed in
+> Sprint 7 — the dataset moved from a ConfigMap to S3 runtime retrieval (M-04,
+> [ADR-027](../decisions/ADR-027-s3-dataset-runtime-retrieval.md)), the offline MLflow
+> file store became the in-cluster MLflow platform
+> ([ADR-026](../decisions/ADR-026-in-cluster-mlflow-platform.md)), and the EKS API /
+> access / CNI / KMS findings (H-02, H-03, M-01, M-02) were remediated. Read this as
+> history; for the current credible-claims boundary see the
+> [Sprint 7 Proof-Impact Assessment](sprint-07-proof-impact.md). The historical
+> figures below (29 resources, ConfigMap dataset, offline file store) were correct
+> for Sprint 6 and are left unchanged.
+
 - **Date:** 2026-08-15
 - **Status:** Unreleased (Sprint 6). **No release tag is cut in this PR** — this
   assessment covers the work staged under `[Unreleased]` in the
