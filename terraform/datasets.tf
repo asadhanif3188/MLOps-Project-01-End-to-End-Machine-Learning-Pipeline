@@ -160,6 +160,39 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "datasets" {
   }
 }
 
+# Lifecycle — cost control for the VERSIONED bucket (Sprint 7 § "Cost Controls").
+# Versioning keeps every prior object version forever by default, which would grow
+# storage cost without bound as the dataset is re-uploaded. This bounds that:
+#   * noncurrent_version_expiration — delete superseded (noncurrent) versions after
+#     30 days. The CURRENT version is always retained; only stale history is reaped,
+#     preserving short-term point-in-time recovery without unbounded accumulation.
+#   * abort_incomplete_multipart_upload — reap failed multipart uploads after 7 days
+#     so half-uploaded parts never linger as invisible, billable storage.
+# Consistent with the project's cost-control stance (ADR-020) and the ECR retention
+# policy. depends_on the versioning resource: a lifecycle config referencing
+# noncurrent versions must be applied after versioning is enabled.
+resource "aws_s3_bucket_lifecycle_configuration" "datasets" {
+  bucket = aws_s3_bucket.datasets.id
+
+  rule {
+    id     = "expire-noncurrent-and-abort-incomplete-uploads"
+    status = "Enabled"
+
+    # Apply to the whole bucket (empty prefix filter).
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.datasets]
+}
+
 # --- Pipeline dataset-reader workload identity (EKS Pod Identity) ---------------
 # A dedicated IAM role the PIPELINE pod assumes via EKS Pod Identity — the SAME
 # mechanism the VPC CNI (ADR-024) and MLflow server (ADR-026) use. It is bound to

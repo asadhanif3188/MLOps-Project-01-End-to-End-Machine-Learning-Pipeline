@@ -94,6 +94,21 @@ run "dataset_bucket_is_kms_encrypted_and_versioned" {
   }
 }
 
+# Cost control (Sprint 7 § "Cost Controls"): the versioned bucket must have a
+# lifecycle rule that reaps noncurrent versions, so versioning does not grow storage
+# without bound as the dataset is re-uploaded.
+run "dataset_bucket_has_lifecycle_cost_control" {
+  command = plan
+
+  assert {
+    condition = anytrue([
+      for r in aws_s3_bucket_lifecycle_configuration.datasets.rule :
+      r.status == "Enabled" && length(r.noncurrent_version_expiration) > 0
+    ])
+    error_message = "The dataset bucket must have an enabled lifecycle rule expiring noncurrent versions (cost control for the versioned bucket)."
+  }
+}
+
 # The dataset CMK is rotated and its key policy is least-privilege: only the
 # dataset-reader role may use it, and it is granted only Decrypt (READ path) — NOT
 # GenerateDataKey/Encrypt, because the pipeline never writes the dataset.

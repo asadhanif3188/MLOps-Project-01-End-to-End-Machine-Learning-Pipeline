@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [proof](docs/proof/sprint-07-s3-dataset-runtime-evidence.md).
   - **Dataset storage** — [`terraform/datasets.tf`](terraform/datasets.tf) adds a
     `${name_prefix}-datasets-${account_id}` bucket with **all public access blocked**,
-    **BucketOwnerEnforced**, **versioning**, and **SSE-KMS** via a dedicated
-    customer-managed key (rotation on). Terraform owns the empty, secured bucket; the
+    **BucketOwnerEnforced**, **versioning**, **SSE-KMS** via a dedicated
+    customer-managed key (rotation on), and a **lifecycle rule** that expires
+    noncurrent versions (30 d) and aborts incomplete multipart uploads (7 d) —
+    cost control for the versioned bucket. Terraform owns the empty, secured bucket; the
     dataset object is uploaded out-of-band, so the data is **never in Git and never in
     the image**. The object key is version-pathed (`pima-indians-diabetes/v1/data.csv`).
   - **Least-privilege read identity** — a dedicated `dataset-reader` IAM role trusted

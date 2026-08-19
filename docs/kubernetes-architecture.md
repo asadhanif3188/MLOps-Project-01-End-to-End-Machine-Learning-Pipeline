@@ -443,14 +443,17 @@ Local render (kustomize)  ─▶  Local cluster run (Docker Desktop)  ─▶  Pr
 
 ## 8. What This Does *Not* Claim
 
-- A **green** in-cluster pipeline run is now achieved (PR 8,
+- A **green** in-cluster pipeline run is now achieved (Sprint 5 runtime PR,
   [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)): `dvc repro` runs the
   full pipeline to **exit 0** as a secured Job, via a minimal runtime contract (DVC
-  no-SCM, a mounted dataset, an in-pod MLflow file store). It is **bounded to a local
-  cluster**: the dataset comes from an out-of-band ConfigMap (a local-validation
-  mechanism, not production storage) and MLflow uses an in-pod file store (DagsHub is
-  configuration-validated, not connectivity-tested). Production dataset/MLflow and
-  read-only-root remain future work.
+  no-SCM, a runtime-retrieved dataset, and — since Sprint 7 — the in-cluster MLflow
+  platform). The dataset now comes from a private S3 bucket, retrieved at runtime by
+  the `fetch-dataset` init container via EKS Pod Identity and checksum-verified
+  (Sprint 7 PR 8, closes M-04 — [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)),
+  and tracking runs on the in-cluster MLflow platform
+  ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)); locally these use MinIO
+  and the same platform. A live **EKS** run remains operator-gated; read-only-root
+  remains future work.
 - It does not claim **restricted Pod Security Standard compliance**. PR 4 applies
   the individual `securityContext` controls that are compatible (non-root, no
   privilege escalation, all capabilities dropped, seccomp `RuntimeDefault`) and

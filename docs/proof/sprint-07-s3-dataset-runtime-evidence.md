@@ -45,7 +45,7 @@ against a pinned checksum, and handed to the unchanged DVC pipeline.
 | 9 | DVC semantics preserved | ✅ `dvc.yaml`/`params.yaml` unchanged; all 4 stages ran live |
 | 10 | Clear failure when retrieval fails | ✅ typed `DataError` + exit 1 (demonstrated below) |
 | 11 | Dataset version/identity/checksum documented | ✅ [docs/dataset.md](../dataset.md) + `DATASET_SHA256` pin |
-| 12 | Tests added | ✅ `tests/unit/test_fetch_dataset.py` (18), `terraform/tests/dataset_s3.tftest.hcl` (5), validator checks |
+| 12 | Tests added | ✅ `tests/unit/test_fetch_dataset.py` (18), `terraform/tests/dataset_s3.tftest.hcl` (6), validator checks |
 | 13 | Validated on a real cluster | ✅ locally (MinIO, identical code path); ⏳ EKS operator-gated |
 
 ## Live local run (Docker Desktop Kubernetes + MinIO)
@@ -153,10 +153,11 @@ against missing/corrupt data.
 ```
 $ cd terraform && terraform validate          # Success! The configuration is valid.
 $ terraform fmt -check -recursive             # exit 0
-$ terraform test                              # Success! 41 passed, 0 failed.
+$ terraform test                              # Success! 42 passed, 0 failed.
    tests/dataset_s3.tftest.hcl:
      dataset_bucket_blocks_all_public_access ............ pass
      dataset_bucket_is_kms_encrypted_and_versioned ...... pass
+     dataset_bucket_has_lifecycle_cost_control .......... pass
      dataset_cmk_is_rotated_and_read_only_least_privilege pass
      dataset_access_is_workload_identity ................ pass
      dataset_policy_is_read_only_and_scoped ............. pass
