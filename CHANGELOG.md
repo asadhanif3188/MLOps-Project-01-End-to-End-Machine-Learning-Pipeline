@@ -205,7 +205,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     default, the scoped opt-in, and the in-VPC-reachability limitation. No
     credentials or account-specific values committed.
 
+### Fixed
+
+- **EKS Postgres PVC binding on Kubernetes 1.35** (Sprint 7, PR 10) — the in-cluster
+  MLflow metadata database (`k8s/base/mlflow/postgres.yaml`) left its
+  `volumeClaimTemplate` `storageClassName` unset to use the cluster **default**
+  StorageClass (portable to Docker Desktop / kind). EKS 1.35 ships a `gp2` class
+  (served by the EBS CSI driver, `terraform/ebs-csi.tf`) but marks **no default**, so
+  on EKS the claim bound to nothing (*"no storage class is set"*) — Postgres never
+  started and the whole MLflow platform stalled. The **AWS overlay**
+  ([`k8s/overlays/aws/kustomization.yaml`](k8s/overlays/aws/kustomization.yaml)) now
+  pins the Postgres claim to `gp2` via a surgical JSON6902 patch (env-specific, so it
+  stays out of the shared base; a strategic merge was rejected as it would drop the
+  claim's `accessModes`/`resources`). Discovered and fixed during the live E2E run;
+  the PVC then bound to a gp2 EBS volume and Postgres reached `Ready`.
+
 ### Documentation
+
+- **Cloud-native MLOps E2E — runtime proof on EKS** (Sprint 7, PR 10) — provisioned
+  the full hardened platform from scratch (Terraform: **63 resources** — VPC/NAT,
+  EKS 1.35, 1-node group, 2 ECR repos, 3 KMS keys, 2 SSE-KMS S3 buckets, EBS CSI, 4
+  EKS Pod Identity associations) and ran the MLOps `Job` to completion in the
+  operator's own AWS account. Verified live: EKS `ACTIVE` v1.35.6, node `Ready` in a
+  private subnet; both ECR images pushed (immutable tags); dataset retrieved from S3
+  via Pod Identity with **sha256 == the pinned identity**; the in-cluster
+  **PostgreSQL+S3 MLflow** server logging two `FINISHED` runs (train `accuracy 0.7398`,
+  held-out evaluate `accuracy 0.7078`) with 7 artifacts in the CMK-encrypted bucket;
+  Job `Complete`, pod `exit 0`; the hardened security context (non-root uid 10001,
+  seccomp `RuntimeDefault`, caps drop ALL, no API token) enforced by the live API
+  server; and EKS Secrets KMS envelope encryption. Environment destroyed and verified
+  clean afterward. Full evidence (commands, outputs, the two fixes, residual
+  limitations) in
+  [docs/proof/sprint-07-runtime-evidence.md](docs/proof/sprint-07-runtime-evidence.md).
 
 - **DVC data-flow correction — verified, no change required** (Sprint 7, PR 9) —
   audited the declared DVC DAG (`dvc.yaml` + `params.yaml`) against the actual
