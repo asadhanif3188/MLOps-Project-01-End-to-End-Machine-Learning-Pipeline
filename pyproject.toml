@@ -86,15 +86,19 @@ no_implicit_optional = true
 strict_equality = true
 
 # The imported third-party libraries below are not type-checked: mlflow and
-# scikit-learn ship no type information at all, while pandas and yaml have stub
-# packages (pandas-stubs, types-PyYAML) that are not installed here. Ignoring
-# their missing imports scopes "untyped" strictly to those third-party
-# boundaries; it does not weaken checking of the pipeline's own code.
-# (python-dotenv ships its own types, so it is omitted and stays checked.)
+# scikit-learn ship no type information at all, boto3/botocore ship no py.typed
+# marker (their stubs live in the separate boto3-stubs, not installed here), while
+# pandas and yaml have stub packages (pandas-stubs, types-PyYAML) that are not
+# installed here. Ignoring their missing imports scopes "untyped" strictly to
+# those third-party boundaries; it does not weaken checking of the pipeline's own
+# code. (python-dotenv ships its own types, so it is omitted and stays checked.)
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
     "sklearn.*",
+    "boto3",
+    "boto3.*",
+    "botocore.*",
     "pandas",
     "pandas.*",
     "yaml",

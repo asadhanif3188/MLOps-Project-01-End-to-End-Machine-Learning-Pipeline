@@ -64,7 +64,7 @@ work quickly, and `terraform destroy` promptly (see [§5](#5-safe-teardown)).
 | **kubectl** | drive the cluster | client within one minor of the cluster (Kubernetes **1.35**) |
 | **Docker** | build + push the workload image | build `--platform linux/amd64` to match the AL2023 x86_64 node |
 | **An AWS account you own** | pays for the environment | **not** a shared/client account; you are spending real money for the environment's lifetime |
-| The git-ignored **dataset** and (optional) **`.env`** | runtime inputs | dataset supplied out-of-band as a ConfigMap; `.env` only if exercising real DagsHub tracking |
+| The git-ignored **dataset** and (optional) **`.env`** | runtime inputs | dataset uploaded out-of-band to the S3 dataset bucket (retrieved at runtime by the `fetch-dataset` init container via Pod Identity — [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)); `.env` for local, non-cluster runs |
 
 This is a **credentialed, operator-driven** procedure. **CI never runs any of it** —
 the `terraform-validate` job holds no AWS credentials and stops at static checks
@@ -216,13 +216,15 @@ repository enforces **immutable tags**, so that version can never be repointed.
 
 ### 3.8 Run the workload
 
-Supply the runtime dataset out-of-band (never baked into the image, never
-committed), then apply the AWS overlay:
+Supply the runtime dataset out-of-band by uploading it to the Terraform-provisioned
+S3 bucket (never baked into the image, never committed); the `fetch-dataset` init
+container retrieves it at runtime via EKS Pod Identity (Sprint 7 PR 8 —
+[ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Then apply the AWS overlay:
 
 ```bash
-kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
-kubectl create configmap mlops-pipeline-dataset -n mlops \
-  --from-file=data.csv=data/raw/data.csv        # ~23 KiB validation dataset (ADR-018)
+aws s3 cp data/raw/data.csv "$(terraform -chdir=terraform output -raw dataset_s3_uri)" \
+  --sse aws:kms --sse-kms-key-id "$(terraform -chdir=terraform output -raw dataset_kms_key_arn)"
+# set DATASET_S3_URI in k8s/overlays/aws/job-cloud.yaml to `terraform output -raw dataset_s3_uri`
 kubectl apply -k k8s/overlays/aws               # Namespace, SA, ConfigMaps, Job
 kubectl -n mlops wait --for=condition=complete --timeout=300s job/mlops-pipeline
 ```
@@ -428,7 +430,8 @@ it is **not**:
 - **A single environment** — no separate dev/staging/prod; one account, one
   environment, local Terraform state.
 - **Limited scale** — 1 (default 2) `t3.medium` on-demand node, one small batch
-  `Job`, a ~23 KiB validation dataset via ConfigMap (not production storage).
+  `Job`, a ~23 KiB dataset retrieved at runtime from a private S3 bucket (Sprint 7
+  PR 8, [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)).
 - **No GitOps** — no Argo CD / Flux; deployment is an operator running `kubectl
   apply`. CI validates manifests statically and never deploys.
 - **No high-availability proof** — single node, single NAT gateway, single Job; no

@@ -46,14 +46,19 @@ terraform/
 ├── network.tf                # VPC, subnets, IGW, NAT, route tables (Sprint 6, PR 2)
 ├── iam.tf                     # EKS cluster + node roles, dedicated VPC CNI role, trust, policy attachments (Sprint 6 PR 3; CNI role Sprint 7 PR 4)
 ├── eks.tf                     # EKS cluster (+ secrets encryption_config), node group, core addons, access entries, VPC CNI Pod Identity (Sprint 6 PR 4; Sprint 7 PR 3–5)
-├── ecr.tf                     # ECR repository + lifecycle policy (Sprint 7, PR 1 — closes H-01)
+├── ecr.tf                     # ECR repositories + lifecycle policy (Sprint 7, PR 1 — closes H-01)
 ├── kms.tf                     # customer-managed KMS key + alias for EKS Secret envelope encryption (Sprint 7, PR 5 — closes M-02)
+├── s3.tf                      # MLflow artifact S3 bucket + CMK + tracking-server Pod Identity role (Sprint 7, PR 6 — ADR-026)
+├── ebs-csi.tf                 # EBS CSI driver addon + Pod Identity role for the MLflow Postgres PVC (Sprint 7, PR 6)
+├── datasets.tf                # dataset S3 bucket + CMK + lifecycle + READ-ONLY dataset-reader Pod Identity role (Sprint 7, PR 8 — closes M-04, ADR-027)
 ├── tests/                     # offline `terraform test` contract suite (mock_provider, no AWS)
 │   ├── ecr.tftest.hcl                    # asserts the ECR security + lifecycle contract (H-01)
 │   ├── eks_api_security.tftest.hcl       # asserts the secure-by-default EKS API posture (H-02)
 │   ├── eks_access_control.tftest.hcl     # asserts explicit EKS access entries (H-03)
 │   ├── eks_cni_identity.tftest.hcl       # asserts VPC CNI identity isolation via Pod Identity (M-01)
-│   └── eks_secrets_encryption.tftest.hcl # asserts EKS Secret KMS envelope encryption (M-02)
+│   ├── eks_secrets_encryption.tftest.hcl # asserts EKS Secret KMS envelope encryption (M-02)
+│   ├── mlflow_s3.tftest.hcl              # asserts the MLflow artifact store security + Pod Identity (ADR-026)
+│   └── dataset_s3.tftest.hcl             # asserts the dataset store security + read-only Pod Identity (M-04, ADR-027)
 └── terraform.tfvars.example  # copyable placeholders — NO secrets
 ```
 

@@ -53,10 +53,13 @@ The pipeline runs `dvc repro` and talks only to MLflow/DagsHub over HTTPS — it
 
 **Verified on a live cluster:** the applied pod carried
 `serviceAccountName: mlops-pipeline` with **no `kube-api-access-*` projected-token
-volume** and no `/var/run/secrets/kubernetes.io/serviceaccount` mount. (Before PR 8
-the pod's `spec.volumes` was entirely empty; PR 8 added exactly two **read-only
-ConfigMap** volumes — `dvc-runtime-config` and `dataset` — for the runtime contract
-([ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)). The token-absence
+volume** and no `/var/run/secrets/kubernetes.io/serviceaccount` mount. (Before the
+Sprint 5 runtime PR the pod's `spec.volumes` was entirely empty; it then added the
+`dvc-runtime-config` ConfigMap volume and a dataset volume for the runtime contract
+([ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)). Sprint 7 PR 8 changed
+the dataset volume from a ConfigMap to a shared **`emptyDir`** the `fetch-dataset`
+init container fills from S3 — the pipeline container still mounts it **read-only**
+([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). The token-absence
 guarantee is unchanged: still no projected API-token volume.)
 
 ---
@@ -133,7 +136,7 @@ proven, deferred and recorded* — see
 | MLflow/DagsHub credentials (`MLFLOW_TRACKING_USERNAME`/`_PASSWORD`) | Held in a `Secret` created **out-of-band** from a git-ignored `.env` (`kubectl create secret … --from-env-file=.env`). The repo ships only [`k8s/base/secret.example.yaml`](../k8s/base/secret.example.yaml) with **placeholders**, and it is **excluded from `base/kustomization.yaml`** so no render or apply can ever emit it. |
 | Non-secret config (`LOG_LEVEL`, `MLFLOW_TRACKING_URI`) | In the `mlops-pipeline-config` ConfigMap. `MLFLOW_TRACKING_URI` is a public endpoint (the same host already committed as the DVC S3 remote in `.dvc/config`), not a credential. |
 | Secret reference in the Job | `secretRef … optional: true` — the pod starts even before the Secret exists; MLflow calls then fail with a clear auth error rather than the pod refusing to schedule. |
-| Dataset | Not in the image (`.dockerignore`) and DVC-tracked; mounted at run time. |
+| Dataset | Not in the image (`.dockerignore`) and DVC-tracked; retrieved at run time from a private S3 bucket by the `fetch-dataset` init container (least-privilege read via EKS Pod Identity, no static keys — [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)), checksum-verified, into a read-only `emptyDir`. No ConfigMap, no hostPath. |
 
 **Secret hygiene is enforced in CI.** `k8s/validate.py` asserts that the rendered
 workload contains **no `Secret`**, no inline credential values, no secret

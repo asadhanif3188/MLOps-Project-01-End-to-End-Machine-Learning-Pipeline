@@ -70,15 +70,19 @@ the image `ml-pipeline:local` is available to the cluster (see
 
 ### Deploy a run
 
-For a **green** run, create the out-of-band dataset ConfigMap first (the image ships
-no data; the volume is `optional: true` so a missing dataset fails fast at
-preprocess rather than blocking the pod). Then apply:
+For a **green** run, apply the overlay (which brings up MinIO + the `datasets` bucket),
+then upload the dataset **object** into MinIO — since Sprint 7 PR 8 the `fetch-dataset`
+init container retrieves it from S3/MinIO at runtime, so there is **no dataset
+ConfigMap** ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)):
 
 ```bash
-kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -
-kubectl create configmap mlops-pipeline-dataset -n mlops \
-  --from-file=data.csv=data/raw/data.csv      # local-validation dataset (ADR-013)
-kubectl apply -k k8s/overlays/local           # creates namespace, SA, ConfigMaps, Job
+kubectl apply -k k8s/overlays/local           # creates namespace, SA, ConfigMaps, MinIO, Job
+kubectl -n mlops port-forward svc/minio 9000:9000 &
+export AWS_ACCESS_KEY_ID=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+aws --endpoint-url http://localhost:9000 s3 cp \
+  data/raw/data.csv s3://datasets/pima-indians-diabetes/v1/data.csv
+# if the Job already failed before the upload: kubectl -n mlops delete job mlops-pipeline && kubectl apply -k k8s/overlays/local
 ```
 
 On Docker Desktop, also ensure the fresh image is in the node's containerd store
@@ -171,7 +175,7 @@ rationale is in [ADR-011 §Failure modes](decisions/ADR-011-kubernetes-resource-
 | Pod `ImagePullBackOff` / `ErrImagePull` | The cluster can't see `ml-pipeline:local` — it was not built, or not side-loaded into a kind/minikube node. | `kubectl -n mlops describe pod <pod>` → `Events` (`Failed to pull image`). | Build it (`docker build -t ml-pipeline:local .`) and, on kind/minikube, side-load it (`kind load docker-image ml-pipeline:local` / `minikube image load ml-pipeline:local`). Docker Desktop shares the daemon — no load needed. See [k8s/README §2](../k8s/README.md#2-make-the-image-available-to-the-cluster). |
 | Pod `CreateContainerConfigError`, message "container has runAsNonRoot and image has non-numeric user" | `runAsNonRoot: true` with only a *name* (`appuser`) resolvable — the numeric `runAsUser` is missing/removed. | `kubectl -n mlops describe pod <pod>` → container state. | Keep the explicit `runAsUser: 10001` in the pod `securityContext` (it is **required**, not cosmetic — [ADR-010](decisions/ADR-010-kubernetes-security-hardening.md)). |
 | Pod `Error`, log `ERROR: /app is not a git repository` | The DVC no-SCM config isn't mounted (`core.no_scm=true` in `/app/.dvc/config.local`). Resolved by default in PR 8. | `kubectl -n mlops exec <pod> -- cat .dvc/config.local` (should show `no_scm = true`). | Ensure `k8s/base/dvc-config.yaml` is in the base and the Job mounts it (subPath) — [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md); `python k8s/validate.py` asserts it. |
-| Pod `Error`, log `No such file or directory: '/app/data/raw/data.csv'` | Dataset ConfigMap not created (volume is `optional: true`, so the pod starts then fails fast). | `kubectl -n mlops get configmap mlops-pipeline-dataset`. | Create it out-of-band (see [§2 Deploy a run](#deploy-a-run)); this is the intended missing-input failure. |
+| Init container `fetch-dataset` `Error`, log `Failed to download the dataset …` | The dataset object isn't in the bucket, or the endpoint/creds are wrong, so retrieval fails and the Job retries then fails. | `kubectl -n mlops logs <pod> -c fetch-dataset`. | Upload the object (see [§2 Deploy a run](#deploy-a-run)); this is the intended fail-fast missing-input behaviour ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). |
 | Pod runs **stale code** (DVC errors about stages/params not matching the repo; unexpected old behaviour) | Docker Desktop k8s uses a containerd image store separate from `docker build`; the kubelet has an **old cached** `ml-pipeline:local`. | `kubectl -n mlops exec <pod> -- md5sum dvc.yaml` vs `docker run --rm --entrypoint md5sum ml-pipeline:local dvc.yaml` (differ ⇒ stale). | Import the fresh image into the node's `k8s.io` containerd namespace ([k8s/README §2](../k8s/README.md#2-make-the-image-available-to-the-cluster)); delete + re-apply the Job. |
 | Pod `OOMKilled`, exit `137` | Container exceeded `limits.memory` (512Mi) — e.g. a much larger dataset or a wider grid than the measured envelope. | `kubectl -n mlops get pod <pod> -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}'` → `OOMKilled`. | Re-measure the workload and raise `limits.memory` deliberately (ADR-011 documents the measured 1-CPU ≈133 MiB peak); do not raise blindly. The limit is kernel-enforced by design. |
 | Job `Failed` with `BackoffLimitExceeded` | The pod failed `backoffLimit + 1 = 3` times. | `kubectl -n mlops describe job/mlops-pipeline` → `Events`; then the **pod logs** for the real cause. | Fix the underlying pod error (see the exit-code rows above); `backoffLimit: 2` is intentional fail-fast for a deterministic pipeline. |
@@ -275,10 +279,13 @@ Explicitly, so nothing here is over-read:
 
 - **Local cluster only.** Validated on Docker Desktop Kubernetes; kind/minikube are
   supported by the same runbook. No managed cluster (EKS/AKS/GKE) is used or claimed.
-- **Green run is local-only.** The complete pipeline runs to completion in-cluster
-  (PR 8, [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md)), but with a
-  **local-validation** dataset (out-of-band ConfigMap, ≤1 MiB) and an **in-pod
-  MLflow file store** — not production dataset storage or a real MLflow server.
+- **Green run is local-only.** The complete pipeline runs to completion in-cluster,
+  but against **local stand-ins**: the dataset is retrieved from in-cluster **MinIO**
+  (the local S3) by the `fetch-dataset` init container — the same code path as real S3
+  on EKS (Sprint 7 PR 8, [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)) —
+  and MLflow runs on the in-cluster platform locally
+  ([ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)). A live **EKS** run is
+  operator-gated.
   DagsHub connectivity is configuration-validated, not connectivity-tested locally.
 - **No production cloud deployment**, **no GitOps** (Argo CD/Flux), **no HA**, and
   **no model serving** — all roadmap v5–v6, none present.

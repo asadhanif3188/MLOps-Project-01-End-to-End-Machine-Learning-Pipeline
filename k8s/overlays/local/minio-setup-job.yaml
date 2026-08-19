@@ -1,11 +1,18 @@
 # MinIO bucket bootstrap — LOCAL OVERLAY ONLY (Sprint 7, PR 6).
 #
-# MLflow does NOT create its S3 bucket; it expects the bucket to already exist.
-# On AWS, Terraform creates the bucket (terraform/s3.tf). Locally, this one-shot
-# Job creates the `mlflow` bucket in MinIO using the MinIO client (`mc`), idempotently.
+# Neither MLflow nor the pipeline creates its S3 bucket; both expect the bucket to
+# already exist. On AWS, Terraform creates them (terraform/s3.tf for the MLflow
+# artifact bucket, terraform/datasets.tf for the dataset bucket). Locally, this
+# one-shot Job creates BOTH buckets in MinIO using the MinIO client (`mc`),
+# idempotently:
+#   * `mlflow`   — the MLflow artifact store (Sprint 7, PR 6).
+#   * `datasets` — the pipeline's raw-input dataset store (Sprint 7, PR 8; the
+#     local stand-in for the Terraform-provisioned dataset bucket). The dataset
+#     OBJECT is uploaded out-of-band after this Job runs (see k8s/README.md §
+#     "Dataset"); this Job only ensures the bucket exists.
 #
 # It waits for MinIO to become reachable, then `mc mb --ignore-existing` creates
-# the bucket (safe to re-run). The Job is finite (restartPolicy: Never,
+# the buckets (safe to re-run). The Job is finite (restartPolicy: Never,
 # backoffLimit for transient MinIO-not-up-yet retries) — the same finite-run
 # discipline as the pipeline Job (ADR-009).
 apiVersion: batch/v1
@@ -48,7 +55,8 @@ spec:
                 echo "waiting for minio..."; sleep 3;
               done;
               mc mb --ignore-existing local/mlflow;
-              echo "bucket local/mlflow ready";
+              mc mb --ignore-existing local/datasets;
+              echo "buckets local/mlflow and local/datasets ready";
           env:
             # mc writes its config under $MC_CONFIG_DIR; point it at a writable
             # path for the non-root numeric user (its HOME does not exist).

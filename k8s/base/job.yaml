@@ -33,9 +33,12 @@
 #   * SCM — `dvc repro` aborted with "/app is not a git repository". Fixed by
 #     mounting `/app/.dvc/config.local` with `core.no_scm = true` (DVC's supported
 #     no-SCM mode), sourced from the base `mlops-pipeline-dvc-config` ConfigMap.
-#   * Dataset — the runtime image excludes data via `.dockerignore`. The local
-#     overlay mounts it read-only at `/app/data/raw` from a ConfigMap generated
-#     out of the (git-ignored) local dataset file.
+#   * Dataset — the runtime image excludes data via `.dockerignore`. Originally the
+#     local/AWS overlays mounted it read-only at `/app/data/raw` from a ConfigMap
+#     generated out of the (git-ignored) dataset file. Sprint 7 PR 8 (ADR-027)
+#     REPLACED that: an init container now retrieves the dataset at runtime from S3
+#     into a shared emptyDir (see initContainers.fetch-dataset below). No ConfigMap,
+#     no baked-in data, no hostPath.
 # Sprint 7 PR 6 (ADR-026) rewired MLflow: the base ConfigMap now points
 # MLFLOW_TRACKING_URI at the PERSISTENT in-cluster MLflow Tracking Server Service
 # (PostgreSQL + S3 backend), replacing the removed DagsHub SaaS and the local
@@ -133,6 +136,14 @@ spec:
         # Required by the restricted Pod Security Standard.
         seccompProfile:
           type: RuntimeDefault
+        # Own mounted volumes as gid 10001 (Sprint 7, PR 8). The `fetch-dataset`
+        # init container writes the downloaded dataset into the shared `dataset`
+        # emptyDir; an emptyDir is created root-owned, so a non-root process (uid
+        # 10001) could not write to it without this. fsGroup makes the kubelet
+        # group-own + setgid the mounted volumes to 10001 (the container's group),
+        # so the init container can populate the dataset and the pipeline container
+        # can read it — all still as the unprivileged user, root nowhere.
+        fsGroup: 10001
       # Readiness gate on the tracking platform (Sprint 7, PR 6 — ADR-026). The
       # pipeline logs to the in-cluster MLflow server; if it starts before the
       # server is Ready, the `train` stage's tracking call fails and the Job burns a
@@ -144,6 +155,49 @@ spec:
       # becomes Ready it exits non-zero after ~5 min, failing the Job cleanly (which
       # then retries per backoffLimit) rather than hanging.
       initContainers:
+        # Dataset retrieval (Sprint 7, PR 8 — closes finding M-04). Runs BEFORE the
+        # pipeline (and before the MLflow wait, so a data problem fails fast rather
+        # than after a 5-minute readiness wait). It downloads the raw dataset from
+        # S3 (real Amazon S3 on EKS via Pod Identity; the S3-compatible MinIO
+        # locally) into the shared `dataset` emptyDir mounted at /app/data/raw, which
+        # the pipeline container then reads. This REPLACES the former ConfigMap
+        # dataset-delivery mechanism: the dataset is no longer baked into the image,
+        # committed to Git, or carried in a ConfigMap. Retrieval is env-INDEPENDENT
+        # (S3 API everywhere), so it lives in the BASE; only the SOURCE (bucket URI,
+        # endpoint, credentials) is env-specific and supplied by the overlays.
+        # Uses the SAME pipeline image (the overlay's image pin rewrites it too) and
+        # runs first-party Python (src/fetch_dataset.py) so the download is
+        # unit-tested, typed, and verifies the bytes against DATASET_SHA256 —
+        # failing the Job cleanly on a missing object, denied access, or checksum
+        # mismatch. Rationale: ADR-027.
+        - name: fetch-dataset
+          image: ml-pipeline
+          command: ["python", "src/fetch_dataset.py"]
+          # DATASET_SHA256 (the pinned dataset identity/version) and LOG_LEVEL come
+          # from the base ConfigMap; the env-specific DATASET_S3_URI / endpoint /
+          # region (and, locally, the MinIO credential Secret) are layered by the
+          # overlays onto this same-named init container.
+          envFrom:
+            - configMapRef:
+                name: mlops-pipeline-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          # Writable mount of the shared dataset volume — this container POPULATES
+          # it (writable, so no readOnly here); the pipeline container mounts the
+          # same volume read-only.
+          volumeMounts:
+            - name: dataset
+              mountPath: /app/data/raw
         - name: wait-for-mlflow
           image: ml-pipeline
           command: ["python", "-c"]
@@ -267,12 +321,13 @@ spec:
               # and limits differ deliberately: Burstable QoS — reserve a modest
               # floor, cap the ceiling.)
               memory: 512Mi
-          # Runtime volume mounts (PR 8 — Kubernetes Runtime Execution). Only the
-          # DVC no-SCM config is mounted here in the BASE, because it is the one
-          # runtime input that is environment-INDEPENDENT (no image ships `.git`,
-          # so every environment needs it). The DATASET mount and the MLflow
-          # backend are environment-specific and are layered in the overlays
-          # (see overlays/local): the base does not presume how the data arrives.
+          # Runtime volume mounts. Two environment-INDEPENDENT inputs are mounted
+          # here in the BASE: the DVC no-SCM config (no image ships `.git`, so every
+          # environment needs it) and the raw dataset (Sprint 7, PR 8 — retrieved at
+          # runtime by the fetch-dataset init container into a shared emptyDir, so
+          # every environment gets it the same way). Only the dataset SOURCE and the
+          # MLflow backend are environment-specific, and those are layered in the
+          # overlays — the base no longer presumes the data arrives via a ConfigMap.
           volumeMounts:
             # DVC's local config override, mounted read-only BESIDE the image's
             # own /app/.dvc/config (subPath, so it does not shadow the directory).
@@ -284,6 +339,15 @@ spec:
             - name: dvc-runtime-config
               mountPath: /app/.dvc/config.local
               subPath: config.local
+              readOnly: true
+            # The raw dataset, populated by the `fetch-dataset` init container and
+            # read here as the preprocess stage's input (params.yaml:
+            # preprocess.input = data/raw/data.csv). Mounted READ-ONLY: this
+            # container only consumes the dataset; the init container is the sole
+            # writer. Shared via an emptyDir (declared below) — no ConfigMap, no
+            # hostPath. Sprint 7, PR 8 (ADR-027).
+            - name: dataset
+              mountPath: /app/data/raw
               readOnly: true
           # Externalized configuration (PR 3). The image stays immutable; env-var
           # config is injected from the cluster via the base ConfigMap:
@@ -303,11 +367,18 @@ spec:
           envFrom:
             - configMapRef:
                 name: mlops-pipeline-config
-      # Pod-level volumes. The base declares only the DVC no-SCM config source
-      # (environment-independent). The dataset volume is added by the local
-      # overlay, where the dataset provisioning mechanism is chosen and clearly
-      # scoped as a local-validation mechanism (ADR-013).
+      # Pod-level volumes. Both are now environment-INDEPENDENT (Sprint 7, PR 8):
+      #   * dvc-runtime-config — the DVC no-SCM config (every environment needs it).
+      #   * dataset            — an emptyDir the `fetch-dataset` init container fills
+      #     from S3 and the pipeline container reads. An emptyDir (pod-lifetime
+      #     scratch space), NOT a ConfigMap and NOT a hostPath: the real dataset now
+      #     arrives at RUNTIME from object storage over the S3 API, so the volume is
+      #     just the hand-off buffer between the init and main containers. What
+      #     differs per environment is only the dataset SOURCE (the S3 URI /
+      #     endpoint / credentials), layered onto the init container by the overlays.
       volumes:
         - name: dvc-runtime-config
           configMap:
             name: mlops-pipeline-dvc-config
+        - name: dataset
+          emptyDir: {}

@@ -64,13 +64,21 @@ Kubernetes-native **batch workload** (a `Job`), not a long-running service.
 > The three PR 1–7 blockers were resolved as a minimal runtime contract (design of
 > record: [ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)):
 > DVC no-SCM mode (`core.no_scm = true`, mounted `config.local`) replaces the
-> `/app is not a git repository` abort; the dataset is mounted read-only at
-> `/app/data/raw` from an out-of-band ConfigMap; and the local overlay points MLflow
-> at an in-pod file store so a local run needs no external MLflow or credentials. The
-> earlier lifecycle/security/resource evidence (below) remains valid.
+> `/app is not a git repository` abort; the dataset is retrieved at runtime and the
+> local overlay points MLflow at an in-pod file store so a local run needs no external
+> MLflow or credentials. The earlier lifecycle/security/resource evidence (below)
+> remains valid.
+>
+> **Sprint 7 update the dataset & MLflow paths.** The dataset is no longer delivered
+> by a ConfigMap: an init container now retrieves it at runtime from S3 (real S3 on
+> EKS via Pod Identity; in-cluster MinIO locally) into a shared emptyDir at
+> `/app/data/raw`, integrity-checked against a pinned checksum (Sprint 7 PR 8, closes
+> M-04 — [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md),
+> [proof](../docs/proof/sprint-07-s3-dataset-runtime-evidence.md)). MLflow now logs to
+> the persistent in-cluster platform ([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)).
 > **CI validation is still static** (plus opt-in admission) — it does **not** deploy
-> or run the workload. Nothing here has been applied to a production cluster; the
-> dataset ConfigMap and MLflow file store are **local-validation mechanisms, not
+> or run the workload. Nothing here has been applied to a production cluster; the local
+> MinIO dataset store and MLflow file store are **local-validation mechanisms, not
 > production storage**; the resource values are **not production-certified** and
 > **restricted Pod Security Standard compliance is not claimed** (read-only root is
 > still deferred — [ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)).
@@ -99,10 +107,10 @@ k8s/
 │   └── kustomization.yaml    # aggregates the base, applies common labels
 ├── overlays/
 │   ├── local/                # specialization for a local cluster (kind/minikube)
-│   │   ├── job-runtime.yaml   # PR 8: dataset mount + offline MLflow file-store env
+│   │   ├── job-runtime.yaml   # dataset source: fetch-dataset init container → MinIO (S7 PR8)
 │   │   └── kustomization.yaml # pins the image to ml-pipeline:local; applies the patch
 │   └── aws/                  # specialization for Terraform-provisioned EKS — Sprint 6 PR 5
-│       ├── job-cloud.yaml     # cloud patch: imagePullPolicy + dataset mount (no MLflow override)
+│       ├── job-cloud.yaml     # cloud patch: imagePullPolicy + dataset source (S3 via Pod Identity)
 │       └── kustomization.yaml # repoints the image to Amazon ECR; applies the patch
 └── validate.py              # static validation (security + required + runtime) — PR 6/8
 ```
@@ -144,7 +152,7 @@ Design of record: [ADR-018](../docs/decisions/ADR-018-aws-eks-deployment-overlay
 |---|---|---|---|
 | **Image source** | `ml-pipeline:local`, side-loaded | `…dkr.ecr.<region>.amazonaws.com/mlops-pipeline:1.3.1` | EKS nodes are in **private subnets** and pull from a registry; ECR pull is authorized by the **node role**'s `AmazonEC2ContainerRegistryReadOnly` ([ADR-016](../docs/decisions/ADR-016-aws-iam-foundation.md)) — no pod credential/IRSA. |
 | **`imagePullPolicy`** | unset (side-loaded) | `Always` | Guarantees the node runs exactly the image just pushed to ECR; avoids the stale-image failure mode. |
-| **Dataset** | out-of-band ConfigMap → `/app/data/raw` | same mechanism | Dataset provisioning is per-environment by design; the tiny dataset fits the ConfigMap. **Validation mechanism, not production storage** (S3/PVC/`dvc pull` is the follow-up). |
+| **Dataset** | `fetch-dataset` init container pulls from in-cluster **MinIO** → `/app/data/raw` | same init container pulls from real **S3** via EKS Pod Identity | Retrieval mechanism is shared (base); only the SOURCE (bucket/endpoint/creds) differs. Replaces the former ConfigMap (Sprint 7 PR 8, closes M-04 — [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). |
 | **MLflow backend** | overridden to in-pod file store (offline) | **not overridden** → base DagsHub endpoint + out-of-band Secret | The overlay **targets** the real MLflow tracking path (the recorded PR 7 run used a transient offline file store — connectivity is config-validated, see the [runtime evidence](../docs/proof/sprint-06-runtime-evidence.md#limitations)). |
 
 Everything else — Namespace, ServiceAccount (token automount off), ConfigMaps, the
@@ -231,7 +239,9 @@ troubleshooting matrix — see the
 > [§ Runtime execution record (PR 8)](#runtime-execution-record-pr-8). This uses the
 > PR 8 runtime contract ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)):
 > DVC no-SCM (mounted `config.local`), a dataset mounted out-of-band at
-> `/app/data/raw`, and an in-pod MLflow file store. The earlier PR 2 run (2026-08-12)
+> `/app/data/raw` (that PR's ConfigMap mechanism; since replaced by S3 init-container
+> retrieval — Sprint 7 PR 8, [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)),
+> and an in-pod MLflow file store. The earlier PR 2 run (2026-08-12)
 > verified the Job *lifecycle* and terminated at the then-open SCM blocker; it is
 > kept below as the historical baseline that PR 8 closes.
 
@@ -280,24 +290,38 @@ docker exec desktop-control-plane ctr -n k8s.io images ls | grep ml-pipeline:loc
 ### 3. Provide the runtime dataset (required for a green run)
 
 The runtime image ships **no** dataset by design (`.dockerignore`; the raw file is
-DVC-tracked). The local overlay mounts it read-only at `/app/data/raw` from a
-ConfigMap you create **out-of-band** from the local, git-ignored `data/raw/data.csv`
-— the same out-of-band pattern as the Secret, so the dataset never enters git or a
-rendered manifest. Fetch the dataset first if you don't have it (`dvc pull`, or the
-public DagsHub raw URL), then:
+DVC-tracked). Since Sprint 7 PR 8 (closes M-04, [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md))
+the `fetch-dataset` init container retrieves it at runtime from S3 — **real Amazon S3**
+on EKS (via Pod Identity, no keys) and the **in-cluster MinIO** locally — into
+`/app/data/raw`, verifying it against the pinned `DATASET_SHA256`. There is **no
+ConfigMap dataset** anymore.
+
+Locally you therefore upload the dataset **object** into MinIO once (the same
+out-of-band pattern as a credential — the data never enters git or a manifest). MinIO
+and its `datasets` bucket come up with the overlay (step 5 / `minio-setup` Job), so
+apply the overlay first, then upload via a port-forward using the MinIO credentials
+from the `mlflow-s3-credentials` Secret:
 
 ```bash
-kubectl create namespace mlops --dry-run=client -o yaml | kubectl apply -f -   # if not yet applied
-kubectl create configmap mlops-pipeline-dataset --namespace mlops \
-  --from-file=data.csv=data/raw/data.csv
+# (after `kubectl apply -k k8s/overlays/local` — see step 5)
+kubectl -n mlops port-forward svc/minio 9000:9000 &        # S3 API on localhost:9000
+export AWS_ACCESS_KEY_ID=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+aws --endpoint-url http://localhost:9000 s3 cp \
+  data/raw/data.csv s3://datasets/pima-indians-diabetes/v1/data.csv
 ```
 
-> **Local validation only, not production storage.** A ConfigMap caps at 1 MiB; a
-> real dataset would come from a PVC / object store / `dvc pull`
-> ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)). The volume
-> is `optional: true`: if you skip this step the Job still starts, then fails fast at
-> preprocess with `Dataset not found: 'data/raw/data.csv'` (the intended missing-input
-> failure).
+Fetch the dataset first if you don't have it locally (`dvc pull`). On AWS the equivalent
+is one `aws s3 cp` to the Terraform-provisioned bucket — see the
+[proof runbook](../docs/proof/sprint-07-s3-dataset-runtime-evidence.md#aws--eks-operator-runbook-gated).
+
+> **Local validation only, not production storage.** In-cluster MinIO stands in for S3
+> locally. If the object is missing the `fetch-dataset` init container fails fast with a
+> clear `DataError` (and the Job retries per `backoffLimit`), rather than the pipeline
+> running against missing data — the intended failure mode
+> ([ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). Upload the
+> object then re-create the Job (`kubectl -n mlops delete job mlops-pipeline` and
+> re-apply) if it failed before the upload.
 
 ### 4. (Optional) create the credential Secret
 
@@ -320,7 +344,8 @@ kubectl apply -k k8s/overlays/local
 ```
 
 This creates the `mlops` namespace and the `mlops-pipeline` Job (plus the
-ServiceAccount and ConfigMaps). With the dataset ConfigMap from step 3 in place, the
+ServiceAccount, ConfigMaps, MLflow platform, and MinIO). With the dataset object
+uploaded to MinIO (step 3), the `fetch-dataset` init container retrieves it and the
 Job runs the full pipeline to completion (exit 0).
 
 ### 6. Inspect it
@@ -372,7 +397,7 @@ secret/config, admission, RBAC) is in the
 | Pod `Pending`, never schedules | Node lacks CPU/memory for the `requests` (250m/256Mi). | `describe pod` → `FailedScheduling`. | Raise the local cluster's resources (Docker Desktop → Settings → Resources). |
 | `CreateContainerConfigError` — "runAsNonRoot and image has non-numeric user" | The explicit numeric `runAsUser: 10001` was removed (the image's `USER` is a name). | `describe pod` → container state. | Keep `runAsUser: 10001` — it is **required** ([ADR-010](../docs/decisions/ADR-010-kubernetes-security-hardening.md)). |
 | Pod `Error`, log `/app is not a git repository` | The DVC no-SCM config isn't mounted — `config.local` (`core.no_scm=true`) missing at `/app/.dvc/config.local`. | `kubectl -n mlops exec <pod> -- cat .dvc/config.local`. | Ensure `dvc-config.yaml` is in the base and the Job mounts it (subPath) — [ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md); `python k8s/validate.py` asserts this. |
-| Pod `Error`, log `Dataset not found: 'data/raw/data.csv'` | The dataset ConfigMap wasn't created (volume is `optional: true`, so the pod still starts). | `kubectl -n mlops get configmap mlops-pipeline-dataset`. | Create it out-of-band — see [§ Step 3](#3-provide-the-runtime-dataset-required-for-a-green-run). This is the intended graceful missing-input failure. |
+| Init container `fetch-dataset` `Error`, log `Failed to download the dataset …` | The dataset object isn't in the bucket (or creds/endpoint are wrong), so the init container fails and the Job retries then fails. | `kubectl -n mlops logs <pod> -c fetch-dataset`. | Upload the object — see [§ Step 3](#3-provide-the-runtime-dataset-required-for-a-green-run). This is the intended fail-fast missing-input behaviour ([ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md)). |
 | Pod `Error`, MLflow "filesystem tracking backend … maintenance mode" | Newer MLflow gates its file store; `MLFLOW_ALLOW_FILE_STORE` not set for the local file-store path. | `kubectl -n mlops logs job/mlops-pipeline` at the tracking boundary. | The local overlay sets `MLFLOW_ALLOW_FILE_STORE=true`; keep it, or point at a real MLflow endpoint + Secret ([ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md)). |
 | Job `Failed`, `BackoffLimitExceeded` | Pod failed all `backoffLimit + 1 = 3` attempts. | `describe job` events, then the **pod logs** for the real cause. | Fix the underlying pod error above; fail-fast is intentional for a deterministic pipeline. |
 | `kubectl apply -k` render/schema error | Malformed or schema-invalid manifest. | `kustomize build k8s/overlays/local` and `python k8s/validate.py`; `kubeconform -strict`. | Fix the manifest; CI's `k8s-validate` catches this class before merge. |
@@ -427,6 +452,15 @@ Executed **2026-08-14** against **Docker Desktop Kubernetes v1.34.3**, image
 with the dataset ConfigMap created out-of-band and the local overlay's MLflow
 file-store override. Design of record:
 [ADR-013](../docs/decisions/ADR-013-kubernetes-runtime-execution.md).
+
+> **Historical record (2026-08-14).** This run used the then-current mechanisms: a
+> ConfigMap-delivered dataset and an in-pod MLflow file store. Both were later
+> replaced — the dataset by S3 init-container retrieval (Sprint 7 PR 8,
+> [ADR-027](../docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md), re-proven live
+> 2026-08-19 in [that PR's evidence](../docs/proof/sprint-07-s3-dataset-runtime-evidence.md)),
+> and tracking by the in-cluster MLflow platform ([ADR-026](../docs/decisions/ADR-026-in-cluster-mlflow-platform.md)).
+> The lifecycle/security findings below remain valid; only the dataset/MLflow
+> delivery specifics changed.
 
 **What was proven — the complete pipeline runs to completion in-cluster:**
 

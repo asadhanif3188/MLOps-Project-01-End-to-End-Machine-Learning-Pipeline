@@ -92,13 +92,16 @@ curl -fsS http://127.0.0.1:5000/health && echo OK
 
 ## Run the pipeline against the platform
 
-Provide the dataset out-of-band (as in [ADR-013](decisions/ADR-013-kubernetes-runtime-execution.md))
-and run the Job:
+Provide the dataset out-of-band by uploading it into MinIO (Sprint 7 PR 8; the
+`fetch-dataset` init container retrieves it at runtime — [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)),
+then run the Job:
 
 ```bash
-kubectl create configmap mlops-pipeline-dataset -n mlops \
-  --from-file=data.csv=data/raw/data.csv
-kubectl apply -k k8s/overlays/local          # (re-apply picks up the Job)
+kubectl apply -k k8s/overlays/local          # brings up MinIO + the Job
+kubectl -n mlops port-forward svc/minio 9000:9000 &
+export AWS_ACCESS_KEY_ID=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl -n mlops get secret mlflow-s3-credentials -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+aws --endpoint-url http://localhost:9000 s3 cp data/raw/data.csv s3://datasets/pima-indians-diabetes/v1/data.csv
 kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=300s
 kubectl -n mlops logs job/mlops-pipeline | tail
 ```

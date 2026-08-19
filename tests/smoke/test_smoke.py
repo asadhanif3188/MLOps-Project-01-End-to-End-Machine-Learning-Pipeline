@@ -30,6 +30,7 @@ CORE_MODULES = [
     "logging_config",
     "pipeline_io",
     "mlflow_config",
+    "fetch_dataset",
     "stage_runner",
     "preprocess",
 ]

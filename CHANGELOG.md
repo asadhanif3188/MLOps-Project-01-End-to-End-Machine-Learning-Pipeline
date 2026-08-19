@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **S3-backed runtime dataset retrieval — closes finding M-04** (Sprint 7, PR 8) —
+  the pipeline no longer receives its dataset through a Kubernetes **ConfigMap**. It is
+  retrieved at runtime from a private, encrypted, versioned **S3 bucket** by an init
+  container using **EKS Pod Identity** (least-privilege, read-only, no static keys), then
+  handed to the unchanged DVC pipeline. Design of record:
+  [ADR-027](docs/decisions/ADR-027-s3-dataset-runtime-retrieval.md); live evidence:
+  [proof](docs/proof/sprint-07-s3-dataset-runtime-evidence.md).
+  - **Dataset storage** — [`terraform/datasets.tf`](terraform/datasets.tf) adds a
+    `${name_prefix}-datasets-${account_id}` bucket with **all public access blocked**,
+    **BucketOwnerEnforced**, **versioning**, **SSE-KMS** via a dedicated
+    customer-managed key (rotation on), and a **lifecycle rule** that expires
+    noncurrent versions (30 d) and aborts incomplete multipart uploads (7 d) —
+    cost control for the versioned bucket. Terraform owns the empty, secured bucket; the
+    dataset object is uploaded out-of-band, so the data is **never in Git and never in
+    the image**. The object key is version-pathed (`pima-indians-diabetes/v1/data.csv`).
+  - **Least-privilege read identity** — a dedicated `dataset-reader` IAM role trusted
+    only by `pods.eks.amazonaws.com`, bound via `aws_eks_pod_identity_association` to the
+    pipeline's existing `mlops/mlops-pipeline` service account. Its inline policy grants
+    only `s3:GetObject` + `s3:ListBucket`/`GetBucketLocation` on this one bucket — **no
+    `PutObject`/`DeleteObject`, no `s3:*`**; the CMK grants only `kms:Decrypt`.
+  - **Retrieval mechanism** — a `fetch-dataset` init container ([`k8s/base/job.yaml`](k8s/base/job.yaml))
+    runs first-party Python ([`src/fetch_dataset.py`](src/fetch_dataset.py), boto3) that
+    downloads the object into a shared `emptyDir` at `/app/data/raw` (read-only in the
+    pipeline container), **verifies its SHA-256** against `DATASET_SHA256`, and fails the
+    Job with a clear typed error on a missing object, denied access, unreachable
+    endpoint, or checksum mismatch. Pod `fsGroup: 10001` makes the emptyDir writable by
+    the non-root user; **no ConfigMap, no hostPath**.
+  - **Both environments** — the base owns the mechanism; overlays supply only the source:
+    real Amazon S3 + Pod Identity on AWS ([`k8s/overlays/aws/job-cloud.yaml`](k8s/overlays/aws/job-cloud.yaml)),
+    in-cluster **MinIO** + an out-of-band Secret locally
+    ([`k8s/overlays/local/job-runtime.yaml`](k8s/overlays/local/job-runtime.yaml)), so the
+    identical retrieval code path is validated without AWS.
+  - **Dataset identity** — [`docs/dataset.md`](docs/dataset.md) records the dataset's
+    size, SHA-256, DVC md5, and version.
+  - **Tests** — `tests/unit/test_fetch_dataset.py` (parsing, checksum gate, clear
+    failures with an injected client), `terraform/tests/dataset_s3.tftest.hcl` (bucket
+    security + read-only least-privilege + Pod Identity, offline/mocked), and new
+    `k8s/validate.py` runtime-contract checks (init container present, emptyDir not
+    ConfigMap, no hostPath, `DATASET_SHA256` pinned).
+  - **Validated** — live on Docker Desktop Kubernetes against MinIO (download →
+    checksum verify → `dvc repro` all four stages → Job `Complete`; old ConfigMap deleted
+    to prove independence; missing-object failure path exercised). EKS is
+    design-complete + offline-validated; a live EKS run is operator-gated.
 - **EKS Secret KMS envelope encryption — closes finding M-02** (Sprint 7, PR 5) —
   Kubernetes **Secrets** stored in EKS are now envelope-encrypted with a dedicated
   **customer-managed KMS key**, a customer-controlled layer on top of the AWS-owned

@@ -2,4 +2,5 @@ dvc
 scikit-learn
 mlflow
 dvc-s3
+boto3
 python-dotenv
