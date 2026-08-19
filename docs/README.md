@@ -94,6 +94,7 @@ repository.
 | [Sprint 3 — v1.2.0](retrospectives/sprint-03-retrospective.md) | Containerization & CI: what was planned, delivered, decided, and deliberately deferred, plus lessons learned |
 | [Sprint 4 — v1.3.0](retrospectives/sprint-04-retrospective.md) | Pipeline correctness & reproducibility: planned vs delivered, changes during implementation, decisions, lessons, and deferred work |
 | [Sprint 5 — v1.4.0](retrospectives/sprint-05-retrospective.md) | Kubernetes platform engineering: workload model → security → resources → CI validation → operations/proof → **green in-cluster execution** (PR 8); the "structurally valid ≠ runtime-complete" lesson |
+| [Sprint 7 — v1.4.0](retrospectives/sprint-07-retrospective.md) | Cloud-native MLOps hardening: closing all seven Sprint 6 HIGH/MEDIUM findings (ECR IaC, secure-by-default EKS API, access entries, CNI Pod Identity, KMS Secrets, in-cluster MLflow, S3 dataset), proven on real EKS; the "secure defaults have an operational tax" lesson |
 
 ### Proof Assessments
 
@@ -105,6 +106,7 @@ repository.
 | [Sprint 6 — Runtime Evidence](proof/sprint-06-runtime-evidence.md) | Redacted record of the PR 7 cloud integration test: 29 resources applied, Job `Complete` (exit 0) on real EKS, six security controls verified live, then destroyed and verified clean |
 | [Sprint 7 — Proof Impact](proof/sprint-07-proof-impact.md) | Evidence-based statement of the hardened cloud-native claims after Sprint 7 (Terraform-managed ECR, secure-by-default EKS API, access entries, VPC CNI Pod Identity, KMS-encrypted Secrets, in-cluster MLflow, S3 dataset) with a conservative Before/After and explicit deferred items |
 | [Sprint 7 — Runtime Evidence](proof/sprint-07-runtime-evidence.md) | Redacted record of the full-platform EKS run: 63 resources applied, EKS Pod Identity workload identity, in-cluster MLflow (PostgreSQL + SSE-KMS S3), Job `Complete` (exit 0), then destroyed and verified clean |
+| [Sprint 7 — Release Gate](proof/sprint-07-release-gate.md) | Final Sprint 7 release-readiness gate: full local toolchain results, individual assessment of all seven Sprint 6 HIGH/MEDIUM findings (7/7 closed), runtime-chain verification, no-GitOps/no-remote-state confirmation; verdict **CONDITIONAL PASS**, no blockers, recommended **v1.4.0** |
 
 ---
 

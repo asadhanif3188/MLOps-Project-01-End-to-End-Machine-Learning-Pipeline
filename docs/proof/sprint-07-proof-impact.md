@@ -16,7 +16,8 @@
   from scratch on real EKS 1.35, ran the pipeline to completion (Job `Complete`, exit
   0), and was destroyed and verified clean.** What is **not** claimed remains
   production — see [§5](#5-what-still-cannot-be-claimed).
-- **Related:** [Sprint 7 Runtime Evidence](sprint-07-runtime-evidence.md),
+- **Related:** [Sprint 7 Release Gate](sprint-07-release-gate.md),
+  [Sprint 7 Runtime Evidence](sprint-07-runtime-evidence.md),
   [Cloud Operations](../cloud-operations.md),
   [MLflow Platform](../mlflow-platform.md), [Dataset](../dataset.md),
   [`terraform/README.md`](../../terraform/README.md),
@@ -166,7 +167,7 @@ and its executed/verified evidence.
 | **DVC data-flow correctness** (PR 9) | `dvc.yaml` + contract tests | Declared DAG == traced execution ([DVC correction evidence](sprint-07-dvc-dataflow-correction-evidence.md)). |
 | **Full-platform cloud run** | the executed Job | Job **`Complete`**, pod **exit 0**, 4 stages, all AWS via Pod Identity. |
 | **Ephemeral lifecycle & teardown** | runbook + destroy ([ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md)) | `destroy` → **65 destroyed**; verified clean three ways. |
-| **Offline security contracts** | `terraform test` + `k8s/validate.py` | `terraform test` 42/42; `k8s/validate.py` 158/158 local, 130/130 aws (PR 11). |
+| **Offline security contracts** | `terraform test` + `k8s/validate.py` | `terraform test` **42/42** (clean checkout; see [release gate §6](sprint-07-release-gate.md#6-the-terraform-test-observation-non-blocking)); `k8s/validate.py` 158/158 (PR 11). |
 
 ---
 
