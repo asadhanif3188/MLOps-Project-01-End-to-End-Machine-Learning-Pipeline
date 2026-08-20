@@ -1,0 +1,197 @@
+# blackbox-exporter — Layer 3 endpoint availability probing (Sprint 8, PR 4;
+# ADR-031). MLflow ships NO native Prometheus `/metrics`, so "is MLflow actually
+# serving?" cannot be answered by scraping MLflow directly. blackbox-exporter fills
+# that gap: Prometheus hands it a target URL, it performs a single lightweight HTTP
+# GET, and it returns `probe_success`, `probe_http_status_code`, and
+# `probe_duration_seconds` as metrics — the Layer 3 availability signal in
+# docs/observability.md § 3.
+#
+# WHY A GENERIC PROBER (and not an MLflow-specific exporter): the operational
+# question is shallow and universal — "does /health return 2xx, and how fast?".
+# blackbox-exporter answers exactly that with zero MLflow coupling and no
+# credentials, and the same instance can later probe any other internal endpoint.
+# Deep request-level RED metrics (per-API rate/errors/latency) would need an
+# app-side exporter inside MLflow and are deliberately DEFERRED (ADR-028 § 6).
+#
+# THE PROBED ENDPOINT — /health, a STABLE, CHEAP target. MLflow's `/health`
+# (and `/version`) are EXEMPT from the server's DNS-rebinding host allow-list
+# (deployment.yaml), so the probe passes regardless of the Host header, and
+# `/health` is a trivial "server up" handler — no DB round-trip, no load. Prometheus
+# probes it once per scrape_interval (30s): one small GET per interval per target,
+# so the prober adds negligible load to MLflow (the brief's "avoid causing
+# unnecessary load"). `/health` is a SHALLOW check (server process up), not a deep
+# DB-connectivity assertion — that limitation is documented (observability.md § 3).
+#
+# LEAST PRIVILEGE — blackbox-exporter does NOT call the Kubernetes API (Prometheus
+# supplies the target via the scrape `params`, not service discovery inside the
+# prober), so its ServiceAccount mounts no token. It is otherwise fully hardened:
+# non-root uid 65534, drop ALL, no privilege escalation, seccomp RuntimeDefault,
+# read-only root filesystem (the module config is mounted read-only; the prober
+# writes nothing). Internal-only ClusterIP.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+# blackbox-exporter never talks to the Kubernetes API (it only performs outbound
+# HTTP probes and serves /metrics), so it needs no token — mount off, matching the
+# fleet-wide default and keeping an unused, exfiltratable token out of the pod.
+automountServiceAccountToken: false
+---
+# The prober's module definitions. A blackbox "module" is a named probe recipe;
+# Prometheus selects one per scrape via `params: module: [...]`. Exactly one module
+# is defined — the minimal recipe the Layer 3 signal needs — keeping the surface
+# matched to what is actually exercised (the measure-what-you-need discipline).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+data:
+  blackbox.yml: |
+    modules:
+      # A plain HTTP GET that succeeds on any 2xx. Used to probe MLflow's /health.
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          method: GET
+          # Empty => the exporter's default of "2xx is success". MLflow /health
+          # returns 200, so probe_success is 1 iff the server is serving.
+          valid_status_codes: []
+          # The probe targets an in-cluster ClusterIP Service over plain HTTP; there
+          # is no redirect to follow and no TLS to require (in-cluster traffic is not
+          # TLS-terminated here — the same posture as the MLflow⇄Postgres hop, out of
+          # scope to change without a service mesh; ADR-031).
+          follow_redirects: false
+          fail_if_not_ssl: false
+          # IPv4: the cluster Service network is IPv4 here; pinning avoids a spurious
+          # AAAA lookup/attempt on clusters without IPv6.
+          preferred_ip_protocol: ip4
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Single replica: the prober is stateless and a single-operator validation
+  # cluster does not need HA (matches the sizing rationale of the rest of the
+  # stack, ADR-029). If it is down, Prometheus records the blackbox scrape target
+  # itself as `up == 0` — a visible signal, not a silent gap.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blackbox-exporter
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: exporter
+    spec:
+      serviceAccountName: blackbox-exporter
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The blackbox-exporter image runs as nobody (65534); state it numerically
+        # so runAsNonRoot admits without name resolution.
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blackbox-exporter
+          # Pinned, non-latest. Prometheus community image (same registry namespace
+          # as prometheus/node-exporter/pushgateway).
+          image: quay.io/prometheus/blackbox-exporter:v0.25.0
+          args:
+            - --config.file=/etc/blackbox_exporter/blackbox.yml
+            - --web.listen-address=:9115
+          ports:
+            - name: http
+              containerPort: 9115
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # The module config is mounted read-only and the prober writes nothing
+            # to disk, so the root filesystem is locked read-only.
+            readOnlyRootFilesystem: true
+          # Conservative resources: the prober holds no state and performs a handful
+          # of tiny HTTP GETs per interval. Requests/limits are mandatory (the
+          # monitoring contract); tightened from MEASURED usage in the runtime-evidence
+          # PR — this PR deploys nothing, so nothing is measured yet.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          # blackbox-exporter's own health endpoint (distinct from the /probe it
+          # runs against other targets).
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox_exporter
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-exporter-config
+---
+# Service — the internal endpoint Prometheus points its blackbox scrape job at
+# (`http://blackbox-exporter.monitoring.svc.cluster.local:9115`). Prometheus scrapes
+# `/probe?target=<url>&module=http_2xx` here; the exporter performs the probe and
+# returns the result. ClusterIP: internal-only, never a NodePort/LoadBalancer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http

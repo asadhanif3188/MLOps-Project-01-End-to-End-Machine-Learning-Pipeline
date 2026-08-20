@@ -22,6 +22,7 @@ resources:
   - kube-state-metrics.yaml
   - node-exporter.yaml
   - pushgateway.yaml
+  - blackbox-exporter.yaml
   - prometheus-config.yaml
   - prometheus.yaml
 

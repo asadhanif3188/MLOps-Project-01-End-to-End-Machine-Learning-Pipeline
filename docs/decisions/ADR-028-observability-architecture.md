@@ -215,8 +215,14 @@ supposed to feed. Rejected outright.
 ### 4. Component ownership and placement
 
 - A dedicated **`monitoring` namespace** owns the stack (Prometheus, Grafana,
-  kube-state-metrics, node-exporter, blackbox-exporter, postgres-exporter),
+  kube-state-metrics, node-exporter, blackbox-exporter),
   separating platform-observability lifecycle from the `mlops` workload namespace.
+  > **Refined ([ADR-031](ADR-031-mlflow-postgres-monitoring.md), Sprint 8 PR 4).**
+  > **postgres-exporter is the exception**: PR 4 places it in the **`mlops`**
+  > namespace, beside the database, so its dedicated DB-credential Secret never has
+  > to be copied into `monitoring` (Prometheus scrapes it cross-namespace). This ADR
+  > listed it under `monitoring`; ADR-031 supersedes that placement for the
+  > credential-locality reason, and rejects the `monitoring` placement explicitly.
 - Every monitoring workload **inherits the same hardened baseline** the rest of the
   fleet already enforces (ADR-010): non-root numeric uid, `allowPrivilegeEscalation:
   false`, drop `ALL`, seccomp `RuntimeDefault`, no token automount unless a
@@ -374,6 +380,13 @@ Ratified here, detailed in
 - **PR 4 — MLflow & PostgreSQL depth.** blackbox-exporter (`/health`) +
   postgres-exporter with a least-privilege read-only monitoring role; Layer 3/4
   availability, memory-headroom, and **PVC-fill** signals present.
+  > **Delivered ([ADR-031](ADR-031-mlflow-postgres-monitoring.md)).** blackbox-exporter
+  > (Layer 3 MLflow `/health`), postgres-exporter with a dedicated `pg_monitor`-only
+  > role (Layer 4 up/connections/size), and a scoped kubelet volume-stats scrape
+  > (Layer 4 PVC-fill) shipped as manifests + scrape config + validation. The
+  > run-level replica/readiness/restart/CPU/memory signals were already collectable
+  > from PR 2's KSM + cAdvisor; PR 4 documents those queries and adds the depth
+  > exporters. **Not deployed** — runtime proof is PR 6.
 - **PR 5 — Alerting.** Prometheus alert rules encoding *exactly* the § 7 objectives
   (pipeline failure/OOM, MLflow down/memory, node not ready, PVC almost full) —
   no arbitrary alerts.

@@ -23,7 +23,6 @@ flowchart TB
             ksm["kube-state-metrics<br/><i>API-object state</i>"]
             nodeexp["node-exporter<br/><i>DaemonSet · node health</i>"]
             black["blackbox-exporter<br/><i>probes MLflow /health</i>"]
-            pgexp["postgres-exporter<br/><i>read-only DB role</i>"]
             alerts["Alert rules<br/><i>(PR 5)</i>"]
         end
 
@@ -32,6 +31,7 @@ flowchart TB
             jobobj[["Job OBJECT<br/><i>persists after pod (ttlSecondsAfterFinished)</i>"]]
             mlflow["Deployment: mlflow<br/><i>/health · no native /metrics</i>"]
             pg["StatefulSet: mlflow-postgres<br/><i>1Gi PVC</i>"]
+            pgexp["postgres-exporter<br/><i>read-only DB role · beside the DB (PR 4)</i>"]
         end
 
         kubelet["kubelet / cAdvisor<br/><i>per-container mem/cpu</i>"]

@@ -10,12 +10,16 @@
 #     headless Service; persistence via a volumeClaimTemplate.
 #   * deployment.yaml     — the MLflow Tracking Server Deployment + its ClusterIP
 #     Service (the platform's front door on :5000).
+#   * postgres-exporter.yaml — the Layer 4 DB-health exporter (PR 4; ADR-031).
 #
 # NOT rendered (created out-of-band, never applied from git):
 #   * secret.example.yaml — the DB credential TEMPLATE (placeholders only). The
 #     real `mlflow-db-credentials` Secret is created out-of-band, so credentials
 #     never enter git or a rendered manifest. The S3 credential Secret is
 #     overlay-specific (local MinIO keys) and likewise out-of-band.
+#   * postgres-exporter-secret.example.yaml — the exporter's monitoring-role
+#     credential TEMPLATE (placeholders only); the real
+#     `mlflow-postgres-exporter-credentials` Secret is created out-of-band too.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -24,3 +28,8 @@ resources:
   - configmap.yaml
   - postgres.yaml
   - deployment.yaml
+  # Layer 4 monitoring (Sprint 8, PR 4; ADR-031): a postgres-exporter Deployment +
+  # Service that exposes the DB's own backend health (pg_up, connections, size) to
+  # Prometheus. Co-located with the DB so its dedicated read-only monitoring
+  # credential Secret stays in the mlops namespace, never copied to `monitoring`.
+  - postgres-exporter.yaml
