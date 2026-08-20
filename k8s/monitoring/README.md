@@ -9,7 +9,7 @@ independently ([ADR-028 § 4](../../docs/decisions/ADR-028-observability-archite
 > **Status — manifests only, not deployed.** This PR adds version-controlled,
 > hardened, statically-validated manifests. **Nothing is deployed** (no live
 > cluster was available); full platform observability is **not** claimed — runtime
-> proof is Sprint 8 PR 6. Design of record:
+> proof (including live alert firing) is Sprint 8 PR 7. Design of record:
 > [ADR-028](../../docs/decisions/ADR-028-observability-architecture.md) (architecture)
 > and [ADR-029](../../docs/decisions/ADR-029-monitoring-foundation.md) (this
 > implementation). Operator runbook:
@@ -26,8 +26,11 @@ base/
                            #   ephemeral pipeline's per-stage operational metrics
   blackbox-exporter.yaml   # blackbox (PR 4): SA + module ConfigMap + Deployment + Service —
                            #   Layer 3 MLflow /health availability probing
-  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 8 scrape jobs
+  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 8 scrape jobs + rule_files
   prometheus.yaml          # Prometheus: SA + read-only ClusterRole + binding + Deployment + Service
+  prometheus/              # Alert rules layer (PR 6 — ADR-033):
+    alerts.yml             #   eight high-signal rules -> prometheus-alerts ConfigMap
+    alerts_test.yml        #   promtool unit tests (CI-only; not packaged)
   grafana/                 # Grafana dashboards layer (PR 5 — ADR-032):
     grafana.yaml           #   SA + hardened, internal-only Deployment + Service
     grafana-datasource.yaml         #   ConfigMap: provisioned Prometheus datasource
@@ -58,14 +61,20 @@ MLflow `/health` (blackbox), PostgreSQL backend health (postgres-exporter), and 
 Postgres PVC-fill signal (a scoped kubelet volume-stats scrape). The **Grafana
 dashboards layer** (PR 5 — [ADR-032](../../docs/decisions/ADR-032-grafana-dashboards.md))
 now lives in `grafana/`: a hardened, internal-only Grafana that provisions three
-purpose-built dashboards over these signals. **Alerts** (PR 6) are **not** here.
+purpose-built dashboards over these signals. The **alert rules layer** (PR 6 —
+[ADR-033](../../docs/decisions/ADR-033-alerting.md)) now lives in `prometheus/`: eight
+high-signal rules (`alerts.yml`) packaged into the `prometheus-alerts` ConfigMap and
+loaded via `rule_files`, with `promtool` unit tests in CI. **Alertmanager** notifier
+routing is **not** here (deferred).
 
 ## Build & validate
 
 ```bash
 kustomize build k8s/monitoring/base                 # render
-python k8s/validate.py k8s/overlays/local           # runs the monitoring pass too
+python k8s/validate.py k8s/overlays/local           # runs the monitoring pass too (incl. M11 alerts)
 kustomize build k8s/monitoring/base | kubeconform -strict -   # schema (CI-pinned)
+promtool check rules k8s/monitoring/base/prometheus/alerts.yml           # alert rules valid
+cd k8s/monitoring/base/prometheus && promtool test rules alerts_test.yml # alert unit tests
 ```
 
 ## Deploy / operate / clean up
@@ -104,5 +113,13 @@ deploy, port-forward Prometheus, run a PromQL query, troubleshoot, and tear down
   out-of-band (`grafana/grafana-admin-secret.example.yaml`). Stateless emptyDir — no
   PVC. Model quality stays in MLflow, not a dashboard
   ([ADR-032](../../docs/decisions/ADR-032-grafana-dashboards.md)).
+- **Alert rules (PR 6):** eight high-signal rules in `prometheus/alerts.yml`, packaged
+  into the `prometheus-alerts` ConfigMap and loaded via `rule_files`. Every rule carries
+  a severity, human summary/description and a `runbook_url`; thresholds trace to measured
+  limits / the § 6 objectives (no invented numbers). **Batch-correct:** pipeline failure
+  keys on the Job's terminal Failed condition, never on "not Running". `promtool test
+  rules` proves each Pending→Firing→Resolved transition (incl. a batch-semantics
+  negative) in CI. No Alertmanager routing yet — firing alerts show on Prometheus's own
+  `/alerts` ([ADR-033](../../docs/decisions/ADR-033-alerting.md), [alerting.md](../../docs/alerting.md)).
 - **Ephemeral storage:** the Prometheus TSDB is an `emptyDir` with 7d/1GB retention
   — no PVC, no long-term store (cost discipline, ADR-020/ADR-028 § 5).

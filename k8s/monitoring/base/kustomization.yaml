@@ -53,6 +53,19 @@ configMapGenerator:
       - grafana/dashboards/eks-platform-health.json
       - grafana/dashboards/mlops-pipeline-operations.json
       - grafana/dashboards/mlflow-platform-health.json
+  # Alert rules (Sprint 8, PR 6; ADR-033) packaged from the first-class,
+  # promtool-tested prometheus/alerts.yml into the prometheus-alerts ConfigMap
+  # (key: alerts.yml). Prometheus mounts it read-only at /etc/prometheus/rules and
+  # loads it via rule_files (prometheus-config.yaml). Same rationale as the
+  # dashboards above: the rule file stays a raw, individually-validatable artifact
+  # rather than an embedded YAML string. NOTE: Prometheus reads rule_files at start
+  # AND on SIGHUP/`POST /-/reload`; disableNameSuffixHash keeps the ConfigMap name
+  # stable, so applying a rule change + reloading picks it up (no full pod restart
+  # needed — documented in docs/monitoring-operations.md). alerts_test.yml is
+  # deliberately NOT packaged — it is CI-only promtool test input.
+  - name: prometheus-alerts
+    files:
+      - prometheus/alerts.yml
 
 generatorOptions:
   disableNameSuffixHash: true

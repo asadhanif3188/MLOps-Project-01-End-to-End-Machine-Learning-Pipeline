@@ -1456,6 +1456,17 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             "the blackbox scrape must probe the MLflow /health endpoint "
             "(the stable, load-free availability target — ADR-031)",
         )
+        # Sprint 8, PR 6 (ADR-033): the config must LOAD the alert rules via
+        # rule_files, and point at the path the prometheus-alerts ConfigMap is
+        # mounted (/etc/prometheus/rules). Without this the rules ship in a
+        # ConfigMap but are never evaluated.
+        r.check(
+            sec,
+            "prometheus.yml wires rule_files for the alert rules",
+            "rule_files:" in cfg and "/etc/prometheus/rules/alerts.yml" in cfg,
+            "prometheus.yml must declare rule_files including "
+            "/etc/prometheus/rules/alerts.yml (ADR-033)",
+        )
 
     # -- M9. Layer 3 exporter (blackbox) present & wired -- #
     # postgres-exporter (Layer 4) is deliberately NOT here — it lives in the mlops
@@ -1645,6 +1656,144 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             f"{f.name} is not a key in the grafana-dashboards ConfigMap "
             f"(add it to the kustomization configMapGenerator)",
         )
+
+    # -- M11. Alert rules layer (Sprint 8, PR 6 — ADR-033) -- #
+    # A small, high-signal alert set encoding the docs/observability.md § 6
+    # objectives + § 3 signal catalogue. Like the dashboards, the raw rule file is
+    # a first-class, promtool-tested artifact packaged into a ConfigMap (kustomize
+    # embeds it as an opaque string, so a malformed rule would render fine and only
+    # break Prometheus at load). This pass asserts the file is wired end to end,
+    # that every rule carries the required operator metadata (severity + human
+    # summary/description + runbook_url), and — the "no arbitrary alerts" contract —
+    # that the alert set is EXACTLY the documented one.
+    sec = "M11. Alert rules"
+    prom_dir = REPO_ROOT / "k8s/monitoring/base/prometheus"
+    alerts_file = prom_dir / "alerts.yml"
+    alerts_test = prom_dir / "alerts_test.yml"
+
+    # The rules must be packaged into the prometheus-alerts ConfigMap kustomize
+    # generates (key: alerts.yml), and Prometheus must mount it where rule_files
+    # points (/etc/prometheus/rules).
+    alerts_cm_keys = set(
+        (cms_by_name.get("prometheus-alerts", {}).get("data", {}) or {}).keys()
+    )
+    r.check(
+        sec,
+        "prometheus-alerts ConfigMap present with alerts.yml",
+        "alerts.yml" in alerts_cm_keys,
+        "no ConfigMap/prometheus-alerts data key 'alerts.yml' in the render "
+        "(add prometheus/alerts.yml to the kustomization configMapGenerator)",
+    )
+    prom_dep = next(
+        (
+            d
+            for d in by_kind.get("Deployment", [])
+            if d.get("metadata", {}).get("name") == "prometheus"
+        ),
+        None,
+    )
+    if prom_dep is not None:
+        spec = prom_dep.get("spec", {}).get("template", {}).get("spec", {})
+        mounts = [
+            m
+            for c in spec.get("containers", [])
+            for m in (c.get("volumeMounts", []) or [])
+            if m.get("mountPath") == "/etc/prometheus/rules"
+        ]
+        vols_by_name = {v.get("name"): v for v in spec.get("volumes", [])}
+        mount_ok = bool(mounts) and all(
+            (vols_by_name.get(m.get("name"), {}).get("configMap", {}) or {}).get("name")
+            == "prometheus-alerts"
+            for m in mounts
+        )
+        r.check(
+            sec,
+            "Prometheus mounts prometheus-alerts at /etc/prometheus/rules",
+            mount_ok,
+            "the prometheus Deployment must mount the prometheus-alerts ConfigMap "
+            "read-only at /etc/prometheus/rules (where rule_files points)",
+        )
+
+    # Parse-validate the raw rule file on disk (the source of truth kustomize packs).
+    # A 12-digit run of digits — an AWS account id shape the brief says must not leak.
+    r.check(
+        sec,
+        "alerts.yml present on disk",
+        alerts_file.is_file(),
+        f"missing {alerts_file}",
+    )
+    r.check(
+        sec,
+        "alerts_test.yml (promtool unit tests) present on disk",
+        alerts_test.is_file(),
+        f"missing {alerts_test} — the alert rules must ship promtool unit tests",
+    )
+    if alerts_file.is_file():
+        raw = alerts_file.read_text(encoding="utf-8")
+        r.check(
+            sec,
+            "alerts.yml exposes no AWS account id",
+            not account_id.search(raw),
+            "a 12-digit account-id-shaped string is present in alerts.yml",
+        )
+        try:
+            alerts_doc = yaml.safe_load(raw) or {}
+            parsed = True
+        except yaml.YAMLError as exc:
+            parsed = False
+            r.check(sec, "alerts.yml parses as YAML", False, f"invalid YAML: {exc}")
+        if parsed:
+            r.check(sec, "alerts.yml parses as YAML", True)
+            rules = [
+                rule
+                for group in (alerts_doc.get("groups", []) or [])
+                for rule in (group.get("rules", []) or [])
+            ]
+            names = [rule.get("alert") for rule in rules]
+            # The "no arbitrary alerts" contract: the set is EXACTLY the documented
+            # one (docs/observability.md § 6 + docs/alerting.md). Bump this set
+            # deliberately, in lock-step with the docs and the promtool tests, when
+            # an alert is added/removed.
+            expected = {
+                "PipelineJobFailed",
+                "PipelineJobOOMKilled",
+                "MLflowDown",
+                "MLflowMemoryHigh",
+                "PostgresDown",
+                "PostgresPVCAlmostFull",
+                "PostgresMemoryHigh",
+                "KubePodCrashLooping",
+            }
+            r.check(
+                sec,
+                "alert set is exactly the documented one (no arbitrary alerts)",
+                set(names) == expected and len(names) == len(expected),
+                f"alerts {sorted(set(names))} != documented {sorted(expected)}",
+            )
+            # Every rule must carry the full operator contract: a stable expr, a
+            # sensible for-duration, a severity label, and human-readable
+            # summary/description plus a runbook_url pointing at docs/alerting.md.
+            for rule in rules:
+                name = rule.get("alert", "?")
+                ann = rule.get("annotations", {}) or {}
+                labels = rule.get("labels", {}) or {}
+                ok = (
+                    bool(rule.get("expr"))
+                    and bool(rule.get("for"))
+                    and labels.get("severity") in {"critical", "warning"}
+                    and bool(ann.get("summary"))
+                    and bool(ann.get("description"))
+                    and "docs/alerting.md" in ann.get("runbook_url", "")
+                )
+                r.check(
+                    sec,
+                    f"{name}: has expr, for, severity, summary, "
+                    "description, runbook_url",
+                    ok,
+                    f"{name} is missing a required field "
+                    f"(severity={labels.get('severity')!r}, "
+                    f"for={rule.get('for')!r}, runbook={ann.get('runbook_url')!r})",
+                )
 
     return r.render()
 

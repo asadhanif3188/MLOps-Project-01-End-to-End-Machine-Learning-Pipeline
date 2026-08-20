@@ -1,0 +1,233 @@
+# Prometheus alert rules — actionable alerts for critical platform failures
+# (Sprint 8, PR 6; ADR-033). This is the ONLY alerting surface in the stack: a
+# small, high-signal set where every rule maps to a real operator action and to a
+# documented objective in docs/observability.md § 6 (the operational objectives)
+# or the § 3 signal catalogue. No arbitrary alerts — the deliberately-deferred
+# ones (node readiness/pressure, pending pods, connections-near-max, replica
+# counts) are listed as "Known limitations" in docs/alerting.md, not silently
+# dropped.
+#
+# BATCH SEMANTICS (the trap this PR is careful about). A finished batch Job is
+# NOT "running", and that is normal — so nothing here alerts on "the pipeline pod
+# is not Running". PipelineJobFailed keys on the Job's terminal *Failed condition*
+# (set only after backoffLimit is exhausted), never on the transient
+# kube_job_status_failed pod counter (which is > 0 during a retried-but-eventually-
+# successful run). PipelineJobOOMKilled keys on the retained finished pod's last
+# terminated reason. Both read persistent kube-state-metrics API-object series, so
+# they stay evaluable after the pod exits (the queryability contract, ADR-028 § 3;
+# the Job's ttlSecondsAfterFinished=3600 keeps the object alive for many scrapes).
+#
+# THRESHOLD RATIONALE and the full runbook (summary → likely cause → action) for
+# every alert live in docs/alerting.md; each rule carries a runbook_url annotation
+# pointing at its section. Thresholds are NOT invented: the memory 90% and PVC 85%
+# figures are the § 6 objectives against the ADR-026 measured limits (MLflow 2Gi /
+# baseline ~1.7GiB, Postgres 512Mi, PVC 1Gi); the for-durations are chosen to sit
+# above the relevant transient (a rolling restart, a GC spike, a scrape flap) and
+# are justified per rule in docs/alerting.md.
+#
+# ABSENT ≠ DOWN. The availability rules use max(<metric>) == 0, so a target that
+# is simply *absent* (e.g. before the stack is deployed, or an exporter not yet
+# scraped) yields no series and does NOT fire — only a real 0 does. Target-up
+# alerting via `up`/`absent()` is a documented future addition (docs/alerting.md
+# § Known limitations), deliberately omitted here to keep pre-deploy noise at zero.
+#
+# VALIDATION. Structurally checked by `promtool check rules` and unit-tested with
+# `promtool test rules` (alerts_test.yml, same directory) — both wired into CI
+# (.github/workflows/ci.yml, the prometheus-rules job). k8s/validate.py M11 asserts
+# this file is packaged into the prometheus-alerts ConfigMap and wired via
+# rule_files. NOT YET deployed / not yet fired on a live cluster beyond the
+# promtool unit test — the full failure-injection campaign is PR 7 (ADR-028
+# runtime-evidence gate).
+groups:
+  # ---------------------------------------------------------------------------
+  # Layer 2 — the ephemeral MLOps pipeline Job. Run-level outcome from KSM.
+  # ---------------------------------------------------------------------------
+  - name: mlops-pipeline
+    interval: 30s
+    rules:
+      - alert: PipelineJobFailed
+        # The Job's terminal Failed CONDITION — set by the Job controller only
+        # once backoffLimit (2, ADR-011) is exhausted. NOT kube_job_status_failed
+        # (the pod counter), which is transiently > 0 on a run that retries and
+        # then succeeds. This is the batch-correct "the last run definitively
+        # failed" signal, and the inverse of the § 6 pipeline-success objective.
+        expr: max(kube_job_failed{namespace="mlops",job_name="mlops-pipeline",condition="true"}) == 1
+        # 2m debounces a scrape flap only; the Failed condition is already
+        # terminal, so no longer wait is warranted for a run that will not recover.
+        for: 2m
+        labels:
+          severity: critical
+          layer: pipeline
+        annotations:
+          summary: "MLOps pipeline Job failed (last run did not Complete)"
+          description: >-
+            The mlops-pipeline batch Job reached its terminal Failed condition
+            (backoffLimit exhausted) — the most recent run did not Complete.
+            Inspect `kubectl -n mlops logs job/mlops-pipeline` and the per-stage
+            `mlops_pipeline_stage_success` series to find the failing stage; the
+            structured logs are the root-cause layer.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejobfailed"
+
+      - alert: PipelineJobOOMKilled
+        # The pipeline's memory-safety signal is a KILL EVENT, not a sustained
+        # headroom gauge (§ 6 note: a < 1 min Job cannot sustain "> 90% for N min").
+        # Reads the retained finished pod's last terminated reason.
+        expr: max(kube_pod_container_status_last_terminated_reason{namespace="mlops",pod=~"mlops-pipeline-.*",reason="OOMKilled"}) == 1
+        for: 2m
+        labels:
+          severity: critical
+          layer: pipeline
+        annotations:
+          summary: "MLOps pipeline pod was OOMKilled"
+          description: >-
+            A mlops-pipeline pod's last termination reason is OOMKilled — it hit
+            its 512Mi memory limit and the kernel killed it (ADR-011). Reduce the
+            stage's working set or raise the limit deliberately; do not silently
+            grow it. Correlate with PipelineJobFailed and the stage logs.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejoboomkilled"
+
+  # ---------------------------------------------------------------------------
+  # Layer 3 — MLflow tracking server (availability + memory headroom).
+  # ---------------------------------------------------------------------------
+  - name: mlflow
+    interval: 30s
+    rules:
+      - alert: MLflowDown
+        # blackbox /health probe (ADR-031). MLflow has no native /metrics, so
+        # availability is proven by the external HTTP probe.
+        expr: max(probe_success{job="blackbox-mlflow-health"}) == 0
+        # 5m > a rolling restart (~30-60s) + one 30s scrape, short enough to catch
+        # a real outage well within a typical pipeline run window (§ 6).
+        for: 5m
+        labels:
+          severity: warning
+          layer: mlflow
+        annotations:
+          summary: "MLflow tracking server is unavailable (/health down 5m)"
+          description: >-
+            The blackbox probe of MLflow's /health has returned 0 for 5m. New
+            pipeline runs cannot log to MLflow while it is down. Experiment data
+            is NOT lost — it lives in PostgreSQL — which is why this is a warning,
+            not critical. Check `kubectl -n mlops get deploy/mlflow` and its logs.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowdown"
+
+      - alert: MLflowMemoryHigh
+        # Working-set vs the 2Gi limit — the SAME expression the MLflow dashboard
+        # gauge uses (mlflow-platform-health.json panel 6), so alert and dashboard
+        # agree. Baseline is measured ~1.7GiB / 85% (ADR-026), so 90% is a genuine
+        # "approaching the ceiling" band, not the idle state.
+        expr: >-
+          100 * sum(container_memory_working_set_bytes{namespace="mlops",pod=~"mlflow-.*",pod!~"mlflow-postgres.*",container!="",container!="POD"})
+          / sum(kube_pod_container_resource_limits{namespace="mlops",pod=~"mlflow-.*",pod!~"mlflow-postgres.*",resource="memory"})
+          > 90
+        # 15m sustained — rides out a transient checkpoint/GC spike; only a real,
+        # held-high working set fires.
+        for: 15m
+        labels:
+          severity: warning
+          layer: mlflow
+        annotations:
+          summary: "MLflow memory > 90% of its 2Gi limit for 15m"
+          description: >-
+            MLflow working-set memory has held above 90% of its 2Gi limit
+            (measured baseline ~1.7GiB / 85%, ADR-026) for 15m — currently
+            {{ $value | printf "%.0f" }}%. Approaching the ceiling risks an
+            OOMKill of the tracking server. Investigate load; raise the limit only
+            with a measured justification.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowmemoryhigh"
+
+  # ---------------------------------------------------------------------------
+  # Layer 4 — PostgreSQL metadata backend (availability, storage, memory).
+  # ---------------------------------------------------------------------------
+  - name: postgres
+    interval: 30s
+    rules:
+      - alert: PostgresDown
+        # pg_up from postgres-exporter (ADR-031). The exporter stays up when the
+        # DB is down, so 0 is a true "DB unreachable", not "exporter gone".
+        expr: max(pg_up) == 0
+        for: 5m
+        labels:
+          severity: critical
+          layer: postgres
+        annotations:
+          summary: "PostgreSQL metadata database is unreachable (pg_up 0 for 5m)"
+          description: >-
+            postgres-exporter reports pg_up == 0 for 5m — it cannot connect to the
+            MLflow metadata database. This is the durable store the whole platform
+            depends on: MLflow and the pipeline cannot persist runs while it holds.
+            Check `kubectl -n mlops get statefulset/mlflow-postgres` and pod logs.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresdown"
+
+      - alert: PostgresPVCAlmostFull
+        # used/capacity from the kubelet volume stats — the SAME expression the
+        # MLflow dashboard PVC gauge uses. 85% is the § 6 storage-headroom
+        # objective against the FIXED 1Gi PVC (ADR-026): there is no autogrow, so a
+        # full volume stops the DB accepting writes.
+        expr: >-
+          100 * sum(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~"data-mlflow-postgres.*"})
+          / sum(kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"data-mlflow-postgres.*"})
+          > 85
+        # 10m avoids a transient spike; a filling volume is a slow trend, so 10m
+        # still leaves lead time to act before it is full.
+        for: 10m
+        labels:
+          severity: critical
+          layer: postgres
+        annotations:
+          summary: "PostgreSQL PVC over 85% full"
+          description: >-
+            The Postgres data PVC (fixed 1Gi, no autogrow — ADR-026) has held above
+            85% full for 10m — currently {{ $value | printf "%.0f" }}%. A full
+            volume stops the database accepting writes (data-loss / outage risk).
+            Reclaim space or grow the volume deliberately.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgrespvcalmostfull"
+
+      - alert: PostgresMemoryHigh
+        # Working-set vs the 512Mi limit — the SAME expression the Postgres
+        # dashboard gauge uses. 90% per the § 6 memory-headroom objective.
+        expr: >-
+          100 * sum(container_memory_working_set_bytes{namespace="mlops",pod=~"mlflow-postgres.*",container!="",container!="POD"})
+          / sum(kube_pod_container_resource_limits{namespace="mlops",pod=~"mlflow-postgres.*",resource="memory"})
+          > 90
+        for: 15m
+        labels:
+          severity: warning
+          layer: postgres
+        annotations:
+          summary: "PostgreSQL memory > 90% of its 512Mi limit for 15m"
+          description: >-
+            PostgreSQL working-set memory has held above 90% of its 512Mi limit
+            (ADR-026) for 15m — currently {{ $value | printf "%.0f" }}%.
+            Approaching the ceiling risks an OOMKill of the single-writer metadata
+            DB. Investigate load; raise the limit only with a measured justification.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresmemoryhigh"
+
+  # ---------------------------------------------------------------------------
+  # Layer 1 — platform: persistent crash/restart instability across the two
+  # project namespaces (covers the pipeline, MLflow and Postgres in one rule).
+  # ---------------------------------------------------------------------------
+  - name: platform
+    interval: 30s
+    rules:
+      - alert: KubePodCrashLooping
+        # The kubelet's own CrashLoopBackOff waiting reason held for 15m — the
+        # canonical kube-prometheus pattern. "How many restarts = persistent
+        # instability?" is answered by the kubelet's determination (it enters
+        # CrashLoopBackOff only after repeated crash-then-restart), sustained 15m,
+        # rather than a hand-picked restart count. Scoped to this project's two
+        # namespaces so an unrelated cluster workload never pages this operator.
+        expr: max_over_time(kube_pod_container_status_waiting_reason{namespace=~"mlops|monitoring",reason="CrashLoopBackOff"}[5m]) >= 1
+        for: 15m
+        labels:
+          severity: warning
+          layer: platform
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
+          description: >-
+            Container {{ $labels.container }} in pod
+            {{ $labels.namespace }}/{{ $labels.pod }} has been in CrashLoopBackOff
+            for 15m — the kubelet has repeatedly restarted it after crashes
+            (persistent instability, not a one-off restart). Check the container
+            logs and its last terminated reason.
+          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#kubepodcrashlooping"

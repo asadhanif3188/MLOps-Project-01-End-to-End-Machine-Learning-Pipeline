@@ -18,7 +18,10 @@ it down cleanly.
 > [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)), **and Grafana with the
 > three purpose-built dashboards** — EKS/Platform Health, MLOps Pipeline Operations,
 > MLflow Platform Health — (PR 5,
-> [ADR-032](decisions/ADR-032-grafana-dashboards.md)). **Alerts** (PR 6) are not here.
+> [ADR-032](decisions/ADR-032-grafana-dashboards.md)), **and eight high-signal
+> Prometheus alert rules** (PR 6,
+> [ADR-033](decisions/ADR-033-alerting.md); design + runbook in
+> [alerting.md](alerting.md)). Alertmanager notifier **routing** is not here (deferred).
 > As of these PRs the stack is **defined and statically validated but not deployed** —
 > no live cluster was available. The commands below are the runbook for when it *is*
 > deployed; the live four-layer evidence (targets Up, dashboards populating) is the job
@@ -27,8 +30,9 @@ it down cleanly.
 > Design of record: [ADR-028](decisions/ADR-028-observability-architecture.md),
 > [ADR-029](decisions/ADR-029-monitoring-foundation.md),
 > [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md),
-> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md), and
-> [ADR-032](decisions/ADR-032-grafana-dashboards.md).
+> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md),
+> [ADR-032](decisions/ADR-032-grafana-dashboards.md), and
+> [ADR-033](decisions/ADR-033-alerting.md).
 
 For the architecture (why these components, the four-layer model, the batch-Job
 strategy) see [`docs/observability.md`](observability.md); for the mlops workload's
@@ -49,6 +53,7 @@ namespace unless cluster-scoped:
 | `pushgateway` | Deployment + ClusterIP Service (`:9091`) | Sink for the ephemeral pipeline's **per-stage** operational metrics (duration + success), pushed before each stage exits (PR 3) | Internal only |
 | `blackbox-exporter` | Deployment + ClusterIP Service (`:9115`) | Layer 3 — probes MLflow `/health` for availability (PR 4) | Internal only |
 | `grafana` | Deployment + ClusterIP Service (`:3000`) | Dashboards over Prometheus — three provisioned dashboards (PR 5); datasource + dashboards loaded from ConfigMaps at start-up | Internal only |
+| `prometheus-alerts` | ConfigMap (mounted into `prometheus`) | Eight high-signal alert rules (PR 6) loaded via `rule_files`; firing alerts show on Prometheus's own `/alerts` | Internal only |
 | `prometheus` / `kube-state-metrics` | ServiceAccount + **read-only** ClusterRole + binding | Least-privilege API access | — |
 
 The kubelet's built-in **cAdvisor** and the kubelet's own **volume stats** (Postgres
@@ -285,6 +290,34 @@ curl -s --data-urlencode 'query=kube_statefulset_status_replicas_ready{namespace
 > cAdvisor since PR 2** — PR 4 documents their queries here; it did not add a
 > component for them ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)).
 
+### 4.1 Check alert rules & firing alerts (PR 6)
+
+The eight alert rules (PR 6, [ADR-033](decisions/ADR-033-alerting.md); full runbook in
+[alerting.md](alerting.md)) load into Prometheus via `rule_files`. There is **no
+Alertmanager** — firing alerts surface on Prometheus's own `/alerts` page and API.
+
+```bash
+# Are the rules loaded and healthy? (state "ok" per group)
+curl -s http://localhost:9090/api/v1/rules | grep -o '"name":"[^"]*"'
+
+# What is firing right now? (empty list on a healthy platform — the correct state)
+curl -s http://localhost:9090/api/v1/alerts
+
+# The synthetic ALERTS series also shows pending/firing alerts in PromQL:
+curl -s --data-urlencode 'query=ALERTS{alertstate="firing"}' http://localhost:9090/api/v1/query
+```
+
+On a healthy platform **nothing fires** — an empty `/alerts` is success, not a gap.
+To exercise a rule safely, prefer the offline `promtool test rules` suite
+([alerts_test.yml](../k8s/monitoring/base/prometheus/alerts_test.yml)); a live
+end-to-end firing (OOM the pipeline, scale MLflow to 0, fill the PVC) is the
+[runtime-evidence PR](observability.md#runtime-evidence-what-later-sprint-8-prs-must-prove).
+
+> **Editing a rule.** Change [`prometheus/alerts.yml`](../k8s/monitoring/base/prometheus/alerts.yml),
+> `kubectl apply -k`, then `curl -X POST http://localhost:9090/-/reload` (or restart the
+> pod) — Prometheus reads `rule_files` at start and on reload. Re-run `promtool test
+> rules` first; CI blocks a rule change that fails its unit tests.
+
 ---
 
 ## 5. Troubleshooting
@@ -302,7 +335,7 @@ curl -s --data-urlencode 'query=kube_statefulset_status_replicas_ready{namespace
 | `blackbox-mlflow-health` shows `probe_success 0` **but MLflow looks up** | Wrong target/path, DNS, or MLflow genuinely not serving `/health` | Confirm the scrape target is `…/health` (not `/`); `kubectl -n mlops get pods` for MLflow; the probe is exempt from MLflow's host allow-list, so a 0 means the server did not return 2xx. `probe_http_status_code` shows what it got. |
 | `postgres-exporter` target **DOWN** or `pg_up 0` | Exporter not deployed with the mlops workload, or the DB role/Secret is missing/wrong | The exporter ships in the **mlops** namespace (`kubectl -n mlops get deploy postgres-exporter`), not `monitoring`. `pg_up 0` with the target UP means auth/connect failed — create the `mlflow_exporter` role + `mlflow-postgres-exporter-credentials` Secret (see [the template](../k8s/base/mlflow/postgres-exporter-secret.example.yaml)); check `kubectl -n mlops logs deploy/postgres-exporter`. |
 | **No `kubelet_volume_stats_*`** series | The `kubelet` scrape is down (RBAC) or the node has no PVC mounted | Confirm the `kubelet` target is UP on `/targets` (needs the same `nodes/proxy` RBAC as cAdvisor); volume stats appear only for nodes actually mounting a PVC (the Postgres one). |
-| Prometheus pod **restarts / OOMs** | TSDB/scrape load above the starting limits | `kubectl -n monitoring top pod` (if metrics-server present) or check `container_memory_working_set_bytes`; raise the `prometheus` limits (they are conservative starting values, tightened from measurement in PR 6). |
+| Prometheus pod **restarts / OOMs** | TSDB/scrape load above the starting limits | `kubectl -n monitoring top pod` (if metrics-server present) or check `container_memory_working_set_bytes`; raise the `prometheus` limits (they are conservative starting values, tightened from measurement in PR 7). |
 | Metrics **disappeared after a restart** | Expected — the TSDB is an `emptyDir` (ephemeral by design, [ADR-029 § 3](decisions/ADR-029-monitoring-foundation.md)) | Capture evidence while the stack is live; use a PVC only if survive-a-restart is required. |
 
 Useful commands:
@@ -311,7 +344,7 @@ Useful commands:
 kubectl -n monitoring logs deploy/prometheus            # scrape/config errors
 kubectl -n monitoring logs deploy/kube-state-metrics    # RBAC/watch errors
 kubectl -n monitoring get endpoints                     # do Services have endpoints?
-# Reload the scrape config without deleting the pod (lifecycle API is enabled):
+# Reload the scrape config AND alert rules without deleting the pod (lifecycle API on):
 kubectl -n monitoring port-forward svc/prometheus 9090:9090 &
 curl -s -X POST http://localhost:9090/-/reload
 ```
@@ -350,6 +383,7 @@ cluster-scoped RBAC.
 ## Related documentation
 
 - [Observability & Operations](observability.md) — the architecture and signal catalogue
-- [ADR-028](decisions/ADR-028-observability-architecture.md) · [ADR-029](decisions/ADR-029-monitoring-foundation.md) · [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) · [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)
+- [Alerting](alerting.md) — the alert rules design, threshold rationale, and per-alert runbook
+- [ADR-028](decisions/ADR-028-observability-architecture.md) · [ADR-029](decisions/ADR-029-monitoring-foundation.md) · [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) · [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md) · [ADR-032](decisions/ADR-032-grafana-dashboards.md) · [ADR-033](decisions/ADR-033-alerting.md)
 - [Kubernetes Operations](kubernetes-operations.md) · [Cloud Operations](cloud-operations.md)
 - [`k8s/monitoring/`](../k8s/monitoring/) — the manifests · [`src/pipeline_metrics.py`](../src/pipeline_metrics.py) — the pipeline's metric emitter

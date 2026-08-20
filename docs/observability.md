@@ -76,7 +76,7 @@ node daemon, **cAdvisor** = the kubelet's built-in per-container metrics,
 | Are nodes Ready? | `kube_node_status_condition{condition="Ready",status="true"}` | KSM | Node status tile | **NodeNotReady** (≠ Ready for N min) |
 | Is a node under memory/CPU/disk pressure? | `node_memory_MemAvailable_bytes`, `node_cpu_seconds_total`, `node_filesystem_avail_bytes`; `kube_node_status_condition{condition=~"MemoryPressure|DiskPressure"}` | node-exporter, KSM | Node resource gauges | **NodeUnderPressure** |
 | Are pods repeatedly restarting? | `rate(kube_pod_container_status_restarts_total[15m])`; `kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}` | KSM | Restart heatmap | **KubePodCrashLooping** |
-| Is a workload approaching its memory limit? | `container_memory_working_set_bytes / kube_pod_container_resource_limits{resource="memory"}` | cAdvisor + KSM | Usage-vs-limit % per workload | **WorkloadMemoryHigh** (> 90%, § 6) |
+| Is a workload approaching its memory limit? | `container_memory_working_set_bytes / kube_pod_container_resource_limits{resource="memory"}` | cAdvisor + KSM | Usage-vs-limit % per workload | **`MLflowMemoryHigh`** / **`PostgresMemoryHigh`** (> 90%, § 6) — workload-specific, one per long-running workload against its measured limit (PR 6, [ADR-033](decisions/ADR-033-alerting.md)); the pipeline Job's memory-safety signal is **`PipelineJobOOMKilled`**, not a headroom gauge (§ 6 note) |
 | Is CPU being throttled? | `rate(container_cpu_cfs_throttled_periods_total[5m])` | cAdvisor | Throttle panel | *(info only — expected on the CPU-capped Job, ADR-011)* |
 | Are pods stuck Pending / PVCs unbound? | `kube_pod_status_phase{phase="Pending"}`, `kube_persistentvolumeclaim_status_phase{phase!="Bound"}` | KSM | Scheduling panel | **PodPending / PVCUnbound** |
 
@@ -286,7 +286,8 @@ claimed** without long-term data.
 | **MLflow request-level RED metrics** | Deferred | MLflow has no native `/metrics`; needs an app-side exporter. Availability (blackbox `/health`) + resource (cAdvisor) cover the operational question now. |
 | **Per-stage pipeline duration + failure attribution** | ✅ Delivered (PR 3) | Pushgateway push from the pipeline (`mlops_pipeline_stage_*`), bounded cardinality, per-run reset — [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable). |
 | **Long-term / remote metric store** (Thanos/Cortex/Mimir/AMP) | Out of scope | Short local retention (7–15 d) suits an ephemeral validation cluster; long-term capacity is a production concern (ADR-020). |
-| **Alertmanager routing to real channels** (email/Slack/PagerDuty) | Deferred to PR 5, minimal | Alert *rules* are defined against § 6; wiring external notifiers is an operator step, not an architecture claim. |
+| **Alert *rules*** (Prometheus) | ✅ Delivered (PR 6) | Eight high-signal rules encoding § 6 + the § 3 catalogue, promtool-unit-tested — [ADR-033](decisions/ADR-033-alerting.md), [alerting.md](alerting.md). |
+| **Alertmanager routing to real channels** (email/Slack/PagerDuty) | Deferred (rules delivered PR 6) | Rules evaluate and show on Prometheus's own `/alerts`; wiring external notifiers is an operator step needing channel secrets, not an architecture claim. |
 
 ---
 
@@ -311,7 +312,7 @@ claimed** without long-term data.
 
 ---
 
-## 9. Sprint 8 delivery plan (PRs 2–6)
+## 9. Sprint 8 delivery plan (PRs 2–7)
 
 This PR (**PR 1**) is architecture/documentation only. The remaining PRs implement
 the design against these acceptance criteria (ratified in ADR-028; all Kubernetes
@@ -323,7 +324,7 @@ work stays static/dry-run in CI per ADR-012 until the runtime-evidence PR).
 | **PR 3 — Pipeline operational metrics** ✅ *(manifests + instrumentation; not deployed)* | Per-stage duration + success/failure pushed by the pipeline to a scoped **Pushgateway**; 5th Prometheus scrape job | **Delivered:** `src/pipeline_metrics.py` (best-effort, bounded-cardinality, per-run reset) wired into `stage_runner` + the `fetch-dataset` init container; [`k8s/monitoring/base/pushgateway.yaml`](../k8s/monitoring/base/pushgateway.yaml) (hardened, internal-only) + `honor_labels` scrape; `PUSHGATEWAY_URL` in the base ConfigMap; unit tests for emission/timing/failure/reset; extended `k8s/validate.py`. Operational-vs-MLflow boundary preserved. [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof is PR 6). |
 | **PR 4 — MLflow & PostgreSQL depth** ✅ *(manifests; not deployed)* | blackbox-exporter (`/health`) + postgres-exporter with a dedicated **read-only** monitoring role (out-of-band Secret) | **Delivered:** [`blackbox-exporter.yaml`](../k8s/monitoring/base/blackbox-exporter.yaml) (Layer 3 MLflow `/health` — a stable, load-free probe) + [`postgres-exporter.yaml`](../k8s/base/mlflow/postgres-exporter.yaml) (Layer 4 `pg_up`/connections/size via a `pg_monitor`-only role, credential in `mlops` only) + a scoped **kubelet** volume-stats scrape (Layer 4 **PVC-fill**); three new scrape jobs (→ eight); extended `k8s/validate.py` (password from Secret, no credential in the DSN). Run-level replica/readiness/restart/CPU/memory signals already collectable from PR 2 (KSM + cAdvisor). Secret hygiene green. [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof is PR 6). |
 | **PR 5 — Dashboards** ✅ *(manifests + dashboard JSON; not deployed)* | Grafana (internal-only) with three purpose-built, version-controlled dashboards over the four-layer signal set | **Delivered:** [`k8s/monitoring/base/grafana/`](../k8s/monitoring/base/grafana/) — a hardened, internal-only Grafana (non-root, drop ALL, read-only root FS, no API token, ClusterIP) with a **file-provisioned** Prometheus datasource and dashboard provider, and three hand-authored dashboards — **EKS / Platform Health**, **MLOps Pipeline Operations**, **MLflow Platform Health** — each panel mapped to a [§ 3](#3-signal-catalogue--per-layer) operational question. Model quality stays in MLflow (explicit help panel). Stable PromQL, bounded windows; no secrets / account IDs on screen; admin password out-of-band. Extended `k8s/validate.py` + `kubeconform` + JSON parse-validation green. [ADR-032](decisions/ADR-032-grafana-dashboards.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof — panels populating — is the runtime-evidence PR). |
-| **PR 6 — Alerting** | Prometheus alert rules encoding **exactly** the [§ 6](#6-operational-objectives-slo-style-not-production-slos) objectives | The defined alert set exists and no others (no arbitrary alerts); rules unit-testable (e.g. `promtool test rules`) |
+| **PR 6 — Alerting** ✅ *(rules + unit tests; not deployed / not fired live)* | Prometheus alert rules encoding **exactly** the [§ 6](#6-operational-objectives-slo-style-not-production-slos) objectives + the § 3 catalogue | **Delivered:** eight high-signal alerts in [`k8s/monitoring/base/prometheus/alerts.yml`](../k8s/monitoring/base/prometheus/alerts.yml) — `PipelineJobFailed` (terminal Failed condition, not "not Running" — batch-correct), `PipelineJobOOMKilled`, `MLflowDown`, `MLflowMemoryHigh`, `PostgresDown`, `PostgresPVCAlmostFull`, `PostgresMemoryHigh`, `KubePodCrashLooping`. Each carries severity + human summary/description + a `runbook_url`; thresholds traced to measured limits / § 6 (no invented numbers). `promtool check rules` + `promtool test rules` (Pending→Firing→Resolved, incl. a batch-semantics negative) wired into CI; `k8s/validate.py` M11 pins the exact set (no arbitrary alerts). No Alertmanager routing (deferred). [ADR-033](decisions/ADR-033-alerting.md), [Alerting](alerting.md). **No deploy claim** (live firing is PR 7). |
 | **PR 7 — Runtime evidence & operations** | Provision → run pipeline → prove signals + dashboards populate → tear down; observability operations runbook | The [runtime-evidence expectations](#runtime-evidence-what-later-sprint-8-prs-must-prove) are all met and recorded in a redacted proof doc matching the Sprint 6/7 conventions; environment destroyed & verified clean (ADR-020) |
 
 > **Resequencing note.** ADR-028 originally pencilled **PR 3 = Grafana dashboards**.
@@ -340,7 +341,7 @@ work stays static/dry-run in CI per ADR-012 until the runtime-evidence PR).
 
 ## Runtime evidence: what later Sprint 8 PRs must prove
 
-The runtime-evidence PR (PR 6) is the **proof gate**. It must demonstrate, on a
+The runtime-evidence PR (PR 7) is the **proof gate**. It must demonstrate, on a
 live cluster and recorded with the [Sprint 7 evidence](proof/sprint-07-runtime-evidence.md)
 conventions (redacted, honest about failures, torn down and verified clean):
 

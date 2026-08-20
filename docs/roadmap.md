@@ -309,9 +309,16 @@ infrastructure defined as code.
   — **EKS/Platform Health**, **MLOps Pipeline Operations**, **MLflow Platform Health** —
   each panel mapped to an operational question, provisioned from files into a hardened,
   internal-only Grafana, with model quality kept in MLflow
-  ([ADR-032](decisions/ADR-032-grafana-dashboards.md)). **Manifests + instrumentation +
-  dashboards only — not deployed/runtime-proven yet** (no live cluster; runtime
-  evidence is PR 7); **alerts** (PR 6) remain.
+  ([ADR-032](decisions/ADR-032-grafana-dashboards.md)). **Alerting is now added**
+  (Sprint 8, PR 6): eight high-signal Prometheus alert rules encoding the § 6
+  objectives — pipeline failure (batch-correct: the terminal Failed condition, never
+  "not Running"), OOMKill, MLflow/Postgres unavailable, PVC-fill, memory headroom, and
+  crash-looping — each with a severity, human summary/description, documented
+  threshold and a runbook, unit-tested with `promtool` in CI
+  ([ADR-033](decisions/ADR-033-alerting.md)). **Manifests + instrumentation +
+  dashboards + alert rules only — not deployed/runtime-proven yet** (no live cluster;
+  live firing + the failure-injection campaign are the runtime-evidence PR 7);
+  Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the

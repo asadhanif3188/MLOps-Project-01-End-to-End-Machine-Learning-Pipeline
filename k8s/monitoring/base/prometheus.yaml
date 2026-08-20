@@ -2,9 +2,11 @@
 # the four scrape targets defined in prometheus-config.yaml, stores samples in a
 # short-retention LOCAL time-series database, and exposes PromQL on :9090. It is
 # internal-only (ClusterIP; reached via `kubectl port-forward`, never a public
-# endpoint — the same posture as the MLflow UI, ADR-026 § Security). No Grafana,
-# no alert rules, no Alertmanager, no remote/long-term store — those are later
-# Sprint 8 PRs (ADR-028 §§ 5–6).
+# endpoint — the same posture as the MLflow UI, ADR-026 § Security). It now also
+# loads alert RULES (Sprint 8, PR 6; ADR-033) from the prometheus-alerts ConfigMap
+# mounted read-only at /etc/prometheus/rules — firing alerts are exposed on
+# /alerts and /api/v1/alerts. There is still no Alertmanager (routing to a real
+# notifier is deferred, ADR-028 § 6) and no remote/long-term store (ADR-028 § 5).
 #
 # STORAGE — ephemeral by design (requirements 9–11). The TSDB lives on an
 # `emptyDir`, not a PVC:
@@ -198,6 +200,13 @@ spec:
             - name: config
               mountPath: /etc/prometheus
               readOnly: true
+            # The alert rules (Sprint 8, PR 6; ADR-033), mounted read-only where
+            # prometheus.yml's rule_files points (/etc/prometheus/rules/alerts.yml).
+            # A separate ConfigMap so the rules file stays promtool-testable on its
+            # own and a rule change need not churn the scrape config.
+            - name: alerts
+              mountPath: /etc/prometheus/rules
+              readOnly: true
             # The ephemeral TSDB (see the storage note in the header).
             - name: tsdb
               mountPath: /prometheus
@@ -205,6 +214,9 @@ spec:
         - name: config
           configMap:
             name: prometheus-config
+        - name: alerts
+          configMap:
+            name: prometheus-alerts
         - name: tsdb
           emptyDir:
             # Bound the node ephemeral-storage the TSDB can consume; pairs with the
