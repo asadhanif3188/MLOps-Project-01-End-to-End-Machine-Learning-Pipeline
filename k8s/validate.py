@@ -323,6 +323,22 @@ def validate() -> int:
         f"restartPolicy={restart!r} (a Job must not use Always)",
     )
 
+    # The observability queryability contract (Sprint 8, PR 2 — ADR-028 § 3 /
+    # ADR-029). The pipeline pod exits in under a minute, but kube-state-metrics
+    # reflects the persistent Job/Pod OBJECT — so the last-run success/duration/OOM
+    # series stay scrapable ONLY while the finished Job lingers. A positive
+    # ttlSecondsAfterFinished guarantees the finished Job outlives many scrape
+    # intervals before it is auto-reaped. This is a static assertion that the
+    # manifest declares the contract, not that a scrape happened.
+    ttl = job.get("spec", {}).get("ttlSecondsAfterFinished")
+    r.check(
+        sec,
+        "pipeline Job sets a positive ttlSecondsAfterFinished (queryability contract)",
+        isinstance(ttl, int) and ttl > 0,
+        f"ttlSecondsAfterFinished={ttl!r} (must be a positive integer so the "
+        f"finished Job outlives a Prometheus scrape — ADR-028 § 3)",
+    )
+
     # ------------------------------------------------------------------ #
     # Section 3 — Workload security controls (PRs 1-5 contract).
     # ------------------------------------------------------------------ #
@@ -1008,9 +1024,349 @@ def validate() -> int:
     return r.render()
 
 
+# ------------------------------------------------------------------------- #
+# Monitoring stack validation (Sprint 8, PR 2 — ADR-028 / ADR-029).
+# ------------------------------------------------------------------------- #
+# The observability foundation (k8s/monitoring) is a SEPARATE kustomize root with
+# its own namespace and, deliberately, a DIFFERENT security contract from the
+# mlops workload: Prometheus and kube-state-metrics genuinely need the Kubernetes
+# API (so their tokens ARE mounted), and node-exporter needs read-only hostPath
+# access to the node's /proc,/sys,/ (which forces the monitoring namespace to
+# `privileged` Pod Security — the single documented exception, ADR-029). The
+# fleet-wide contract in validate() (automount off everywhere, no hostPath,
+# restricted PSA) would wrongly fail this stack, so it gets its OWN pass with the
+# monitoring-appropriate invariants. STILL static — it proves the manifests
+# declare the contract, not that the stack runs (runtime evidence is PR 6).
+MONITORING_DIR = "k8s/monitoring/base"
+
+# The one workload permitted the hostPath exception: node-exporter must read the
+# node's kernel interfaces, which no other component may. Every hostPath it uses
+# must still be read-only, and it stays otherwise fully hardened (ADR-029).
+HOSTPATH_EXEMPT_WORKLOAD = "node-exporter"
+
+# The only verbs a monitoring RBAC rule may use — these components OBSERVE the API,
+# they never mutate it. Anything else (create/update/patch/delete/*, escalate,
+# bind, impersonate) is a least-privilege violation.
+READ_ONLY_VERBS = {"get", "list", "watch"}
+
+# The namespace the monitoring stack is designed around.
+MONITORING_NAMESPACE = "monitoring"
+
+
+def _mounts_readonly(container: dict, vol_names: set[str]) -> bool:
+    """True if every mount of a named volume in this container sets readOnly."""
+    return all(
+        m.get("readOnly") is True
+        for m in volume_mounts_of(container)
+        if m.get("name") in vol_names
+    )
+
+
+def validate_monitoring(path: str = MONITORING_DIR) -> int:
+    """Validate the monitoring stack render against its own security contract."""
+    r = Report()
+    PSA = "pod-security.kubernetes.io"
+
+    # -- M1. Render -- #
+    sec = "M1. Monitoring render"
+    rendered = render(path)
+    r.check(sec, f"kustomize build {path}", bool(rendered.strip()))
+    docs = load_docs(rendered)
+    by_kind: dict[str, list[dict]] = {}
+    for d in docs:
+        by_kind.setdefault(d.get("kind", "?"), []).append(d)
+
+    # -- M2. Namespace & the documented Pod Security exception -- #
+    sec = "M2. Namespace & Pod Security exception"
+    ns = next(
+        (
+            n
+            for n in by_kind.get("Namespace", [])
+            if n.get("metadata", {}).get("name") == MONITORING_NAMESPACE
+        ),
+        None,
+    )
+    r.check(
+        sec,
+        f"Namespace/{MONITORING_NAMESPACE} present",
+        ns is not None,
+        f"expected a Namespace/{MONITORING_NAMESPACE}",
+    )
+    ns_labels = ((ns or {}).get("metadata", {}) or {}).get("labels", {}) or {}
+    r.check(
+        sec,
+        f"Namespace/{MONITORING_NAMESPACE} declares a PSA enforce level",
+        bool(ns_labels.get(f"{PSA}/enforce")),
+        f"{PSA}/enforce={ns_labels.get(f'{PSA}/enforce')!r} "
+        f"(the node-exporter hostPath exception, ADR-029)",
+    )
+    # Every PSA level present must pin its version (deterministic ruleset).
+    for level in ("enforce", "warn", "audit"):
+        if not ns_labels.get(f"{PSA}/{level}"):
+            continue
+        ver = ns_labels.get(f"{PSA}/{level}-version")
+        r.check(
+            sec,
+            f"Namespace/{MONITORING_NAMESPACE} pins the {level} policy version",
+            bool(ver) and ver != "latest",
+            f"{PSA}/{level}-version={ver!r} (must be pinned, not 'latest')",
+        )
+    # warn/audit should still catch regressions beyond the node-exporter exception.
+    r.check(
+        sec,
+        f"Namespace/{MONITORING_NAMESPACE} warns or audits (regression backstop)",
+        bool(ns_labels.get(f"{PSA}/warn")) or bool(ns_labels.get(f"{PSA}/audit")),
+        "neither warn nor audit is set — a regression beyond node-exporter's "
+        "hostPath would pass admission unnoticed",
+    )
+
+    # Namespaced objects pinned to `monitoring` (cluster-scoped kinds exempt).
+    cluster_scoped = CLUSTER_SCOPED_KINDS | {"ClusterRole", "ClusterRoleBinding"}
+    for d in docs:
+        kind = d.get("kind", "?")
+        if kind in cluster_scoped:
+            continue
+        name = d.get("metadata", {}).get("name", "?")
+        nsval = d.get("metadata", {}).get("namespace")
+        r.check(
+            sec,
+            f"{kind}/{name} pinned to {MONITORING_NAMESPACE}",
+            nsval == MONITORING_NAMESPACE,
+            f"namespace={nsval!r}, expected {MONITORING_NAMESPACE!r}",
+        )
+
+    workloads = workloads_in(by_kind)
+    r.check(
+        sec,
+        "at least one monitoring workload rendered",
+        bool(workloads),
+        "no Deployment/DaemonSet/StatefulSet found in the monitoring render",
+    )
+
+    # -- M3. Required fields (pinned images, resources) -- #
+    sec = "M3. Required fields (images, resources)"
+    for kind, name, wl in workloads:
+        for role, c in all_containers_of(wl):
+            cname = c.get("name", "?")
+            image = c.get("image", "")
+            has_ref = bool(image) and (":" in image or "@" in image)
+            tag = (
+                image.rsplit(":", 1)[-1] if ":" in image and "@" not in image else image
+            )
+            pinned = has_ref and tag != "latest"
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} explicit pinned image",
+                pinned,
+                f"image={image!r} (needs an explicit non-latest tag/digest)",
+            )
+            reqs = c.get("resources", {}).get("requests", {}) or {}
+            lims = c.get("resources", {}).get("limits", {}) or {}
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} CPU/memory requests+limits",
+                bool(reqs.get("cpu"))
+                and bool(reqs.get("memory"))
+                and bool(lims.get("cpu"))
+                and bool(lims.get("memory")),
+                f"requests={reqs}, limits={lims}",
+            )
+
+    # -- M4. Hardening + the node-exporter hostPath exception -- #
+    sec = "M4. Hardening & the hostPath exception"
+    for kind, name, wl in workloads:
+        wpod = pod_spec_of(wl)
+        wsc = wpod.get("securityContext", {}) or {}
+        r.check(
+            sec,
+            f"{kind}/{name}: pod runAsNonRoot true",
+            wsc.get("runAsNonRoot") is True,
+            f"runAsNonRoot={wsc.get('runAsNonRoot')!r}",
+        )
+        wuid = wsc.get("runAsUser")
+        r.check(
+            sec,
+            f"{kind}/{name}: pod runAsUser is a non-root uid",
+            isinstance(wuid, int) and wuid != 0,
+            f"runAsUser={wuid!r} (must be an explicit numeric uid != 0)",
+        )
+        r.check(
+            sec,
+            f"{kind}/{name}: pod seccompProfile RuntimeDefault",
+            (wsc.get("seccompProfile", {}) or {}).get("type") == "RuntimeDefault",
+            f"seccompProfile.type="
+            f"{(wsc.get('seccompProfile', {}) or {}).get('type')!r}",
+        )
+        # No host-namespace sharing — node-exporter deliberately avoids it too, so
+        # the exception stays scoped to read-only hostPath alone.
+        for host_ns in ("hostNetwork", "hostPID", "hostIPC"):
+            r.check(
+                sec,
+                f"{kind}/{name}: {host_ns} not enabled",
+                wpod.get(host_ns) in (None, False),
+                f"{host_ns}={wpod.get(host_ns)!r} (host-namespace sharing forbidden)",
+            )
+        # Every container hardened.
+        for role, c in all_containers_of(wl):
+            cname = c.get("name", "?")
+            csc = c.get("securityContext", {}) or {}
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} allowPrivilegeEscalation false",
+                csc.get("allowPrivilegeEscalation") is False,
+                f"allowPrivilegeEscalation={csc.get('allowPrivilegeEscalation')!r}",
+            )
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} not privileged",
+                csc.get("privileged") is not True,
+                f"privileged={csc.get('privileged')!r}",
+            )
+            drops = {
+                str(x).upper()
+                for x in (csc.get("capabilities", {}) or {}).get("drop", [])
+            }
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} capabilities drop ALL",
+                "ALL" in drops,
+                f"capabilities.drop={sorted(drops)}",
+            )
+        # hostPath: permitted ONLY on node-exporter, and only read-only.
+        hostpath_vols = {v.get("name") for v in volumes_of(wl) if "hostPath" in v}
+        if name == HOSTPATH_EXEMPT_WORKLOAD:
+            if hostpath_vols:
+                ro_ok = all(
+                    _mounts_readonly(c, hostpath_vols) for _, c in all_containers_of(wl)
+                )
+                r.check(
+                    sec,
+                    f"{kind}/{name}: every hostPath mount is read-only (the exception)",
+                    ro_ok,
+                    "node-exporter's hostPath mounts must all set readOnly: true",
+                )
+        else:
+            r.check(
+                sec,
+                f"{kind}/{name}: no hostPath volumes",
+                not hostpath_vols,
+                f"hostPath is permitted ONLY on {HOSTPATH_EXEMPT_WORKLOAD}; "
+                f"found {sorted(hostpath_vols)}",
+            )
+
+    # -- M5. RBAC least privilege (read-only) -- #
+    sec = "M5. RBAC least privilege"
+    roles = by_kind.get("ClusterRole", []) + by_kind.get("Role", [])
+    r.check(sec, "at least one monitoring RBAC role rendered", bool(roles))
+    for role in roles:
+        rname = role.get("metadata", {}).get("name", "?")
+        offending: list[list[str]] = []
+        for rule in role.get("rules", []) or []:
+            verbs = {str(v).lower() for v in rule.get("verbs", [])}
+            extra = verbs - READ_ONLY_VERBS
+            if extra:
+                offending.append(sorted(extra))
+        r.check(
+            sec,
+            f"{role.get('kind')}/{rname}: read-only verbs only",
+            not offending,
+            f"non-read verbs present: {offending} "
+            f"(only {sorted(READ_ONLY_VERBS)} permitted for monitoring)",
+        )
+    # Every ClusterRoleBinding binds only ServiceAccounts in the monitoring ns
+    # (never a user/group, never a cross-namespace SA).
+    for crb in by_kind.get("ClusterRoleBinding", []):
+        cname = crb.get("metadata", {}).get("name", "?")
+        subs = crb.get("subjects", []) or []
+        ok = bool(subs) and all(
+            s.get("kind") == "ServiceAccount"
+            and s.get("namespace") == MONITORING_NAMESPACE
+            for s in subs
+        )
+        r.check(
+            sec,
+            f"ClusterRoleBinding/{cname}: binds only monitoring ServiceAccounts",
+            ok,
+            f"subjects must be ServiceAccounts in {MONITORING_NAMESPACE!r}; got {subs}",
+        )
+
+    # -- M6. Token mounted IFF the SA has API access -- #
+    sec = "M6. ServiceAccount token discipline"
+    api_sas = {
+        s.get("name")
+        for crb in by_kind.get("ClusterRoleBinding", [])
+        for s in (crb.get("subjects", []) or [])
+        if s.get("kind") == "ServiceAccount"
+    }
+    for sa in by_kind.get("ServiceAccount", []):
+        sname = sa.get("metadata", {}).get("name", "?")
+        automount = sa.get("automountServiceAccountToken")
+        if sname in api_sas:
+            r.check(
+                sec,
+                f"ServiceAccount/{sname}: token mounted (genuinely needs the API)",
+                automount is True,
+                f"automountServiceAccountToken={automount!r} — {sname} is bound to a "
+                f"ClusterRole, so it must mount its token (the documented exception)",
+            )
+        else:
+            r.check(
+                sec,
+                f"ServiceAccount/{sname}: token NOT mounted (no API access)",
+                automount is False,
+                f"automountServiceAccountToken={automount!r} — {sname} has no RBAC, "
+                f"so mounting a token would be an unused, exfiltratable credential",
+            )
+
+    # -- M7. Internal-only exposure -- #
+    sec = "M7. Internal-only exposure"
+    for svc in by_kind.get("Service", []):
+        sname = svc.get("metadata", {}).get("name", "?")
+        stype = svc.get("spec", {}).get("type", "ClusterIP")
+        r.check(
+            sec,
+            f"Service/{sname} is ClusterIP (internal-only)",
+            stype == "ClusterIP",
+            f"type={stype!r} — Prometheus/exporters must never be exposed externally",
+        )
+
+    # -- M8. Prometheus scrape config wiring -- #
+    sec = "M8. Prometheus scrape config"
+    prom_cm = next(
+        (
+            cm
+            for cm in by_kind.get("ConfigMap", [])
+            if cm.get("metadata", {}).get("name") == "prometheus-config"
+        ),
+        None,
+    )
+    r.check(sec, "prometheus-config ConfigMap present", prom_cm is not None)
+    if prom_cm is not None:
+        cfg = (prom_cm.get("data", {}) or {}).get("prometheus.yml", "")
+        for needle in ("kube-state-metrics", "node-exporter", "cadvisor"):
+            r.check(
+                sec,
+                f"scrape config covers {needle}",
+                needle in cfg,
+                f"prometheus.yml has no scrape job referencing {needle}",
+            )
+
+    return r.render()
+
+
 if __name__ == "__main__":
     print("Kubernetes static validation (k8s/validate.py)")
     code = validate()
+
+    # Also validate the monitoring stack when present (Sprint 8, PR 2). It is a
+    # separate kustomize root with its own security contract, so it gets its own
+    # pass; its failures fail the whole run.
+    mon_code = 0
+    if (REPO_ROOT / MONITORING_DIR).exists():
+        print("\n\nMonitoring stack static validation (k8s/monitoring)")
+        mon_code = validate_monitoring()
+
+    code = code or mon_code
     print(
         "\nRESULT:",
         "PASS - manifests are well-formed, hardened, and complete (STATIC checks only)."

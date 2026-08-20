@@ -1,0 +1,236 @@
+# Prometheus — the metrics server (Sprint 8, PR 2): scrape + local TSDB. It pulls
+# the four scrape targets defined in prometheus-config.yaml, stores samples in a
+# short-retention LOCAL time-series database, and exposes PromQL on :9090. It is
+# internal-only (ClusterIP; reached via `kubectl port-forward`, never a public
+# endpoint — the same posture as the MLflow UI, ADR-026 § Security). No Grafana,
+# no alert rules, no Alertmanager, no remote/long-term store — those are later
+# Sprint 8 PRs (ADR-028 §§ 5–6).
+#
+# STORAGE — ephemeral by design (requirements 9–11). The TSDB lives on an
+# `emptyDir`, not a PVC:
+#   * It avoids a standing EBS cost and a teardown step on the ephemeral cloud
+#     cluster (ADR-020), preserving cost discipline.
+#   * Retention is short (7d) and additionally size-capped, so disk use is bounded.
+#   * The trade-off (ADR-028 § 5): metrics are lost on pod restart or teardown.
+#     That is acceptable here because runtime EVIDENCE (PR 6) is captured while the
+#     stack is live; a PVC is the documented option where survive-a-restart
+#     matters. This choice is stated, not hidden.
+#
+# LEAST PRIVILEGE — Prometheus genuinely needs the Kubernetes API (service
+# discovery of scrape targets + the kubelet cAdvisor proxy), so its token IS
+# mounted (the documented exception, ADR-028 § 4). Its ClusterRole is strictly
+# READ-ONLY (get/list/watch) and scoped to the discovery/scrape surface only.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-server
+    app.kubernetes.io/managed-by: kustomize
+# Prometheus authenticates to the API server (SD) and to the kubelet via the API
+# proxy (cAdvisor), so it needs its token — the deliberate, scoped exception. The
+# token grants only the read-only permissions of the ClusterRole below.
+automountServiceAccountToken: true
+---
+# Read-only ClusterRole for service discovery and the cAdvisor scrape. Every rule
+# is get/list/watch ONLY — Prometheus never writes to the API. Cluster-scoped
+# because it discovers nodes and scrapes cross-namespace targets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-server
+    app.kubernetes.io/managed-by: kustomize
+rules:
+  # Service discovery: enumerate nodes/services/endpoints/pods to find targets.
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  # The kubelet proxy subresource the cAdvisor scrape reads through the API server
+  # (`GET /api/v1/nodes/<node>/proxy/metrics/cadvisor`). A proxy subresource only
+  # supports `get`, and this is the ONLY extra grant the scrape needs — the earlier
+  # `nodes/metrics` resource and the `nonResourceURLs` rule were unused (nothing
+  # scrapes the kubelet `/metrics` subresource or a raw API-server path), so they
+  # are dropped to keep the surface matched to what is actually exercised.
+  - apiGroups: [""]
+    resources:
+      - nodes/proxy
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-server
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-server
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Single replica with a local TSDB. HA Prometheus (a second replica + dedup, or
+  # Thanos) is production capacity this ephemeral validation cluster does not need
+  # (ADR-020); it is deliberate future work, not a hidden gap.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  # Recreate, not RollingUpdate: a single replica bound to one emptyDir TSDB —
+  # recreating avoids two Prometheis briefly contending. (The data is ephemeral
+  # regardless, so this only matters for a clean restart.)
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: metrics-server
+    spec:
+      serviceAccountName: prometheus
+      # Prometheus needs its API token (see the ServiceAccount) — the deliberate,
+      # read-only-scoped exception to the fleet-wide automount-off default.
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        # The Prometheus image runs as nobody (65534); state it numerically so
+        # runAsNonRoot admits without name resolution.
+        runAsUser: 65534
+        runAsGroup: 65534
+        # Own the emptyDir TSDB volume as gid 65534 so the non-root process can
+        # write it (an emptyDir is created root-owned).
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prometheus
+          # Pinned, non-latest LTS line for a stable scrape-config contract.
+          image: quay.io/prometheus/prometheus:v2.53.2
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # Short LOCAL retention (ADR-028 § 5 target 7–15d) — sized for an
+            # ephemeral validation cluster, NOT long-term analysis.
+            - --storage.tsdb.retention.time=7d
+            # Hard size cap so the emptyDir TSDB can never grow unbounded and
+            # pressure the node — belt-and-braces with the time retention.
+            - --storage.tsdb.retention.size=1GB
+            - --web.listen-address=:9090
+            # Enable /-/reload so config changes can be applied without deleting
+            # the pod (and losing the ephemeral TSDB). This also exposes the
+            # unauthenticated POST /-/reload and /-/quit endpoints — acceptable
+            # here because the Service is ClusterIP-only (no public exposure) on a
+            # single-operator cluster; on a shared cluster a NetworkPolicy scoping
+            # who can reach :9090 would be the right additional control (deferred,
+            # ADR-029 § Consequences).
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # Prometheus writes ONLY to its TSDB volume (/prometheus), so the root
+            # filesystem is locked read-only — exceeding the pipeline Job's
+            # baseline, which must keep it writable for `dvc repro` (ADR-010).
+            readOnlyRootFilesystem: true
+          # Conservative STARTING resources for a handful of targets and 7d
+          # retention. Requests/limits are mandatory (requirement 5); the numbers
+          # are tightened from MEASURED usage in PR 6 (ADR-028 § 5) — this PR
+          # deploys nothing, so nothing is measured yet.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Prometheus's own health/readiness endpoints.
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            # The scrape config, mounted read-only from the ConfigMap.
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            # The ephemeral TSDB (see the storage note in the header).
+            - name: tsdb
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: tsdb
+          emptyDir:
+            # Bound the node ephemeral-storage the TSDB can consume; pairs with the
+            # --storage.tsdb.retention.size cap above.
+            sizeLimit: 2Gi
+---
+# Service — the internal PromQL/UI endpoint (`http://prometheus.monitoring:9090`).
+# ClusterIP: Prometheus is INTERNAL to the cluster and reached via
+# `kubectl port-forward` for ad-hoc queries (see docs/monitoring-operations.md).
+# Deliberately NOT a NodePort/LoadBalancer — an unauthenticated Prometheus must
+# never be exposed publicly (same rule as the MLflow Service, ADR-026).
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-server
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

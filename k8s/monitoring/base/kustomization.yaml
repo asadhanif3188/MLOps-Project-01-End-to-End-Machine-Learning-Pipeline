@@ -1,0 +1,33 @@
+# Monitoring base Kustomization — the environment-independent metrics foundation
+# (Sprint 8, PR 2). Kept as a SEPARATE kustomize root from k8s/base (the mlops
+# workload) so the observability stack has its own lifecycle and namespace, per
+# ADR-028 § 4. Render and inspect with:  kustomize build k8s/monitoring/base
+#
+# Everything here is env-independent: the images come from public registries and
+# the TSDB is an emptyDir, so the base is identical on Docker Desktop and EKS. The
+# overlays (k8s/monitoring/overlays/{local,aws}) exist for future per-environment
+# deltas (e.g. a gp3 PVC or remote_write on AWS) and today simply include this
+# base — the same base/overlay split the mlops workload uses.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Pin every namespaced resource to the monitoring namespace. The Namespace object
+# itself is created by namespace.yaml (the namespace transformer does not nest a
+# Namespace inside itself). Cluster-scoped RBAC (ClusterRole/ClusterRoleBinding)
+# is unaffected by this — it has no namespace.
+namespace: monitoring
+
+resources:
+  - namespace.yaml
+  - kube-state-metrics.yaml
+  - node-exporter.yaml
+  - prometheus-config.yaml
+  - prometheus.yaml
+
+# Common identifying metadata. includeSelectors is false so label transforms never
+# rewrite an immutable selector (same rationale as k8s/base).
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: mlops-pipeline
+      app.kubernetes.io/managed-by: kustomize
