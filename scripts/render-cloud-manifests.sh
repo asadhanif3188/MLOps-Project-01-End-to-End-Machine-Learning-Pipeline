@@ -42,7 +42,17 @@
 # Environment overrides (rarely needed; defaults match the committed image tags):
 #   IMAGE_TAG          workload image tag         (default: 1.6.0)
 #   MLFLOW_IMAGE_TAG   MLflow server image tag    (default: 0.1.0)
+#   IMAGE_DIGEST       pin the workload image BY DIGEST (sha256:…) instead of by tag
+#   MLFLOW_IMAGE_DIGEST  pin the MLflow image BY DIGEST (sha256:…) instead of by tag
 #   TF_DIR             Terraform root directory   (default: <repo>/terraform)
+#
+# Digest pinning (PREFERRED, opt-in — Sprint 8, PR 9 / ADR-036): set IMAGE_DIGEST to
+# the sha256 that scripts/release-image.sh captured at push time and the overlay
+# renders `newName@sha256:…` (Kustomize `digest:`), so the deploy is bound to the
+# exact immutable artifact rather than a tag. It is OPT-IN so the default flow stays
+# simple (the ECR tag is already IMMUTABLE, ADR-021, so tag-deploy is reproducible);
+# whether you pin by tag or by digest, scripts/verify-deployed-digest.sh confirms the
+# running imageID matches — the verification, not the syntax, is the guarantee.
 #
 # Requirements: bash, terraform (with applied state), and either `kustomize` or a
 # `kubectl` new enough to provide `kubectl kustomize`. No AWS calls are made by this
@@ -133,10 +143,28 @@ subst() {  # subst FILE SED_EXPR
 #    to the account/region in the committed placeholder).
 subst "${OVERLAY}/kustomization.yaml" "s|newName: .*/mlops-pipeline$|newName: ${ECR_URL}|"
 subst "${OVERLAY}/kustomization.yaml" "s|newName: .*/mlflow-server$|newName: ${MLFLOW_ECR_URL}|"
-# Retag: the committed literals equal the script defaults, so this is a no-op unless
-# IMAGE_TAG / MLFLOW_IMAGE_TAG were overridden in the environment.
-subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"1.6.0\"|newTag: \"${IMAGE_TAG}\"|"
-subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"0.1.0\"|newTag: \"${MLFLOW_IMAGE_TAG}\"|"
+
+# Pin each image either BY DIGEST (if the matching *_DIGEST env is set — preferred,
+# immutable-by-construction) or BY TAG (the default; the committed literals equal
+# the script defaults, so retag is a no-op unless IMAGE_TAG/MLFLOW_IMAGE_TAG were
+# overridden). Digest pinning replaces the committed `newTag: "<literal>"` line with
+# `digest: "sha256:…"`, which Kustomize renders as `newName@sha256:…`.
+#   pin_image  COMMITTED_TAG_LITERAL  TAG_OVERRIDE  DIGEST_OVERRIDE
+pin_image() {
+  local literal="$1" tag="$2" digest="$3"
+  if [ -n "${digest}" ]; then
+    case "${digest}" in
+      sha256:[0-9a-f]*) : ;;
+      *) die "invalid digest '${digest}' — expected sha256:<hex> (from scripts/release-image.sh)" ;;
+    esac
+    # `newTag: "<literal>"` (with its surrounding indentation) becomes `digest: "…"`.
+    subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"${literal}\"|digest: \"${digest}\"|"
+  else
+    subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"${literal}\"|newTag: \"${tag}\"|"
+  fi
+}
+pin_image "1.6.0" "${IMAGE_TAG}"        "${IMAGE_DIGEST:-}"
+pin_image "0.1.0" "${MLFLOW_IMAGE_TAG}" "${MLFLOW_IMAGE_DIGEST:-}"
 
 # 2. Runtime dataset source (job-cloud.yaml) — the whole DATASET_S3_URI value.
 subst "${OVERLAY}/job-cloud.yaml" "s|value: \"s3://[^\"]*datasets[^\"]*\"|value: \"${DATASET_S3_URI}\"|"

@@ -75,6 +75,18 @@ Contributors and users should follow these practices:
   the registry-side layer. Design of record:
   [ADR-035](docs/decisions/ADR-035-container-image-scanning.md) /
   [docs/container-image-scanning.md](docs/container-image-scanning.md).
+- **SBOM & image provenance.** Every build emits a **CycloneDX SBOM** of the image
+  (Trivy, in the `docker` CI job) and CI **asserts the git→image binding** — the built
+  image's `org.opencontainers.image.revision` label must equal the commit SHA. At
+  release, [`scripts/release-image.sh`](scripts/release-image.sh) captures the immutable
+  ECR **sha256 digest** (cross-checked against `aws ecr describe-images`) and records the
+  **git commit → image tag → digest** chain; the deploy can be **pinned by digest**
+  (opt-in) and [`scripts/verify-deployed-digest.sh`](scripts/verify-deployed-digest.sh)
+  confirms the **running** workload matches. **Image signing (cosign)** is available as
+  an opt-in keyless step, not a mandatory gate (rationale documented). The SBOM is a CI
+  artifact, never committed. Design of record:
+  [ADR-036](docs/decisions/ADR-036-sbom-and-image-provenance.md) /
+  [docs/supply-chain-provenance.md](docs/supply-chain-provenance.md).
 - **Least privilege.** Use scoped tokens for the DagsHub/MLflow and DVC remotes
   rather than broad credentials.
 - **Validate data sources.** Treat external datasets and artifacts as untrusted

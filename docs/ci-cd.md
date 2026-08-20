@@ -70,6 +70,9 @@ feedback on the Kubernetes manifests and the Terraform IaC respectively.
 | 12 | **Install Trivy** | Pinned (`TRIVY_VERSION`, shared with the IaC scan), checksum-verified static binary — the same supply-chain pattern as kustomize/kubeconform/promtool. |
 | 13 | **Image vulnerability scan** | `trivy image` over **both** built images (OS + Python packages), never pulled from a registry so the job stays **credential-free/AWS-independent**. Two passes per image: a **report** (all HIGH/CRITICAL, fixable or not) and a **gate** (`--ignore-unfixed --exit-code 1`) that **fails only on *fixable* HIGH/CRITICAL**. Non-fixable findings are reported, not muted. Justified, time-boxed exceptions live in [`.trivyignore.yaml`](../.trivyignore.yaml). Design of record: [ADR-035](decisions/ADR-035-container-image-scanning.md), [container-image-scanning.md](container-image-scanning.md). |
 | 14 | **Upload scan reports** | Publishes the table + JSON as the `trivy-image-reports` artifact with `always()`, so a *failing* run has the full findings one click away. |
+| 15 | **Verify provenance labels** | Asserts the built image's OCI labels — `org.opencontainers.image.revision` **==** the commit SHA and `.version` **==** the build version — proving the **git→image** binding works before any operator relies on it. Credential-free; inspects the local image only. |
+| 16 | **Generate SBOM** | `trivy image --format cyclonedx` over **both** built images (the same pinned Trivy), producing a **CycloneDX** SBOM from the actual image + its image ID + a provenance record. An empty SBOM fails the step. Design of record: [ADR-036](decisions/ADR-036-sbom-and-image-provenance.md), [supply-chain-provenance.md](supply-chain-provenance.md). |
+| 17 | **Upload SBOM + provenance** | Publishes the SBOMs + provenance record as the `sbom-and-provenance` artifact (`always()`, 30-day retention). The generated SBOM is **never committed** to git. |
 
 > Only the **runtime** target is built in CI (it is the shippable artifact and its
 > Dockerfile smoke-test already exercises the environment at build time). The
@@ -295,12 +298,17 @@ project roadmap ([roadmap.md](roadmap.md)):
 1. **Publish the image (v3).** On a tagged release, push the validated image to a
    registry (e.g. GHCR) with immutable, provenance-stamped tags. Requires adding
    `packages: write` permission and registry login — deliberately absent today.
-2. **Supply-chain hardening (v3).** *Vulnerability scanning delivered* — the `docker`
-   job runs Trivy over both shipped images on every push/PR, failing on **fixable**
-   HIGH/CRITICAL and reporting the rest ([ADR-035](decisions/ADR-035-container-image-scanning.md),
-   [container-image-scanning.md](container-image-scanning.md)). Still to come: **SBOM
-   generation** (`trivy image --format cyclonedx/spdx`) and **image signing** (cosign)
-   as release gates.
+2. **Supply-chain hardening (v3).** *Vulnerability scanning + SBOM + provenance
+   delivered.* The `docker` job runs Trivy over both shipped images on every push/PR,
+   failing on **fixable** HIGH/CRITICAL and reporting the rest
+   ([ADR-035](decisions/ADR-035-container-image-scanning.md),
+   [container-image-scanning.md](container-image-scanning.md)); it also emits a
+   **CycloneDX SBOM** and asserts the **git→image** provenance label binding, and the
+   operator release captures the immutable **git→tag→digest** chain with a runtime
+   digest check ([ADR-036](decisions/ADR-036-sbom-and-image-provenance.md),
+   [supply-chain-provenance.md](supply-chain-provenance.md)). **Image signing** (cosign)
+   ships as an **opt-in** keyless step; promoting it to an *enforced* release gate (with
+   an admission-time verifier) is the remaining v3 item.
 3. **Automated pipeline validation.** *Delivered.* CI validates the pipeline
    **definition** offline — `dvc dag` + local `dvc status` plus the `contract`
    tests (Job 1, stages 6–7) — **and** now runs a real **execution** check: a
@@ -339,6 +347,8 @@ choice and the orchestration/secret-handling approach as open decisions).
 - [terraform/README.md](../terraform/README.md) — the Terraform IaC and how to validate/plan it locally
 - [container-image-scanning.md](container-image-scanning.md) — the image vulnerability scan (policy + local run)
 - [ADR-035](decisions/ADR-035-container-image-scanning.md) — container-image scanning decision record
+- [supply-chain-provenance.md](supply-chain-provenance.md) — SBOM + git→tag→digest provenance (policy + release/verify)
+- [ADR-036](decisions/ADR-036-sbom-and-image-provenance.md) — SBOM & image provenance decision record
 - [containerization.md](containerization.md) — image design and the container's role in CI/CD
 - [ADR-005](decisions/ADR-005-containerization-strategy.md) — containerization decision record
 - [docker-development.md](docker-development.md) — local Docker Compose workflow
