@@ -1,0 +1,108 @@
+# NetworkPolicies — AWS overlay S3 egress (Sprint 8, PR 7; ADR-034).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE AWS-EGRESS LIMITATION (requirement: "document the limitation rather than
+# pretending it is solved"). On EKS, "S3" is real Amazon S3, reached over HTTPS
+# (443) at a LARGE, DYNAMIC set of public IP ranges that AWS rotates. A standard
+# Kubernetes NetworkPolicy can only match egress by pod/namespace selector or by a
+# literal `ipBlock` CIDR — it CANNOT reference:
+#   * an AWS-managed prefix list (com.amazonaws.<region>.s3, `pl-xxxx`),
+#   * a VPC S3 gateway/interface endpoint,
+#   * a security group, or
+#   * a DNS name / FQDN.
+# The Amazon VPC CNI's network-policy engine implements the STANDARD NetworkPolicy
+# API only (selectors + ipBlock + ports); none of the AWS-native S3 constructs are
+# expressible in it, and this project deliberately adds NO service mesh (no Istio/
+# Cilium FQDN policy). Therefore precise least-privilege S3 egress CANNOT be
+# expressed at the NetworkPolicy layer here. Pinning S3's current CIDRs would be
+# brittle (they change) — the exact anti-pattern the brief forbids.
+#
+# WHAT THIS POLICY DOES express — the tightest HONEST bound: allow the two S3
+# clients (the pipeline's fetch-dataset init container and the MLflow artifact
+# store) egress on TCP/443 to the PUBLIC internet ONLY, by allowing 0.0.0.0/0 with
+# every RFC1918 private range in `except`. That is meaningfully more than "allow
+# all egress": it cannot be used to reach any in-VPC or in-cluster service (pod
+# network, Service CIDR, node/control-plane ENIs, the API server) — only outward to
+# public endpoints such as S3, on one port. It does NOT, and cannot here, restrict
+# *which* public host (i.e. which bucket/region) is reachable.
+#
+# WHERE THE MISSING PRECISION ACTUALLY LIVES (defence in depth, ADR-034 § AWS
+# egress): the "which S3 / which bucket / which actions" control is enforced at the
+# layers that CAN express it —
+#   1. IAM via EKS Pod Identity (terraform/s3.tf, terraform/datasets.tf): the
+#      pipeline's and MLflow server's roles grant ONLY the specific bucket + actions
+#      (get dataset object; put/get artifact objects). A packet that leaves on 443
+#      still cannot read or write any S3 object outside those grants.
+#   2. RECOMMENDED (roadmap): a VPC S3 GATEWAY ENDPOINT + endpoint policy keeps S3
+#      traffic on the AWS backbone (off the NAT/IGW) and scopes it by prefix list +
+#      bucket, and/or a security-group egress rule to the S3 managed prefix list —
+#      the AWS-native mechanisms that DO express S3 least-privilege, at the
+#      route/SG layer where NetworkPolicy cannot reach. Not provisioned in this PR
+#      (terraform scope); recorded, not silently assumed.
+# This split is the point: the NetworkPolicy does the coarse network boundary; IAM
+# (today) and the VPC endpoint (recommended) do the fine-grained S3 authorization.
+---
+# Pipeline -> S3 (dataset fetch) on 443, public-internet-only. Adds the S3 leg to
+# the pipeline's egress; the MLflow + Pushgateway legs come from base
+# allow-pipeline-egress, DNS from base allow-dns-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pipeline-s3-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlops-pipeline
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            # Public internet only: 0.0.0.0/0 minus every RFC1918 private range, so
+            # this 443 allowance can reach Amazon S3's public endpoints but NOT any
+            # in-VPC / in-cluster address. See the header for why S3 cannot be
+            # pinned more tightly at this layer.
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# MLflow server -> S3 (artifact store) on 443, public-internet-only. Adds the S3
+# leg to MLflow's egress; the Postgres leg comes from base allow-mlflow-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-s3-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

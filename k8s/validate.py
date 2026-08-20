@@ -205,6 +205,114 @@ def walk_strings(node: object):
             yield from walk_strings(item)
 
 
+# --------------------------------------------------------------------------- #
+# NetworkPolicy helpers (Sprint 8, PR 7 — ADR-034).
+# --------------------------------------------------------------------------- #
+# The least-privilege network contract is asserted the same way as the security
+# contract: parse the RENDERED NetworkPolicy objects and check them semantically
+# (who a policy selects, which peers/ports it allows), not by keyword. These
+# helpers read the fields a NetworkPolicy uses so the checks below stay legible.
+# The workloads are selected by the `app.kubernetes.io/name` label they already
+# carry, so a policy is matched to a workload by identity, not by IP.
+def _np_selector_name(np: dict) -> str | None:
+    """The app.kubernetes.io/name a policy's podSelector targets (None = all pods)."""
+    sel = (np.get("spec", {}) or {}).get("podSelector", {}) or {}
+    return (sel.get("matchLabels", {}) or {}).get("app.kubernetes.io/name")
+
+
+def _np_selects_all(np: dict) -> bool:
+    """True if the policy applies to EVERY pod (empty podSelector)."""
+    sel = (np.get("spec", {}) or {}).get("podSelector", {})
+    return not sel  # {} or None
+
+
+def _np_types(np: dict) -> set[str]:
+    return {str(t) for t in (np.get("spec", {}) or {}).get("policyTypes", []) or []}
+
+
+def _np_rules(np: dict, direction: str) -> list[dict]:
+    """The ingress or egress rule list of a policy."""
+    return (np.get("spec", {}) or {}).get(direction, []) or []
+
+
+def _peer_name(peer: dict) -> str | None:
+    """The app.kubernetes.io/name a from/to peer's podSelector matches."""
+    ps = peer.get("podSelector", {}) or {}
+    return (ps.get("matchLabels", {}) or {}).get("app.kubernetes.io/name")
+
+
+def _peer_namespace(peer: dict) -> str | None:
+    """The kubernetes.io/metadata.name a from/to peer's namespaceSelector matches."""
+    ns = peer.get("namespaceSelector", {}) or {}
+    return (ns.get("matchLabels", {}) or {}).get("kubernetes.io/metadata.name")
+
+
+def _rule_ports(rule: dict) -> set[int]:
+    out: set[int] = set()
+    for p in rule.get("ports", []) or []:
+        port = p.get("port")
+        if isinstance(port, int):
+            out.add(port)
+    return out
+
+
+def _rule_allows(
+    rule: dict, name: str, port: int, namespace: str | None = None
+) -> bool:
+    """True if this ingress/egress rule permits `name` (optionally in `namespace`)
+    on `port`. Works for both directions (peers live under `from` or `to`)."""
+    peers = rule.get("from", rule.get("to", [])) or []
+    peer_ok = any(
+        _peer_name(p) == name and (namespace is None or _peer_namespace(p) == namespace)
+        for p in peers
+    )
+    return peer_ok and port in _rule_ports(rule)
+
+
+def _nps_selecting(nps: list[dict], name: str) -> list[dict]:
+    return [np for np in nps if _np_selector_name(np) == name]
+
+
+def _egress_rules_for(nps: list[dict], name: str) -> list[dict]:
+    return [
+        r
+        for np in _nps_selecting(nps, name)
+        if "Egress" in _np_types(np)
+        for r in _np_rules(np, "egress")
+    ]
+
+
+def _ingress_rules_for(nps: list[dict], name: str) -> list[dict]:
+    return [
+        r
+        for np in _nps_selecting(nps, name)
+        if "Ingress" in _np_types(np)
+        for r in _np_rules(np, "ingress")
+    ]
+
+
+def _ingress_peer_names(nps: list[dict], name: str) -> set[str]:
+    """Every pod name permitted to INGRESS to `name` across its policies."""
+    return {
+        _peer_name(p)
+        for r in _ingress_rules_for(nps, name)
+        for p in (r.get("from", []) or [])
+        if _peer_name(p)
+    }
+
+
+def _has_open_ipblock(nps: list[dict]) -> list[str]:
+    """Names of policies that use an `ipBlock` peer (a CIDR, not a pod/ns selector)."""
+    hits: list[str] = []
+    for np in nps:
+        for direction in ("ingress", "egress"):
+            for rule in _np_rules(np, direction):
+                for peer in rule.get("from", rule.get("to", [])) or []:
+                    if "ipBlock" in peer:
+                        hits.append(np.get("metadata", {}).get("name", "?"))
+    return hits
+
+
 def validate() -> int:
     overlay = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OVERLAY
     r = Report()
@@ -1078,6 +1186,211 @@ def validate() -> int:
                 f"capabilities.drop={sorted(drops)}",
             )
 
+    # ------------------------------------------------------------------ #
+    # Section 8 — Least-privilege NetworkPolicy contract (Sprint 8, PR 7).
+    # ------------------------------------------------------------------ #
+    # The network paths agreed in ADR-034: a namespace-wide default-deny, DNS
+    # preserved, and every required path explicitly (and ONLY that path) allowed.
+    # These are STATIC assertions on the rendered NetworkPolicy objects — they
+    # prove the policy SET encodes least privilege, not that a CNI enforces it at
+    # runtime (that is the runtime suite, k8s/tests/netpol, which needs an enforcing
+    # CNI). The checks run on whichever overlay is rendered; the env-specific S3 leg
+    # (local MinIO vs AWS S3) is handled at the end.
+    sec = "8. NetworkPolicy least-privilege contract"
+    nps = by_kind.get("NetworkPolicy", [])
+    r.check(sec, "NetworkPolicy objects rendered", bool(nps), "no NetworkPolicy found")
+
+    # (a) Default-deny baseline: a policy that selects EVERY pod and denies both
+    # ingress and egress (both policyTypes, no allow rules of its own).
+    deny_all = [
+        np
+        for np in nps
+        if _np_selects_all(np)
+        and {"Ingress", "Egress"} <= _np_types(np)
+        and not _np_rules(np, "ingress")
+        and not _np_rules(np, "egress")
+    ]
+    r.check(
+        sec,
+        "default-deny-all present (all pods, ingress+egress, no allow rules)",
+        bool(deny_all),
+        "no NetworkPolicy selects all pods with empty ingress+egress "
+        "(the default-deny baseline — requirement 1)",
+    )
+
+    # (b) DNS preserved (requirement 3): some egress policy allows port 53.
+    dns_ok = any(
+        53 in _rule_ports(r_)
+        for np in nps
+        if "Egress" in _np_types(np)
+        for r_ in _np_rules(np, "egress")
+    )
+    r.check(
+        sec,
+        "DNS egress preserved (a policy allows port 53)",
+        dns_ok,
+        "no egress policy permits port 53 — default-deny would break name "
+        "resolution for the whole namespace",
+    )
+
+    # (c) Pipeline egress: MLflow (5000) + Pushgateway (9091), and — least
+    # privilege — NOT PostgreSQL. The pipeline talks to the tracking server, never
+    # to the DB directly (ADR-026); a rule letting it reach 5432 would be a hole.
+    pipe_egress = _egress_rules_for(nps, "mlops-pipeline")
+    r.check(
+        sec,
+        "pipeline egress allows MLflow (mlflow-server:5000)",
+        any(_rule_allows(x, "mlflow-server", 5000) for x in pipe_egress),
+        "no pipeline egress rule to mlflow-server:5000",
+    )
+    r.check(
+        sec,
+        "pipeline egress allows Pushgateway (monitoring pushgateway:9091)",
+        any(
+            _rule_allows(x, "pushgateway", 9091, namespace="monitoring")
+            for x in pipe_egress
+        ),
+        "no pipeline egress rule to the monitoring pushgateway:9091",
+    )
+    pipe_to_pg = any(
+        _peer_name(p) == "mlflow-postgres"
+        for x in pipe_egress
+        for p in (x.get("to", []) or [])
+    )
+    r.check(
+        sec,
+        "pipeline may NOT reach PostgreSQL directly (least privilege)",
+        not pipe_to_pg,
+        "a pipeline egress rule targets mlflow-postgres — the pipeline must reach "
+        "the DB only THROUGH the MLflow server",
+    )
+
+    # (d) MLflow server: ingress from the pipeline + blackbox only (5000); egress to
+    # PostgreSQL (5432).
+    mlflow_from = _ingress_peer_names(nps, "mlflow-server")
+    r.check(
+        sec,
+        "MLflow ingress is exactly {pipeline, blackbox-exporter} on 5000",
+        mlflow_from == {"mlops-pipeline", "blackbox-exporter"}
+        and any(
+            _rule_allows(x, "mlops-pipeline", 5000)
+            for x in _ingress_rules_for(nps, "mlflow-server")
+        ),
+        f"MLflow ingress peers={sorted(mlflow_from)} "
+        "(expected exactly the pipeline and blackbox-exporter on port 5000)",
+    )
+    r.check(
+        sec,
+        "MLflow egress allows PostgreSQL (mlflow-postgres:5432)",
+        any(
+            _rule_allows(x, "mlflow-postgres", 5432)
+            for x in _egress_rules_for(nps, "mlflow-server")
+        ),
+        "no MLflow egress rule to mlflow-postgres:5432",
+    )
+
+    # (e) PostgreSQL: ingress from EXACTLY the server + exporter (5432), and NO
+    # egress policy at all (it never initiates a connection — the tightest posture).
+    pg_from = _ingress_peer_names(nps, "mlflow-postgres")
+    r.check(
+        sec,
+        "PostgreSQL ingress is exactly {mlflow-server, postgres-exporter} on 5432",
+        pg_from == {"mlflow-server", "postgres-exporter"}
+        and all(
+            5432 in _rule_ports(x) for x in _ingress_rules_for(nps, "mlflow-postgres")
+        ),
+        f"Postgres ingress peers={sorted(pg_from)} "
+        "(expected exactly the MLflow server and the exporter on 5432)",
+    )
+    pg_has_egress = any(
+        "Egress" in _np_types(np) for np in _nps_selecting(nps, "mlflow-postgres")
+    )
+    r.check(
+        sec,
+        "PostgreSQL has NO egress policy (default-deny leaves it outbound-closed)",
+        not pg_has_egress,
+        "a NetworkPolicy grants mlflow-postgres egress — the DB needs none "
+        "(DNS only if actually needed; it is not)",
+    )
+
+    # (f) postgres-exporter: scraped by Prometheus (9187); reaches PostgreSQL (5432).
+    r.check(
+        sec,
+        "postgres-exporter ingress from Prometheus (monitoring) on 9187",
+        any(
+            _rule_allows(x, "prometheus", 9187, namespace="monitoring")
+            for x in _ingress_rules_for(nps, "postgres-exporter")
+        ),
+        "no postgres-exporter ingress rule from the monitoring Prometheus:9187",
+    )
+    r.check(
+        sec,
+        "postgres-exporter egress allows PostgreSQL (mlflow-postgres:5432)",
+        any(
+            _rule_allows(x, "mlflow-postgres", 5432)
+            for x in _egress_rules_for(nps, "postgres-exporter")
+        ),
+        "no postgres-exporter egress rule to mlflow-postgres:5432",
+    )
+
+    # (g) Env-specific S3 leg. Locally S3 is the in-cluster MinIO (a pod), so the
+    # path is expressed PRECISELY and NO CIDR wildcard should appear anywhere. On
+    # AWS S3 is public with dynamic IPs, so the honest bound is 443 to the public
+    # internet only (0.0.0.0/0 minus RFC1918) — the documented limitation (ADR-034).
+    minio_present = any(
+        d.get("metadata", {}).get("name") == "minio"
+        for d in by_kind.get("StatefulSet", [])
+    )
+    if minio_present:
+        open_blocks = _has_open_ipblock(nps)
+        r.check(
+            sec,
+            "local overlay uses NO ipBlock/CIDR peer (S3 path is precise in-cluster)",
+            not open_blocks,
+            f"unexpected ipBlock peer(s) in {sorted(set(open_blocks))} — locally the "
+            "S3 client is the in-cluster MinIO and must be a pod selector",
+        )
+        for client in ("mlops-pipeline", "mlflow-server"):
+            r.check(
+                sec,
+                f"{client} egress allows MinIO (minio:9000)",
+                any(
+                    _rule_allows(x, "minio", 9000)
+                    for x in _egress_rules_for(nps, client)
+                ),
+                f"no {client} egress rule to the in-cluster minio:9000",
+            )
+        r.check(
+            sec,
+            "MinIO ingress is exactly {pipeline, mlflow-server, minio-setup} on 9000",
+            _ingress_peer_names(nps, "minio")
+            == {"mlops-pipeline", "mlflow-server", "minio-setup"},
+            f"MinIO ingress peers={sorted(_ingress_peer_names(nps, 'minio'))}",
+        )
+    else:
+        # AWS overlay: the S3 clients get a 443-to-public-internet bound. Assert the
+        # rule shape that makes it internet-only (an ipBlock 0.0.0.0/0 with an
+        # RFC1918 `except`) rather than a blanket allow-all-egress.
+        rfc1918 = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+        for client in ("mlops-pipeline", "mlflow-server"):
+            good = False
+            for x in _egress_rules_for(nps, client):
+                if 443 not in _rule_ports(x):
+                    continue
+                for p in x.get("to", []) or []:
+                    ib = p.get("ipBlock", {}) or {}
+                    if ib.get("cidr") == "0.0.0.0/0" and rfc1918 <= set(
+                        ib.get("except", []) or []
+                    ):
+                        good = True
+            r.check(
+                sec,
+                f"{client} S3 egress is 443 to public-internet-only (RFC1918 excepted)",
+                good,
+                f"{client} must egress on 443 to 0.0.0.0/0 with RFC1918 in `except` "
+                "(the tightest honest S3 bound on the VPC CNI — ADR-034)",
+            )
+
     return r.render()
 
 
@@ -1794,6 +2107,67 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
                     f"(severity={labels.get('severity')!r}, "
                     f"for={rule.get('for')!r}, runbook={ann.get('runbook_url')!r})",
                 )
+
+    # -- M12. NetworkPolicy least-privilege INGRESS (Sprint 8, PR 7 — ADR-034) -- #
+    # The monitoring stack takes a default-deny-INGRESS posture with one explicit
+    # scrape/query path per component; egress is deliberately left unrestricted in
+    # this namespace (Prometheus/KSM must reach the env-specific Kubernetes API
+    # server — see ADR-034 and k8s/monitoring/base/networkpolicy.yaml). These assert
+    # the ingress allow-list matches the scrape graph, so a default-deny cannot
+    # silently break Prometheus scraping. STILL static — enforcement needs a CNI
+    # that supports NetworkPolicy (the runtime suite proves the live paths).
+    sec = "M12. NetworkPolicy least-privilege ingress"
+    nps = by_kind.get("NetworkPolicy", [])
+    r.check(sec, "NetworkPolicy objects rendered", bool(nps), "no NetworkPolicy found")
+
+    # Default-deny INGRESS: selects all pods, Ingress in policyTypes, no allow rules.
+    deny_ingress = [
+        np
+        for np in nps
+        if _np_selects_all(np)
+        and "Ingress" in _np_types(np)
+        and not _np_rules(np, "ingress")
+    ]
+    r.check(
+        sec,
+        "default-deny-ingress present (all pods, no ingress allow rules)",
+        bool(deny_ingress),
+        "no NetworkPolicy selects all pods with an empty ingress (the default-deny "
+        "ingress baseline)",
+    )
+
+    # Each component's ingress allow-list matches exactly what scrapes/queries it.
+    # (component, peer, namespace, port)
+    expected_ingress = [
+        ("prometheus", "grafana", None, 9090),  # datasource query
+        ("kube-state-metrics", "prometheus", None, 8080),  # scrape
+        ("node-exporter", "prometheus", None, 9100),  # scrape
+        ("blackbox-exporter", "prometheus", None, 9115),  # scrape
+        ("pushgateway", "prometheus", None, 9091),  # scrape
+        ("pushgateway", "mlops-pipeline", "mlops", 9091),  # cross-ns push
+    ]
+    for component, peer, namespace, port in expected_ingress:
+        rules = _ingress_rules_for(nps, component)
+        ok = any(_rule_allows(x, peer, port, namespace=namespace) for x in rules)
+        where = f"{peer}" + (f" (ns {namespace})" if namespace else "")
+        r.check(
+            sec,
+            f"{component} ingress allows {where} on {port}",
+            ok,
+            f"no {component} ingress rule from {where}:{port} "
+            f"(a default-deny would break this scrape/push path)",
+        )
+
+    # No CIDR/ipBlock peer belongs in the monitoring policies — every allowed peer
+    # is an in-cluster pod/namespace selector.
+    open_blocks = _has_open_ipblock(nps)
+    r.check(
+        sec,
+        "no ipBlock/CIDR peers in monitoring policies",
+        not open_blocks,
+        f"unexpected ipBlock peer(s) in {sorted(set(open_blocks))} — monitoring "
+        "ingress must be pod/namespace selectors only",
+    )
 
     return r.render()
 

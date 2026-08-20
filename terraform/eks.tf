@@ -267,6 +267,21 @@ resource "aws_eks_addon" "this" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 
+  # ENFORCE Kubernetes NetworkPolicy on the cluster (Sprint 8, PR 7; ADR-034).
+  # The Amazon VPC CNI ADMITS NetworkPolicy objects regardless, but only ENFORCES
+  # them when its network-policy agent is switched on — which is OFF by default.
+  # Without this, the least-privilege policies in k8s/base + k8s/monitoring would be
+  # inert on EKS (silently allowing everything), so turning it on is what makes the
+  # "enforce" in this PR's title real on the cloud platform. `enableNetworkPolicy`
+  # is the VPC CNI addon's documented configuration key (a string "true"/"false");
+  # it requires VPC CNI ≥ v1.14, satisfied by the default addon version EKS installs
+  # for the pinned cluster version. Scoped to the vpc-cni addon only (coredns/
+  # kube-proxy take no configuration). Set as configuration_values (not a separate
+  # resource) so the addon's Terraform address is unchanged — no destroy/recreate.
+  configuration_values = each.value == "vpc-cni" ? jsonencode({
+    enableNetworkPolicy = "true"
+  }) : null
+
   tags = {
     Name = "${local.name_prefix}-addon-${each.value}"
   }

@@ -1,0 +1,190 @@
+# NetworkPolicies — least-privilege INGRESS for the monitoring namespace
+# (Sprint 8, PR 7; ADR-034).
+#
+# SCOPE DECISION — ingress default-deny, egress deliberately unrestricted (ADR-034
+# § Monitoring egress). The monitoring stack's INGRESS is cleanly expressible and
+# high-value to lock down: Prometheus, Grafana, the Pushgateway and the exporters
+# each accept connections from a small, known set of peers, so a default-deny
+# ingress + explicit allow-list closes off everything else (e.g. an unauthenticated
+# Prometheus /-/reload or a Pushgateway that accepts pushes from anything). Their
+# EGRESS, by contrast, is inherently broad and environment-specific: Prometheus and
+# kube-state-metrics MUST reach the Kubernetes API server — an endpoint OUTSIDE the
+# pod network (the control-plane ENIs on EKS, a host IP locally) whose address is
+# env-specific — for service discovery and the kubelet/cAdvisor proxy scrape, and
+# Prometheus discovers and scrapes targets cluster-wide. Pinning that egress to
+# CIDRs would be brittle and risks silently breaking scraping — exactly the failure
+# mode the brief warns against ("do not create brittle IP-based policies"). So we
+# restrict ingress (strong, safe) and leave egress open in this namespace, a
+# documented, deliberate trade-off — not an oversight. The mlops namespace, whose
+# egress IS cleanly expressible, gets the full ingress+egress default-deny.
+#
+# ENFORCEMENT CAVEAT: as in mlops, these are inert unless the CNI enforces
+# NetworkPolicy (EKS VPC CNI with enableNetworkPolicy=true; NOT the default local
+# Docker Desktop CNI). See ADR-034 § CNI support.
+#
+# The `monitoring` namespace runs `privileged` Pod Security for node-exporter's
+# read-only hostPath (ADR-029); that is orthogonal to these network controls.
+---
+# 1. DEFAULT DENY INGRESS. Every pod in the namespace starts with all ingress
+# denied; each policy below adds back exactly one scrape/query path. Egress is NOT
+# in policyTypes here, so this policy does not restrict egress (see the scope note).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# 2. Prometheus INGRESS — from Grafana only (the datasource query path,
+# grafana -> prometheus:9090). Operator access is via `kubectl port-forward`, whose
+# traffic originates from the node/kubelet (a host path the CNI permits), not from
+# an in-cluster pod, so it needs no rule here. Nothing else in the cluster connects
+# to Prometheus.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+# 3. kube-state-metrics INGRESS — scraped by Prometheus on the metrics port (8080).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-state-metrics-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 4. node-exporter INGRESS — scraped by Prometheus on each DaemonSet pod (9100).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-node-exporter-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9100
+---
+# 5. blackbox-exporter INGRESS — scraped by Prometheus on the prober port (9115);
+# Prometheus hands it the MLflow /health target via the scrape params (ADR-031).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-blackbox-exporter-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: blackbox-exporter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9115
+---
+# 6. Pushgateway INGRESS — TWO clients (ADR-030):
+#   * Prometheus (monitoring) SCRAPES it on 9091;
+#   * the pipeline Job (mlops) PUSHES its per-stage metrics to 9091 — the one
+#     cross-namespace ingress into `monitoring`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pushgateway-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Prometheus scrape (same namespace).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+        # Pipeline push (mlops namespace).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mlops
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlops-pipeline
+      ports:
+        - protocol: TCP
+          port: 9091

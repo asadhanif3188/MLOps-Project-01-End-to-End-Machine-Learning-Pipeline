@@ -1,0 +1,135 @@
+# NetworkPolicies — least-privilege network paths for the mlops namespace
+# (Sprint 8, PR 7; ADR-034).
+#
+# This is the environment-INDEPENDENT half of the network contract: a
+# default-deny baseline for every pod in the namespace, DNS preservation, and the
+# pipeline's env-independent egress (MLflow tracking + the Pushgateway push). The
+# ONE path that genuinely differs per environment — S3 — is layered by the
+# overlays, because locally S3 is the in-cluster MinIO Service (expressible
+# precisely as a pod selector) while on AWS it is real Amazon S3 at dynamic public
+# IPs (NOT precisely expressible in a standard NetworkPolicy — see the AWS-egress
+# limitation in ADR-034 and docs/network-policies.md). MLflow's and Postgres's own
+# ingress/egress live beside their manifests in mlflow/networkpolicy.yaml.
+#
+# ENFORCEMENT CAVEAT (ADR-034 § CNI support): a NetworkPolicy is an inert object
+# unless the cluster's CNI enforces it. On EKS this requires the Amazon VPC CNI
+# with `enableNetworkPolicy=true` (terraform/eks.tf, VPC CNI ≥ v1.14); the default
+# local Docker Desktop CNI does NOT enforce NetworkPolicy, so these policies are
+# admitted but inert there. The static contract tests (k8s/validate.py) and the
+# runtime tests (k8s/tests/netpol) verify the policy SET and, on an enforcing CNI,
+# the actual allowed/denied paths.
+#
+# The policy model is deny-by-default + explicit allow: `default-deny-all` removes
+# all ingress and egress for every pod; each subsequent policy ADDS back exactly
+# one required path (NetworkPolicies are additive — the union of all `allow` rules
+# is what is permitted). Selectors use the app.kubernetes.io/name labels the
+# workloads already carry, so a policy targets a workload by identity, not by IP.
+---
+# 1. DEFAULT DENY (requirement 1). Selects EVERY pod in the namespace
+# (podSelector: {}) and declares both policyTypes with NO rules, so all ingress
+# and all egress are denied until another policy explicitly allows a path. This is
+# the standing backstop: a new workload with no policy of its own is isolated by
+# construction, and a path nobody allowed cannot be opened by accident.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. DNS PRESERVATION (requirement 3). Every pod must resolve Service names
+# (MLflow, Postgres, the Pushgateway, S3/MinIO endpoints) or nothing works, so the
+# default-deny above would break the whole namespace without this. It allows
+# EGRESS from all pods to the in-cluster DNS server ONLY — CoreDNS in kube-system,
+# selected by its standard `k8s-app: kube-dns` label — and ONLY on port 53
+# (UDP + TCP). kube-system is selected by the `kubernetes.io/metadata.name` label
+# the API server stamps on every namespace automatically (GA since k8s 1.22), so
+# no change to kube-system is required. This is the tightest DNS rule: one
+# destination workload, two ports; if a cluster labels CoreDNS differently, widen
+# the podSelector — do not widen the namespace or the ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. PIPELINE EGRESS — the env-INDEPENDENT paths (requirement 2). The pipeline Job
+# (its init containers and the main container all share the pod's identity) needs
+# exactly two in-cluster egress paths that are the SAME in every environment:
+#   * MLflow tracking server (mlflow:5000) — the wait-for-mlflow init container's
+#     /health poll and the train/evaluate stages' run logging (ADR-026).
+#   * Prometheus Pushgateway (pushgateway.monitoring:9091) — the per-stage
+#     operational-metrics push (ADR-030); a cross-namespace path to `monitoring`.
+# The pipeline's THIRD egress need — S3 (the dataset fetch) — is environment-
+# specific and added by the overlays (local: MinIO; aws: Amazon S3). DNS is
+# already covered by allow-dns-egress above. The pipeline needs NO ingress (nothing
+# connects to it), so the default-deny leaves it fully closed inbound, and it never
+# calls the Kubernetes API (automountServiceAccountToken: false), so no API-server
+# egress is granted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pipeline-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlops-pipeline
+  policyTypes:
+    - Egress
+  egress:
+    # -> MLflow tracking server (same namespace).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow-server
+      ports:
+        - protocol: TCP
+          port: 5000
+    # -> Pushgateway in the monitoring namespace (operational metrics push).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pushgateway
+      ports:
+        - protocol: TCP
+          port: 9091

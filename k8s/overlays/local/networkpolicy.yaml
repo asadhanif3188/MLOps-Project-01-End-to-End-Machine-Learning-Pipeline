@@ -1,0 +1,130 @@
+# NetworkPolicies — LOCAL overlay S3 paths (Sprint 8, PR 7; ADR-034).
+#
+# Locally, "S3" is the in-cluster MinIO Service (minio.yaml) — a real S3 API on the
+# same cluster. Because MinIO is a pod, the S3 egress path is expressible PRECISELY
+# as a podSelector, so locally the network contract is FULLY least-privilege with
+# no CIDR wildcard anywhere. (On AWS the same logical path targets real Amazon S3
+# at dynamic public IPs, which a standard NetworkPolicy cannot pin — see
+# overlays/aws/networkpolicy.yaml and the AWS-egress limitation in ADR-034.)
+#
+# These compose additively with the base default-deny + DNS + env-independent
+# egress. They cover the three S3 clients that exist locally: the pipeline's
+# fetch-dataset init container, the MLflow server's artifact store, and the
+# minio-setup bucket-bootstrap Job — plus MinIO's own ingress.
+---
+# Pipeline -> MinIO (dataset fetch). Adds the S3 leg to the pipeline's egress; the
+# MLflow + Pushgateway legs come from the base allow-pipeline-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pipeline-s3-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlops-pipeline
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlops-pipeline
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# MLflow server -> MinIO (artifact store). Adds the S3 leg to MLflow's egress; the
+# Postgres leg comes from the base allow-mlflow-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-s3-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# minio-setup bucket bootstrap -> MinIO. The one-shot `mc mb` Job connects to
+# MinIO to create the `mlflow` and `datasets` buckets. DNS comes from the base
+# allow-dns-egress; this adds only the MinIO leg.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-setup-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: minio-setup
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio-setup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# MinIO -> INGRESS. The object store accepts S3 API connections (9000) from its
+# three in-cluster clients: the pipeline (fetch-dataset), the MLflow server, and
+# the minio-setup Job. The console port (9001) is intentionally NOT allowed to any
+# pod — console access is via `kubectl port-forward` (node path), not pod-to-pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-ingress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlops-pipeline
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow-server
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio-setup
+      ports:
+        - protocol: TCP
+          port: 9000

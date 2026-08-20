@@ -18,6 +18,12 @@ resources:
   - configmap.yaml
   - dvc-config.yaml
   - job.yaml
+  # Least-privilege NetworkPolicies (Sprint 8, PR 7; ADR-034): the namespace-wide
+  # default-deny baseline, DNS preservation, and the pipeline's env-independent
+  # egress (MLflow + Pushgateway). The MLflow platform's own policies live in the
+  # mlflow component (mlflow/networkpolicy.yaml); the env-specific S3 egress is
+  # layered by the overlays. Enforced only where the CNI supports it (ADR-034).
+  - networkpolicy.yaml
   # The persistent in-cluster MLflow tracking platform (Sprint 7, PR 6): the
   # PostgreSQL metadata backend, the MLflow Tracking Server, and their Services +
   # identity. Included as a component directory so the platform is one legible
