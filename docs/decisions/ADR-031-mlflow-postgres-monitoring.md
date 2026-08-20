@@ -217,6 +217,15 @@ declare the contract, not that the exporters scrape (runtime proof is PR 6).
   posture exists. postgres-exporter's `/metrics` exposes **DB statistics, never
   credentials or row data** (the `pg_monitor` scope), so the exposure is metrics, not
   secrets.
+- **`pg_monitor` residual — the role can read live query text, though `/metrics`
+  does not.** `pg_monitor` includes `pg_read_all_stats`, which lets the role read
+  other sessions' `query` column in `pg_stat_activity`. The exporter's **built-in
+  collectors do not scrape or expose that** (no custom query file, no
+  `pg_stat_statements` — the extension is not loaded), so **nothing sensitive reaches
+  `/metrics`**. The residual is second-order: if the `mlflow-postgres-exporter-credentials`
+  Secret were exfiltrated, the holder could `psql` in and read live SQL text (not
+  table data). This is the documented minimum role for the exporter and the accepted
+  cost of least-privilege DB monitoring; recorded, not hidden.
 - **In-cluster hops are not TLS-encrypted** (§ 4) — accepted, mesh is out of scope.
 
 ## What This Decision Does **Not** Imply

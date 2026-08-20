@@ -215,8 +215,14 @@ supposed to feed. Rejected outright.
 ### 4. Component ownership and placement
 
 - A dedicated **`monitoring` namespace** owns the stack (Prometheus, Grafana,
-  kube-state-metrics, node-exporter, blackbox-exporter, postgres-exporter),
+  kube-state-metrics, node-exporter, blackbox-exporter),
   separating platform-observability lifecycle from the `mlops` workload namespace.
+  > **Refined ([ADR-031](ADR-031-mlflow-postgres-monitoring.md), Sprint 8 PR 4).**
+  > **postgres-exporter is the exception**: PR 4 places it in the **`mlops`**
+  > namespace, beside the database, so its dedicated DB-credential Secret never has
+  > to be copied into `monitoring` (Prometheus scrapes it cross-namespace). This ADR
+  > listed it under `monitoring`; ADR-031 supersedes that placement for the
+  > credential-locality reason, and rejects the `monitoring` placement explicitly.
 - Every monitoring workload **inherits the same hardened baseline** the rest of the
   fleet already enforces (ADR-010): non-root numeric uid, `allowPrivilegeEscalation:
   false`, drop `ALL`, seccomp `RuntimeDefault`, no token automount unless a
