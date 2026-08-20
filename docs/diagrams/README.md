@@ -11,4 +11,8 @@ placeholder for a specific diagram:
 - [`kubernetes-architecture/`](kubernetes-architecture/) — Kubernetes Architecture
   (✅ available — batch-workload flow, Mermaid + ASCII;
   see [kubernetes-architecture.md](../kubernetes-architecture.md))
+- [`observability-architecture/`](observability-architecture/) — Observability
+  Architecture (✅ available — target Prometheus/Grafana four-layer model, Mermaid
+  + ASCII; see [observability.md](../observability.md) and
+  [ADR-028](../decisions/ADR-028-observability-architecture.md))
 - [`cicd-flow/`](cicd-flow/) — CI/CD Flow
