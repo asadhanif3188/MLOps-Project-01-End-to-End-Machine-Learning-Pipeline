@@ -304,10 +304,14 @@ infrastructure defined as code.
   namespace), and a scoped **kubelet** volume-stats scrape for the Postgres
   **PVC-fill** signal — eight scrape jobs in all; the run-level replica/readiness/
   restart/CPU/memory signals were already collectable from PR 2's KSM + cAdvisor
-  ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)). **Manifests +
-  instrumentation only — not deployed/runtime-proven yet** (no live cluster; runtime
-  evidence is PR 6); **Grafana dashboards** (resequenced after PR 3) and alerts
-  (PR 5) remain.
+  ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)). **Grafana dashboards
+  are now added** (Sprint 8, PR 5): three purpose-built, version-controlled dashboards
+  — **EKS/Platform Health**, **MLOps Pipeline Operations**, **MLflow Platform Health** —
+  each panel mapped to an operational question, provisioned from files into a hardened,
+  internal-only Grafana, with model quality kept in MLflow
+  ([ADR-032](decisions/ADR-032-grafana-dashboards.md)). **Manifests + instrumentation +
+  dashboards only — not deployed/runtime-proven yet** (no live cluster; runtime
+  evidence is PR 7); **alerts** (PR 6) remain.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the

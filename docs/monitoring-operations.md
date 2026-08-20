@@ -1,11 +1,12 @@
 # Monitoring Operations
 
-Day-2 operations for the **metrics stack** — Prometheus, kube-state-metrics,
-node-exporter, the **Pushgateway**, and the **MLflow/PostgreSQL depth exporters** —
-deployed from [`k8s/monitoring/`](../k8s/monitoring/) (plus the postgres-exporter in
-the mlops workload). This is the operator's runbook for the Sprint 8 PR 2 + PR 3 +
-PR 4 stack: how to deploy it, reach Prometheus, run a query (across all four
-layers), troubleshoot a missing target, and tear it down cleanly.
+Day-2 operations for the **metrics + dashboards stack** — Prometheus,
+kube-state-metrics, node-exporter, the **Pushgateway**, the **MLflow/PostgreSQL depth
+exporters**, and **Grafana** — deployed from [`k8s/monitoring/`](../k8s/monitoring/)
+(plus the postgres-exporter in the mlops workload). This is the operator's runbook for
+the Sprint 8 PR 2 + PR 3 + PR 4 + PR 5 stack: how to deploy it, reach Prometheus and
+Grafana, run a query (across all four layers), troubleshoot a missing target, and tear
+it down cleanly.
 
 > **Scope — the metrics core + pipeline + platform depth, not yet runtime-proven.**
 > This covers Prometheus + KSM + node-exporter + the cAdvisor scrape (Layer 1
@@ -14,16 +15,20 @@ layers), troubleshoot a missing target, and tear it down cleanly.
 > [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)), **and the Layer 3/4
 > depth exporters** — blackbox (MLflow `/health`), postgres-exporter (DB backend
 > health), and the kubelet volume-stats scrape (Postgres PVC-fill) — (PR 4,
-> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)). **Grafana** and
-> **alerts** (PR 5) are not here. As of these PRs the stack is **defined and
-> statically validated but not deployed** — no live cluster was available. The
-> commands below are the runbook for when it *is* deployed; the live four-layer
-> evidence is the job of the runtime-evidence PR
-> (PR 6, per [`docs/observability.md`](observability.md#runtime-evidence-what-later-sprint-8-prs-must-prove)).
+> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)), **and Grafana with the
+> three purpose-built dashboards** — EKS/Platform Health, MLOps Pipeline Operations,
+> MLflow Platform Health — (PR 5,
+> [ADR-032](decisions/ADR-032-grafana-dashboards.md)). **Alerts** (PR 6) are not here.
+> As of these PRs the stack is **defined and statically validated but not deployed** —
+> no live cluster was available. The commands below are the runbook for when it *is*
+> deployed; the live four-layer evidence (targets Up, dashboards populating) is the job
+> of the runtime-evidence PR
+> (PR 7, per [`docs/observability.md`](observability.md#runtime-evidence-what-later-sprint-8-prs-must-prove)).
 > Design of record: [ADR-028](decisions/ADR-028-observability-architecture.md),
 > [ADR-029](decisions/ADR-029-monitoring-foundation.md),
-> [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), and
-> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md).
+> [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md),
+> [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md), and
+> [ADR-032](decisions/ADR-032-grafana-dashboards.md).
 
 For the architecture (why these components, the four-layer model, the batch-Job
 strategy) see [`docs/observability.md`](observability.md); for the mlops workload's
@@ -43,6 +48,7 @@ namespace unless cluster-scoped:
 | `node-exporter` | DaemonSet + headless Service (`:9100`) | Per-node CPU/memory/filesystem | Internal only |
 | `pushgateway` | Deployment + ClusterIP Service (`:9091`) | Sink for the ephemeral pipeline's **per-stage** operational metrics (duration + success), pushed before each stage exits (PR 3) | Internal only |
 | `blackbox-exporter` | Deployment + ClusterIP Service (`:9115`) | Layer 3 — probes MLflow `/health` for availability (PR 4) | Internal only |
+| `grafana` | Deployment + ClusterIP Service (`:3000`) | Dashboards over Prometheus — three provisioned dashboards (PR 5); datasource + dashboards loaded from ConfigMaps at start-up | Internal only |
 | `prometheus` / `kube-state-metrics` | ServiceAccount + **read-only** ClusterRole + binding | Least-privilege API access | — |
 
 The kubelet's built-in **cAdvisor** and the kubelet's own **volume stats** (Postgres
@@ -60,6 +66,13 @@ with `kubectl port-forward` (§ 3).
 > secret` are in
 > [`k8s/base/mlflow/postgres-exporter-secret.example.yaml`](../k8s/base/mlflow/postgres-exporter-secret.example.yaml)).
 > Without them the exporter runs but reports `pg_up 0` and logs auth failures.
+
+> **Grafana admin-credential prerequisite (PR 5).** Before deploying Grafana, create
+> its admin Secret out-of-band (the exact `kubectl create secret` is in
+> [`k8s/monitoring/base/grafana/grafana-admin-secret.example.yaml`](../k8s/monitoring/base/grafana/grafana-admin-secret.example.yaml)).
+> Without it the Grafana pod stays `CreateContainerConfigError` (the `secretKeyRef`
+> cannot resolve). Dashboards themselves need no login — anonymous Viewer access is
+> enabled — but the pod still requires the admin Secret to start.
 
 ---
 
@@ -89,7 +102,8 @@ Watch it come up:
 ```bash
 kubectl -n monitoring get pods -w
 # Expect: prometheus-* Running (1/1), kube-state-metrics-* Running (1/1),
-#         pushgateway-* Running (1/1), node-exporter-* Running (1/1) on every node.
+#         pushgateway-* Running (1/1), blackbox-exporter-* Running (1/1),
+#         grafana-* Running (1/1), node-exporter-* Running (1/1) on every node.
 ```
 
 ---
@@ -115,6 +129,42 @@ Then:
   pipeline has pushed — it just has no `mlops_pipeline_*` series yet. The
   `postgres-exporter` target is only UP once that exporter is deployed with the mlops
   workload and its DB role/Secret exist — see § 1.)
+
+---
+
+## 3.1 View the Grafana dashboards
+
+Grafana is internal-only too. Port-forward it and open the browser (anonymous Viewer
+access is enabled, so no login is needed to read the dashboards):
+
+```bash
+kubectl -n monitoring port-forward svc/grafana 3000:3000
+```
+
+Then open <http://localhost:3000> → **Dashboards → MLOps Platform**. Three dashboards
+are provisioned automatically (no manual import) from
+[`k8s/monitoring/base/grafana/dashboards/`](../k8s/monitoring/base/grafana/dashboards/):
+
+| Dashboard | uid | Answers |
+|---|---|---|
+| **EKS / Platform Health** | `mlops-eks-platform-health` | Nodes Ready? Workloads healthy? Pods restarting? CPU/memory/disk pressure? Jobs failing? |
+| **MLOps Pipeline Operations** | `mlops-pipeline-operations` | Did the last pipeline succeed? How long? Which stage dominates? Did dataset retrieval fail? Recent failures? |
+| **MLflow Platform Health** | `mlops-mlflow-platform-health` | Is MLflow available? MLflow pods stable? PostgreSQL up? Either under memory / PVC / connection pressure? |
+
+Deep-link a specific dashboard by uid, e.g.
+<http://localhost:3000/d/mlops-pipeline-operations>. Each panel carries a description
+(hover the ℹ️ in its header) explaining the query and what "healthy" looks like.
+
+> **Panels show "No data" on a cold cluster.** Per-stage series appear only after a
+> pipeline has run (`mlops_pipeline_*` via the Pushgateway); MLflow/Postgres panels
+> need those workloads up and, for `pg_*`, the postgres-exporter role/Secret (§ 1).
+> This is expected — it is the runtime-evidence PR that proves panels populate.
+>
+> **Model accuracy is not in Grafana.** The pipeline dashboard says so explicitly:
+> accuracy / best params / per-run artifacts live in **MLflow** (the ownership
+> boundary, [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) /
+> [ADR-032](decisions/ADR-032-grafana-dashboards.md)). Port-forward `svc/mlflow` in
+> the `mlops` namespace for those.
 
 ---
 

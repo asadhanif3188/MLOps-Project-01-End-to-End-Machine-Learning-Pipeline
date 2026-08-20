@@ -1,0 +1,273 @@
+{
+  "annotations": { "list": [] },
+  "description": "Layer 1 platform health for the EKS / local Kubernetes cluster hosting the MLOps pipeline. Answers: are nodes Ready, are workloads healthy, are pods restarting, is CPU/memory/disk pressure visible, and are Jobs failing? All series come from kube-state-metrics and node-exporter (Sprint 8, PR 2 — ADR-029). Model quality is NOT here — it lives in MLflow.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["mlops", "platform", "layer-1"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "EKS / Platform Health",
+  "uid": "mlops-eks-platform-health",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Nodes Ready",
+      "description": "Count of nodes reporting the Ready condition = true (kube_node_status_condition). Should equal the node-group size (2 by default, ADR-017).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "instant": true } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Nodes NotReady",
+      "description": "Nodes whose Ready condition is not true. > 0 means a node has dropped out of the cluster.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"}) - sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "instant": true } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Node pressure conditions",
+      "description": "Active Memory/Disk/PID pressure conditions across all nodes (kube_node_status_condition). 0 is healthy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_node_status_condition{condition=~\"MemoryPressure|DiskPressure|PIDPressure\",status=\"true\"})", "instant": true } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Pods CrashLoopBackOff",
+      "description": "Containers currently waiting in CrashLoopBackOff (kube_pod_container_status_waiting_reason). 0 is healthy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_pod_container_status_waiting_reason{reason=\"CrashLoopBackOff\"})", "instant": true } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Failed Jobs",
+      "description": "Sum of failed batch Jobs across the cluster (kube_job_status_failed). Includes the mlops-pipeline Job; drill into the MLOps Pipeline Operations dashboard for detail.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_job_status_failed)", "instant": true } ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Pods not Running",
+      "description": "Pods in Pending / Failed / Unknown phase (kube_pod_status_phase). Persistent non-zero values indicate scheduling or crash problems.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\"})", "instant": true } ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Node CPU utilisation %",
+      "description": "Per-node CPU utilisation = 100 * (1 - idle rate) over a 5m window (node_cpu_seconds_total). Bounded window keeps the query stable.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 95 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Node memory utilisation %",
+      "description": "Per-node memory in use = 100 * (1 - MemAvailable / MemTotal) (node_exporter). The memory-pressure early-warning signal for Layer 1.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Node root filesystem used %",
+      "description": "Root-filesystem fill on each node = 100 * (1 - avail / size) (node_filesystem_*). tmpfs/overlay are excluded. Rising disk drives the DiskPressure condition above.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay|squashfs\"})", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Container restarts (increase over 1h)",
+      "description": "Per-pod container restart increase over a bounded 1h window (kube_pod_container_status_restarts_total). Sustained growth = an unstable workload.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total[1h]))", "legendFormat": "{{namespace}}/{{pod}}" } ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Deployment replicas: available vs desired",
+      "description": "Per Deployment: available replicas (kube_deployment_status_replicas_available) vs desired (kube_deployment_spec_replicas). A gap means the workload is not fully healthy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "fillOpacity": 0, "showPoints": "always", "spanNulls": true },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (namespace, deployment) (kube_deployment_status_replicas_available)", "legendFormat": "{{namespace}}/{{deployment}} available" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (namespace, deployment) (kube_deployment_spec_replicas)", "legendFormat": "{{namespace}}/{{deployment}} desired" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Pods by phase",
+      "description": "Cluster pod count grouped by lifecycle phase (kube_pod_status_phase). Running should dominate; a Pending/Failed baseline is a red flag.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (phase) (kube_pod_status_phase)", "legendFormat": "{{phase}}" } ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Unhealthy Deployments (unavailable replicas)",
+      "description": "Deployments currently reporting one or more unavailable replicas (kube_deployment_status_replicas_unavailable > 0). Empty table = all Deployments healthy.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_deployment_status_replicas_unavailable > 0", "instant": true, "format": "table" } ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "endpoint": true, "service": true, "container": true, "pod": true, "uid": true } } } ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Job status (succeeded / failed / active)",
+      "description": "Terminal and in-flight state of every batch Job (kube_job_status_*). The mlops-pipeline row is the headline; failed > 0 needs attention.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_job_status_succeeded", "instant": true, "format": "table" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_job_status_failed", "instant": true, "format": "table" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_job_status_active", "instant": true, "format": "table" }
+      ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "endpoint": true, "service": true, "uid": true } } } ]
+    }
+  ]
+}

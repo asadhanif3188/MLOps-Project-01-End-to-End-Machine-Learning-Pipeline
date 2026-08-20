@@ -1,0 +1,42 @@
+# Grafana datasource provisioning (Sprint 8, PR 5; ADR-032). Grafana provisions
+# its data sources from files on disk at start-up — no manual UI click, no API
+# call, fully declarative and version-controlled (the sprint brief: "version-
+# control the provisioning definitions"). This ConfigMap is mounted read-only at
+# /etc/grafana/provisioning/datasources so Grafana reads it during boot.
+#
+# One data source: the in-cluster Prometheus (k8s/monitoring/base/prometheus.yaml),
+# reached over its internal ClusterIP Service DNS name. `access: proxy` means the
+# Grafana SERVER makes the query server-side, so a browser never talks to
+# Prometheus directly and Prometheus stays internal-only (ClusterIP). The fixed
+# `uid: prometheus` is the stable handle every dashboard JSON references, so the
+# dashboards are portable and provisioning is deterministic.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: dashboards
+    app.kubernetes.io/managed-by: kustomize
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        # The internal Prometheus Service (same namespace). Never a public URL —
+        # the query is proxied server-side by Grafana.
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+        # Provisioned data sources are locked in the UI: an operator cannot edit or
+        # delete this from Grafana; the file on disk is the single source of truth.
+        editable: false
+        jsonData:
+          # Match Prometheus's 30s scrape interval so Grafana's "auto" step never
+          # under-samples (prometheus-config.yaml global.scrape_interval).
+          timeInterval: 30s
+          httpMethod: POST

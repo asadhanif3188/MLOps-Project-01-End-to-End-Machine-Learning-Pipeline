@@ -25,6 +25,31 @@ resources:
   - blackbox-exporter.yaml
   - prometheus-config.yaml
   - prometheus.yaml
+  # Grafana dashboards layer (Sprint 8, PR 5; ADR-032). The datasource + dashboard-
+  # provider provisioning ConfigMaps and the hardened, internal-only Grafana
+  # Deployment/Service/SA. The admin Secret is created out-of-band (see
+  # grafana/grafana-admin-secret.example.yaml), never rendered here.
+  - grafana/grafana-datasource.yaml
+  - grafana/grafana-dashboard-provider.yaml
+  - grafana/grafana.yaml
+
+# The three dashboard JSON files are kept as first-class, version-controlled,
+# individually-validatable files under grafana/dashboards/ and packaged into ONE
+# ConfigMap (grafana-dashboards) here — so the JSON never has to be embedded as a
+# YAML string. Grafana's dashboard provider (grafana-dashboard-provider.yaml) mounts
+# and loads this ConfigMap. disableNameSuffixHash keeps the name stable
+# (`grafana-dashboards`, referenced by the Deployment volume) and matches the fixed-
+# name convention the rest of this stack uses; the provider re-reads the directory on
+# an interval, so a content change is picked up without a hash-driven pod restart.
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - grafana/dashboards/eks-platform-health.json
+      - grafana/dashboards/mlops-pipeline-operations.json
+      - grafana/dashboards/mlflow-platform-health.json
+
+generatorOptions:
+  disableNameSuffixHash: true
 
 # Common identifying metadata. includeSelectors is false so label transforms never
 # rewrite an immutable selector (same rationale as k8s/base).

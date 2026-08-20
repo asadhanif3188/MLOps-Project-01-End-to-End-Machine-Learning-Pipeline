@@ -1,0 +1,38 @@
+# Grafana dashboard provider (Sprint 8, PR 5; ADR-032). A "dashboard provider" tells
+# Grafana to load dashboard JSON from a directory on disk and keep it in sync — so
+# the three dashboards appear automatically at start-up with no manual import, and a
+# change to a committed JSON file is picked up without recreating the pod. Mounted
+# read-only at /etc/grafana/provisioning/dashboards.
+#
+# The provider points at /var/lib/grafana/dashboards, where the dashboards ConfigMap
+# (generated from the JSON files in ./dashboards by the kustomization) is mounted.
+# `foldersFromFilesStructure: false` + a fixed `folder` keeps all three under one
+# Grafana folder. `allowUiUpdates: false` makes the files authoritative: edits made
+# in the UI cannot overwrite the version-controlled JSON (the provisioning contract).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: dashboards
+    app.kubernetes.io/managed-by: kustomize
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name: mlops-dashboards
+        orgId: 1
+        folder: MLOps Platform
+        type: file
+        # Do not let a UI edit silently diverge from the committed JSON.
+        allowUiUpdates: false
+        disableDeletion: true
+        # Re-read the directory periodically so a ConfigMap change (projected into
+        # the mounted volume) is picked up without a pod restart.
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false

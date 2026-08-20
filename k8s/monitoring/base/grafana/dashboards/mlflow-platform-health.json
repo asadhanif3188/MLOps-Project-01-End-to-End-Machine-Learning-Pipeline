@@ -1,0 +1,250 @@
+{
+  "annotations": { "list": [] },
+  "description": "Layer 3/4 platform health for the MLflow tracking server and its PostgreSQL metadata backend. Answers: is MLflow available, are MLflow pods stable, is PostgreSQL available, and are either under resource pressure (memory / PVC fill / connections)? Availability comes from blackbox-exporter (/health) and postgres-exporter (pg_up); stability and resource pressure from kube-state-metrics, cAdvisor and the kubelet volume stats (ADR-031). Experiment data / model accuracy is owned by MLflow itself, not this dashboard.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["mlops", "mlflow", "postgres", "layer-3", "layer-4"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MLflow Platform Health",
+  "uid": "mlops-mlflow-platform-health",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "MLflow /health available",
+      "description": "blackbox probe_success against MLflow's /health endpoint: 1 = serving, 0 = down. MLflow has no native /metrics, so availability is proven by an external HTTP probe (ADR-031).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "no probe",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "Available", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(probe_success{job=\"blackbox-mlflow-health\"})", "instant": true } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "MLflow replicas available",
+      "description": "kube_deployment_status_replicas_available for the mlflow Deployment. 1 = the single tracking-server replica is serving (ADR-026).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_deployment_status_replicas_available{namespace=\"mlops\",deployment=\"mlflow\"})", "instant": true } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "MLflow restarts (1h)",
+      "description": "Container restart increase for mlflow pods over a bounded 1h window (kube_pod_container_status_restarts_total). > 0 signals an unstable server.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 10, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"mlops\",pod=~\"mlflow-.*\",pod!~\"mlflow-postgres.*\"}[1h]))", "instant": true } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "PostgreSQL up",
+      "description": "postgres-exporter pg_up: 1 = the exporter can connect and query the DB, 0 = it cannot. The exporter stays up even when the DB is down, so 0 is a true 'DB unreachable' signal (ADR-031).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "no exporter",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "Up", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(pg_up)", "instant": true } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "PostgreSQL ready replicas",
+      "description": "kube_statefulset_status_replicas_ready for the mlflow-postgres StatefulSet. 1 = the single-writer metadata DB pod is Ready (ADR-026).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_statefulset_status_replicas_ready{namespace=\"mlops\",statefulset=\"mlflow-postgres\"})", "instant": true } ]
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "MLflow memory vs limit %",
+      "description": "MLflow working-set memory as a percentage of its 2Gi limit (container_memory_working_set_bytes / kube_pod_container_resource_limits). Sustained > 90% is the memory-pressure early warning (ADR-026, measured ~1.7GiB).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "no data",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(container_memory_working_set_bytes{namespace=\"mlops\",pod=~\"mlflow-.*\",pod!~\"mlflow-postgres.*\",container!=\"\",container!=\"POD\"}) / sum(kube_pod_container_resource_limits{namespace=\"mlops\",pod=~\"mlflow-.*\",pod!~\"mlflow-postgres.*\",resource=\"memory\"})", "instant": true } ]
+    },
+    {
+      "id": 7,
+      "type": "gauge",
+      "title": "PostgreSQL memory vs limit %",
+      "description": "PostgreSQL working-set memory as a percentage of its 512Mi limit (cAdvisor / kube-state-metrics). Sustained > 90% is the memory-pressure early warning (ADR-026).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "no data",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(container_memory_working_set_bytes{namespace=\"mlops\",pod=~\"mlflow-postgres.*\",container!=\"\",container!=\"POD\"}) / sum(kube_pod_container_resource_limits{namespace=\"mlops\",pod=~\"mlflow-postgres.*\",resource=\"memory\"})", "instant": true } ]
+    },
+    {
+      "id": 8,
+      "type": "gauge",
+      "title": "PostgreSQL PVC used %",
+      "description": "Fill level of the Postgres 1Gi PVC = used / capacity (kubelet_volume_stats_*). The single highest-value storage signal given the fixed PVC; > 85% needs attention (ADR-031).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "no data",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"data-mlflow-postgres.*\"}) / sum(kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"data-mlflow-postgres.*\"})", "instant": true } ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "PostgreSQL DB size",
+      "description": "On-disk size of the mlflow database (pg_database_size_bytes). Feeds the PVC-fill signal above.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "no data",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "none", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(pg_database_size_bytes{datname=\"mlflow\"})", "instant": true } ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "MLflow /health probe duration",
+      "description": "How long the /health probe takes (probe_duration_seconds). A rising trend is a soft signal of a degrading server, ahead of an outright outage.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "probe_duration_seconds{job=\"blackbox-mlflow-health\"}", "legendFormat": "/health" } ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "MLflow & PostgreSQL working-set memory",
+      "description": "Raw working-set memory bytes for the MLflow server and Postgres pods (container_memory_working_set_bytes). Context for the vs-limit gauges above.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(container_memory_working_set_bytes{namespace=\"mlops\",pod=~\"mlflow-.*\",pod!~\"mlflow-postgres.*\",container!=\"\",container!=\"POD\"})", "legendFormat": "mlflow" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(container_memory_working_set_bytes{namespace=\"mlops\",pod=~\"mlflow-postgres.*\",container!=\"\",container!=\"POD\"})", "legendFormat": "postgres" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "PostgreSQL connections vs max",
+      "description": "Active backend connections (pg_stat_activity_count) against the server's max_connections (pg_settings_max_connections). Approaching the ceiling risks refused connections.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [ { "matcher": { "id": "byName", "options": "max_connections" }, "properties": [ { "id": "custom.drawStyle", "value": "line" }, { "id": "custom.lineStyle", "value": { "dash": [ 10, 10 ], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(pg_stat_activity_count)", "legendFormat": "active connections" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(pg_settings_max_connections)", "legendFormat": "max_connections" }
+      ]
+    }
+  ]
+}
