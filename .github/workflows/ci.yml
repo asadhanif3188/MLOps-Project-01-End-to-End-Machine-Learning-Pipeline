@@ -34,6 +34,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Trivy is pinned ONCE for the whole workflow so the two places it runs — the IaC
+# misconfiguration scan (terraform-validate job) and the container-image
+# vulnerability scan (docker job) — always use the SAME checksum-verified binary
+# and can never drift apart. Workflow-level env is exported into every step's
+# shell, so both jobs read ${TRIVY_VERSION} directly. Bump deliberately.
+env:
+  TRIVY_VERSION: "0.74.0"
+
 jobs:
   # ---------------------------------------------------------------------------
   # quality — the fast feedback gate: lint + format + tests on the host runner.
@@ -244,6 +252,121 @@ jobs:
           echo "::group::DVC entrypoint present"
           docker run --rm ml-pipeline:ci dvc --version
           echo "::endgroup::"
+
+      # Stage 11 — Build the MLflow server image. It is layered FROM the pipeline
+      # image just built (BASE_IMAGE=ml-pipeline:ci), so scanning it proves the ONE
+      # thing the pipeline scan cannot: the psycopg2-binary wheel added on top
+      # (docker/mlflow/Dockerfile). Everything else is inherited from the shared
+      # base, so this is a cheap, single-layer build — no second dependency stack.
+      # push:false by construction (a plain local build); the image is never
+      # published here.
+      - name: Build MLflow server image (layered on the pipeline image — no push)
+        run: |
+          set -euo pipefail
+          docker build -f docker/mlflow/Dockerfile \
+            --build-arg BASE_IMAGE=ml-pipeline:ci \
+            --build-arg VCS_REF="${{ github.sha }}" \
+            --build-arg BUILD_VERSION="ci-${{ github.run_number }}" \
+            -t mlflow-server:ci .
+
+      # Stage 12 — Trivy install (pinned, checksum-verified static binary). SAME
+      # supply-chain pattern the terraform-validate job uses for its IaC scan (and
+      # k8s-validate uses for kustomize/kubeconform): a pinned tarball whose sha256
+      # is verified against the release checksums BEFORE the binary is trusted —
+      # not a third-party action whose transitive setup pins have broken before.
+      # TRIVY_VERSION comes from the workflow-level env.
+      - name: Install Trivy (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          tar="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSLo "${tmp}/${tar}" "${base}/${tar}"
+          curl -fsSLo "${tmp}/checksums.txt" "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          ( cd "${tmp}" && grep "${tar}" checksums.txt | sha256sum -c - )
+          tar -xzf "${tmp}/${tar}" -C "${tmp}" trivy
+          sudo install -m 0755 "${tmp}/trivy" /usr/local/bin/trivy
+          trivy --version
+
+      # Stage 13 — Container-image vulnerability scan. Scans the ACTUAL images
+      # built above (loaded in the local daemon — never pulled from a registry, so
+      # this job stays credential-free and AWS-independent). Two passes per image,
+      # design of record ADR-035 / docs/container-image-scanning.md:
+      #
+      #   * REPORT (non-gating) — every HIGH/CRITICAL, FIXABLE OR NOT, is printed
+      #     and saved as a JSON artifact. Non-fixable findings are surfaced here,
+      #     never silently dropped: there is no upstream fix to apply, so gating on
+      #     them would only force a blanket mute (the "meaningless checkbox" this
+      #     PR avoids). They are re-evaluated every run and auto-promote to the gate
+      #     the moment a fix ships upstream.
+      #   * GATE (blocking) — `--ignore-unfixed` fails the job ONLY on a FIXABLE
+      #     HIGH/CRITICAL (a patched package version exists), which is genuinely
+      #     actionable: rebuild on a patched base or bump the dependency. This is
+      #     NOT a global ignore of HIGH/CRITICAL — fixable ones hard-fail; the rest
+      #     stay visible in the report.
+      #
+      # Justified, time-boxed exceptions (specific CVE id + rationale + expiry)
+      # live in .trivyignore.yaml; Trivy auto-expires them. The vuln DB fetch is
+      # the only network dependency (same as the IaC scan). `--scanners vuln`
+      # keeps the scan to CVEs (deterministic); `--skip-version-check` silences the
+      # self-update nag.
+      - name: Trivy image scan (report + gate, both images)
+        env:
+          TRIVY_SEVERITY: "HIGH,CRITICAL"
+        run: |
+          set -uo pipefail
+          mkdir -p trivy-reports
+          fail=0
+          for pair in "pipeline ml-pipeline:ci" "mlflow mlflow-server:ci"; do
+            set -- $pair; name="$1"; img="$2"
+
+            echo "::group::Report — ${img} (all ${TRIVY_SEVERITY}, incl. non-fixable)"
+            # `--show-suppressed` keeps findings that .trivyignore.yaml suppresses
+            # VISIBLE in the report (marked as ignored), so the published artifact
+            # records exactly which CVEs an active exception is currently accepting —
+            # a "clean" report and a "clean only because of a live exception" report
+            # are distinguishable for audit (the gate pass below still EXCLUDES them).
+            # Report passes are non-gating (no --exit-code), so a non-zero here means
+            # Trivy itself errored (e.g. a vuln-DB fetch failure), not "found vulns".
+            # Surface that as a warning so an empty/truncated report artifact is never
+            # mistaken for a clean "no vulnerabilities" result. (The gate pass below
+            # still fails the job on the same error — this only makes it legible.)
+            if ! trivy image --scanners vuln --pkg-types os,library \
+                  --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
+                  --show-suppressed --skip-version-check --format table "${img}" \
+                  | tee "trivy-reports/${name}-report.txt"; then
+              echo "::warning::Trivy table report generation failed for ${img} (see gate below)"
+            fi
+            if ! trivy image --scanners vuln --pkg-types os,library \
+                  --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
+                  --show-suppressed --skip-version-check --format json \
+                  --output "trivy-reports/${name}-report.json" "${img}"; then
+              echo "::warning::Trivy JSON report generation failed for ${img} (see gate below)"
+            fi
+            echo "::endgroup::"
+
+            echo "::group::Gate — ${img} (FIXABLE ${TRIVY_SEVERITY} only)"
+            if ! trivy image --scanners vuln --pkg-types os,library \
+                  --ignore-unfixed --severity "${TRIVY_SEVERITY}" \
+                  --ignorefile .trivyignore.yaml --skip-version-check \
+                  --exit-code 1 --format table "${img}"; then
+              echo "::error::Trivy found FIXABLE ${TRIVY_SEVERITY} vulnerabilities in ${img}. Rebuild on a patched base or bump the offending package; only for a justified, time-boxed case add a specific CVE entry to .trivyignore.yaml (id + rationale + expiry)."
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${fail}"
+
+      # Stage 14 — Publish the scan reports as a build artifact regardless of
+      # gate outcome (`always()`), so a failing run is exactly when the full
+      # findings (including non-fixable ones) are one click away for triage.
+      - name: Upload Trivy image scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-reports
+          path: trivy-reports/
+          retention-days: 30
 
   # ---------------------------------------------------------------------------
   # k8s-validate — STATIC validation of the Kubernetes manifests. Independent of
@@ -461,9 +584,10 @@ jobs:
       contents: read
     env:
       # Pinned for reproducibility. Bump deliberately, not implicitly.
+      # TRIVY_VERSION is defined once at the workflow level (shared with the
+      # docker job's image scan) and inherited here.
       TF_VERSION: 1.9.8
       TFLINT_VERSION: v0.54.0
-      TRIVY_VERSION: 0.74.0
     defaults:
       run:
         working-directory: terraform

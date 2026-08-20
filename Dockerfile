@@ -53,6 +53,27 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip \
     && pip install -r requirements.txt
 
+# Security remediation for the container image scan (ADR-035). Raise the transitive
+# packages the scan flagged as FIXABLE HIGH to their patched versions. TARGETED
+# security-floor bumps, not a broad upgrade: the ML stack pinned by requirements.txt
+# is untouched, and the runtime import smoke-test in the final stage still gates the
+# build, so a bump that broke resolution or imports would fail here. Re-triage on each
+# rebuild — drop a floor once the naturally-resolved version already exceeds it.
+#   * cryptography >= 50.0.0  — CVE-2026-69247. A REAL installed dependency; this bump
+#                               CLEARS the finding (verified: gone from the scan).
+#   * msgpack      >= 1.2.1   — GHSA-6v7p-g79w-8964. Patches the venv's REAL msgpack.
+#   * setuptools   >= 78.1.1  — CVE-2025-47273. Patches the venv's REAL setuptools.
+# NOTE: the scanner ALSO reports msgpack 1.1.2 / setuptools 70.3.0 from `pip`'s own
+# VENDORED copies (pip/_vendor/…), which these bumps do NOT touch and which no
+# `pip install -U` can fix. pip stays because the mlflow-server image installs on top
+# of this one; those two residual, pip-internal findings are handled as documented,
+# time-boxed exceptions in .trivyignore.yaml (ADR-035 § Findings/Follow-ups).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade \
+        "cryptography>=50.0.0" \
+        "msgpack>=1.2.1" \
+        "setuptools>=78.1.1"
+
 
 # ---------------------------------------------------------------------------
 # Stage 2 — development: builder + the quality toolchain (Ruff, mypy, pytest,

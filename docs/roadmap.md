@@ -335,6 +335,22 @@ infrastructure defined as code.
   Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
+- ✅ **Container-image vulnerability scanning** (Sprint 8, PR 8): the `docker` CI job
+  now scans **both** shipped images — the `mlops-pipeline` runtime image and the
+  `mlflow-server` image layered on it — with **Trivy** over their OS + Python packages,
+  on the locally-built images (never pulled from a registry, so PR CI stays
+  credential-free/AWS-independent). The gate **fails on *fixable* HIGH/CRITICAL**
+  (`--ignore-unfixed`, actionable via a base/dependency bump) while **reporting** the
+  non-fixable ones (surfaced, not muted; auto-promoted to the gate when a fix ships) —
+  **not** a blanket ignore of HIGH/CRITICAL. Justified, time-boxed exceptions (CVE id +
+  rationale + `expired_at`, auto-expired) live in
+  [`.trivyignore.yaml`](../.trivyignore.yaml); a table + JSON report is published as a
+  build artifact. It **complements** ECR `scan_on_push`
+  ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)), the registry-side layer.
+  This delivers the **scanning** slice of the v3 supply-chain item; **SBOM** and **image
+  signing** (cosign) remain deferred
+  ([ADR-035](decisions/ADR-035-container-image-scanning.md),
+  [`docs/container-image-scanning.md`](container-image-scanning.md)).
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the
   **experiment-tracking** path (tracking now runs on the in-cluster MLflow platform,
   [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), but the DVC **data/model

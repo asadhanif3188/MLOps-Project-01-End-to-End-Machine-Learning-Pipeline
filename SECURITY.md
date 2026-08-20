@@ -59,6 +59,22 @@ Contributors and users should follow these practices:
 - **Rotate credentials** if they are ever exposed, and remove them from history.
 - **Review dependencies.** Keep `requirements.txt` up to date and monitor for
   known vulnerabilities.
+- **Container image vulnerability scanning.** Both shipped images — the
+  `mlops-pipeline` runtime image and the `mlflow-server` image layered on it — are
+  scanned with **Trivy** on every push/PR in the `docker` CI job, over their OS **and**
+  Python packages. The gate fails on **fixable** HIGH/CRITICAL vulnerabilities (a
+  patched version exists, so the fix is actionable: rebuild on a patched base or bump
+  the package); **non-fixable** HIGH/CRITICAL are **reported, not muted**, and
+  auto-promote to the gate the moment an upstream fix ships — so this is **not** a
+  blanket ignore of HIGH/CRITICAL. Justified, **time-boxed** exceptions (a specific CVE
+  id + rationale + `expired_at`, auto-expired by Trivy) live in
+  [`.trivyignore.yaml`](.trivyignore.yaml); there is no blanket severity mute. The scan
+  runs on the locally-built images — **never pulled from a registry** — so ordinary PR
+  CI stays credential-free and AWS-independent, and it **complements** (does not
+  replace) ECR `scan_on_push` ([ADR-021](docs/decisions/ADR-021-terraform-managed-ecr.md)),
+  the registry-side layer. Design of record:
+  [ADR-035](docs/decisions/ADR-035-container-image-scanning.md) /
+  [docs/container-image-scanning.md](docs/container-image-scanning.md).
 - **Least privilege.** Use scoped tokens for the DagsHub/MLflow and DVC remotes
   rather than broad credentials.
 - **Validate data sources.** Treat external datasets and artifacts as untrusted

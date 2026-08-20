@@ -66,11 +66,23 @@ feedback on the Kubernetes manifests and the Terraform IaC respectively.
 | — | Set up Buildx | Enables BuildKit (Dockerfile cache mounts) and the GitHub Actions layer cache. |
 | 9 | **Docker Build** | Builds the `runtime` (production) target with `docker/build-push-action@v6`, **`push: false`** and **`load: true`** (image loaded locally for validation, never published). Stamps `VCS_REF`/`BUILD_VERSION` build args; caches layers via `type=gha`. |
 | 10 | **Build validation** | Runs the freshly built image and asserts its contract: it runs as the **non-root** user (UID `10001`), the core stack (`sklearn`, `mlflow`, `dvc`, `pandas`) imports cleanly, and the `dvc` entrypoint CLI is present. A build that produces an unusable image fails here. |
+| 11 | **Build MLflow image** | Builds `mlflow-server:ci` FROM the pipeline image just built (`BASE_IMAGE=ml-pipeline:ci`) — a cheap single-wheel layer (`psycopg2-binary`) so the platform image can be scanned too. |
+| 12 | **Install Trivy** | Pinned (`TRIVY_VERSION`, shared with the IaC scan), checksum-verified static binary — the same supply-chain pattern as kustomize/kubeconform/promtool. |
+| 13 | **Image vulnerability scan** | `trivy image` over **both** built images (OS + Python packages), never pulled from a registry so the job stays **credential-free/AWS-independent**. Two passes per image: a **report** (all HIGH/CRITICAL, fixable or not) and a **gate** (`--ignore-unfixed --exit-code 1`) that **fails only on *fixable* HIGH/CRITICAL**. Non-fixable findings are reported, not muted. Justified, time-boxed exceptions live in [`.trivyignore.yaml`](../.trivyignore.yaml). Design of record: [ADR-035](decisions/ADR-035-container-image-scanning.md), [container-image-scanning.md](container-image-scanning.md). |
+| 14 | **Upload scan reports** | Publishes the table + JSON as the `trivy-image-reports` artifact with `always()`, so a *failing* run has the full findings one click away. |
 
 > Only the **runtime** target is built in CI (it is the shippable artifact and its
 > Dockerfile smoke-test already exercises the environment at build time). The
 > `development` image is a local convenience and is validated implicitly by the
-> `quality` job running the same tools.
+> `quality` job running the same tools. The `mlflow-server` image (stage 11) is built
+> **only** to be scanned — it layers one wheel on the same base.
+
+> **Severity + fixability policy (stage 13).** HIGH/CRITICAL gate; MEDIUM/LOW do not.
+> A **fixable** HIGH/CRITICAL fails the build (rebuild on a patched base or bump the
+> package — always actionable); a **non-fixable** one is **surfaced but not gated** and
+> auto-promotes to the gate the moment a fix ships upstream. This is *not* a global
+> ignore of HIGH/CRITICAL — it is the treatment that keeps the gate meaningful rather
+> than a checkbox. Full policy: [container-image-scanning.md](container-image-scanning.md).
 
 ### Job 3 — `k8s-validate` (Kubernetes Manifest Validation, static)
 
@@ -283,8 +295,12 @@ project roadmap ([roadmap.md](roadmap.md)):
 1. **Publish the image (v3).** On a tagged release, push the validated image to a
    registry (e.g. GHCR) with immutable, provenance-stamped tags. Requires adding
    `packages: write` permission and registry login — deliberately absent today.
-2. **Supply-chain hardening (v3).** Vulnerability scanning (e.g. Trivy/Grype),
-   SBOM generation, and image signing (cosign) as release gates.
+2. **Supply-chain hardening (v3).** *Vulnerability scanning delivered* — the `docker`
+   job runs Trivy over both shipped images on every push/PR, failing on **fixable**
+   HIGH/CRITICAL and reporting the rest ([ADR-035](decisions/ADR-035-container-image-scanning.md),
+   [container-image-scanning.md](container-image-scanning.md)). Still to come: **SBOM
+   generation** (`trivy image --format cyclonedx/spdx`) and **image signing** (cosign)
+   as release gates.
 3. **Automated pipeline validation.** *Delivered.* CI validates the pipeline
    **definition** offline — `dvc dag` + local `dvc status` plus the `contract`
    tests (Job 1, stages 6–7) — **and** now runs a real **execution** check: a
@@ -321,6 +337,8 @@ choice and the orchestration/secret-handling approach as open decisions).
 - [ADR-012](decisions/ADR-012-kubernetes-manifest-validation.md) — Kubernetes manifest validation decision record
 - [ADR-019](decisions/ADR-019-terraform-ci-validation.md) — Terraform CI validation decision record
 - [terraform/README.md](../terraform/README.md) — the Terraform IaC and how to validate/plan it locally
+- [container-image-scanning.md](container-image-scanning.md) — the image vulnerability scan (policy + local run)
+- [ADR-035](decisions/ADR-035-container-image-scanning.md) — container-image scanning decision record
 - [containerization.md](containerization.md) — image design and the container's role in CI/CD
 - [ADR-005](decisions/ADR-005-containerization-strategy.md) — containerization decision record
 - [docker-development.md](docker-development.md) — local Docker Compose workflow
