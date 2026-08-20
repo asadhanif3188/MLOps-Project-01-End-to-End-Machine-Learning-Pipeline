@@ -1,0 +1,64 @@
+# Trivy CONTAINER-IMAGE vulnerability-scan exceptions.
+#
+# Design of record: docs/decisions/ADR-035-container-image-scanning.md and
+# docs/container-image-scanning.md. Consumed by the `docker` job's image scan in
+# .github/workflows/ci.yml (`trivy image --ignorefile .trivyignore.yaml`).
+#
+# ── What this file is (and is NOT) ──────────────────────────────────────────
+# This is the JUSTIFIED, TIME-BOXED exception list for the two project images
+# (mlops-pipeline, mlflow-server). It is NOT how non-fixable findings are
+# handled — those are managed by the scan's `--ignore-unfixed` gate flag (they
+# are reported but do not block, because no upstream fix exists to apply). This
+# file is ONLY for the rare case where a *FIXABLE* HIGH/CRITICAL cannot be
+# remediated immediately and we consciously accept it for a bounded window
+# (e.g. the fix needs a major upgrade under regression test, or the CVE is a
+# confirmed false-positive / not reachable in how we use the package).
+#
+# There is DELIBERATELY no blanket severity mute and no un-scoped ignore here —
+# that would be the "meaningless checkbox" this control exists to avoid. Every
+# entry MUST be a specific CVE id and MUST carry:
+#   * id          — the exact vulnerability identifier (CVE-…, GHSA-…),
+#   * statement    — the rationale: why it is accepted right now,
+#   * expired_at   — the review/expiry date (YYYY-MM-DD). Trivy AUTOMATICALLY
+#                    stops honouring the entry after this date, so a stale
+#                    exception re-breaks CI instead of hiding a risk forever.
+#
+# Re-triage this list on every dependency/base-image bump. Prefer REMEDIATING
+# (rebuild on a patched base, bump the package) over adding an entry — the same
+# discipline terraform/.trivyignore follows for the IaC scan, where two whole
+# suppression sets were later removed once the config was actually fixed.
+#
+# ── Current state ───────────────────────────────────────────────────────────
+# Two exceptions, both for the SAME root cause: they are `pip`'s VENDORED copies
+# (pip/_vendor/…), not independently-installed packages, so no `pip install -U`
+# resolves them (the fix lives in a future pip/base-image release). See ADR-035
+# § "Findings" and docs/container-image-scanning.md. The one genuinely fixable
+# finding — cryptography 49.0.0 → 50.0.0 (CVE-2026-69247) — was REMEDIATED in the
+# Dockerfile, not excepted.
+
+vulnerabilities:
+  - id: GHSA-6v7p-g79w-8964
+    statement: >-
+      msgpack 1.1.2 (Out-of-bounds read on Unpacker reuse; fixed in 1.2.1). The
+      flagged copy is `pip`'s VENDORED msgpack under
+      /usr/local/lib/python3.12/site-packages/pip/_vendor/msgpack — used only by
+      pip's HTTP cache during package installation, NOT importable by or on the
+      runtime pipeline's execution path (the container runs `dvc repro`, never
+      pip). It cannot be upgraded independently (pip pins its own vendored deps),
+      and pip must remain in the image because the mlflow-server image
+      (docker/mlflow/Dockerfile) is built FROM this one and `pip install`s
+      psycopg2-binary on top. The project's REAL msgpack dependency in the venv is
+      already patched to 1.2.1. Remediation is a base-image/pip bump (or removing
+      pip once the mlflow image no longer needs it) — tracked in ADR-035
+      § Follow-ups.
+    expired_at: 2026-11-18   # re-triage on the next base-image/pip bump; Trivy auto-expires
+  - id: CVE-2025-47273
+    statement: >-
+      setuptools 70.3.0 (PackageIndex path traversal; fixed in 78.1.1). The
+      flagged copy is `pip`'s VENDORED pkg_resources under
+      pip/_vendor/pkg_resources — same root cause and same reachability argument
+      as GHSA-6v7p-g79w-8964 above: it is pip-internal, not on the runtime
+      pipeline execution path, and not independently upgradable while pip stays in
+      the image for the mlflow build. The venv's REAL setuptools is already
+      patched (>= 78.1.1). Remediation tracked in ADR-035 § Follow-ups.
+    expired_at: 2026-11-18   # re-triage on the next base-image/pip bump; Trivy auto-expires

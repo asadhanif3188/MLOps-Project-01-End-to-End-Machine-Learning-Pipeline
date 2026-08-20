@@ -158,8 +158,11 @@ traceable to a commit:
    - a **human** tag — a SemVer release tag (`:1.2.0`) aligned with the project's
      [versioning policy](versioning.md), plus a moving `:latest` for the default
      branch (never used as a deployment reference).
-3. **Scan.** A vulnerability scan (e.g. **Trivy**) runs against the built image
-   before it is published; the scan is a CI gate in Roadmap v3.
+3. **Scan.** A **Trivy** vulnerability scan runs against the built image before it is
+   published — **now a CI gate** (Sprint 8, PR 8): the `docker` job fails on *fixable*
+   HIGH/CRITICAL and reports the rest
+   ([ADR-035](decisions/ADR-035-container-image-scanning.md),
+   [container-image-scanning.md](container-image-scanning.md)).
 4. **Push.** Publish to a registry. **GitHub Container Registry (GHCR)** is the
    default choice because the repository is on GitHub and CI (Roadmap v3) will
    authenticate to it natively.
@@ -260,10 +263,12 @@ repository's existing [Security Policy](../SECURITY.md). The controls:
   builds, and no accidental secret or large-artifact leakage into layers.
 - **Pinned dependencies.** Base image digest and Python requirements are pinned
   so a build cannot silently pull a compromised or breaking version.
-- **Vulnerability scanning.** A CVE scan (e.g. **Trivy**) is part of the designed
-  image lifecycle ([§5](#5-image-lifecycle)); the current CI
-  ([§14](#14-cicd-integration)) builds and validates the image but does not yet
-  gate on a scan.
+- **Vulnerability scanning.** A **Trivy** CVE scan is a **live CI gate** (Sprint 8,
+  PR 8): the `docker` job ([§14](#14-cicd-integration)) scans both shipped images and
+  **fails on *fixable* HIGH/CRITICAL** (reporting non-fixable ones without muting them)
+  — the image-lifecycle "scan" step ([§5](#5-image-lifecycle)) is now enforced, not just
+  designed ([ADR-035](decisions/ADR-035-container-image-scanning.md),
+  [container-image-scanning.md](container-image-scanning.md)).
 - **Read-only root filesystem where feasible.** Runtime containers request a
   read-only root FS, with writes confined to explicit volumes/`tmpfs`
   ([§11](#11-volume-strategy)). This aligns with the Kubernetes restricted

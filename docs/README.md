@@ -33,6 +33,7 @@ repository.
 | [Containerization Strategy](containerization.md) | Design and build of the container image (dev/prod stages, security, K8s/CI readiness) |
 | [Docker Development Workflow](docker-development.md) | Running the local dev environment with Docker Compose (startup, logs, rebuild, troubleshooting) |
 | [CI/CD](ci-cd.md) | Continuous integration pipeline (stages, failure strategy, local validation) and the future CD roadmap |
+| [Container Image Scanning](container-image-scanning.md) | The Sprint 8 image vulnerability scan (PR 8): the two images scanned, the severity + **fixable-vs-non-fixable** gate policy, the time-boxed `.trivyignore.yaml` exception mechanism, and how to run it locally |
 | [Kubernetes Architecture](kubernetes-architecture.md) | The pipeline as a Kubernetes batch `Job`: workload model, boundaries, and the local-vs-production split |
 | [Kubernetes Operations](kubernetes-operations.md) | Day-2 operations runbook: deploy/observe/logs/re-run/cleanup, a troubleshooting matrix, and the honest observability posture (local only) |
 | [Kubernetes Security](kubernetes-security.md) | Identity, `securityContext`, secret handling, controls→evidence checklist, and what is explicitly not claimed |
