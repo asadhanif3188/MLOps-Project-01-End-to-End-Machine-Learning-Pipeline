@@ -26,7 +26,8 @@ pipeline's [structured logs](logging.md). Answering an ordinary operational
 question — *"did the overnight pipeline run succeed?"*, *"is MLflow about to hit
 its memory limit?"*, *"is the Postgres volume filling up?"* — needs a human at a
 terminal at the right moment. The [roadmap](roadmap.md) names this gap plainly:
-monitoring is ⬜ in v5 and a headline objective of v6.
+monitoring is now 🚧 in v5 (this PR defines the architecture) and a headline
+objective of v6.
 
 Sprint 8 closes the *design* of that gap. The stack is **Prometheus + Grafana**,
 self-hosted and internal-only, for the reasons in
@@ -50,7 +51,7 @@ The platform has four things worth observing, each with a different shape:
 
 | # | Layer | Kind | Key property for observability |
 |---|-------|------|--------------------------------|
-| 1 | Kubernetes platform | EKS control plane + 1 managed node ([`terraform/eks.tf`](../terraform/eks.tf)) | Long-running; standard node/pod signals |
+| 1 | Kubernetes platform | EKS control plane + a small managed node group (2 nodes by default; [`terraform/eks.tf`](../terraform/eks.tf)) | Long-running; standard node/pod signals |
 | 2 | **MLOps pipeline** | `batch/v1` **Job** ([`k8s/base/job.yaml`](../k8s/base/job.yaml)) | **Ephemeral** — pod exits in < 1 min; no Service, no probes (ADR-009/011) |
 | 3 | MLflow tracking server | `Deployment` ([`k8s/base/mlflow/deployment.yaml`](../k8s/base/mlflow/deployment.yaml)) | Long-running; `/health` exists, **no native `/metrics`** |
 | 4 | PostgreSQL | `StatefulSet` ([`k8s/base/mlflow/postgres.yaml`](../k8s/base/mlflow/postgres.yaml)) | Single-writer; **fixed 1 Gi PVC**; durability is the point |
@@ -79,8 +80,9 @@ node daemon, **cAdvisor** = the kubelet's built-in per-container metrics,
 | Is CPU being throttled? | `rate(container_cpu_cfs_throttled_periods_total[5m])` | cAdvisor | Throttle panel | *(info only — expected on the CPU-capped Job, ADR-011)* |
 | Are pods stuck Pending / PVCs unbound? | `kube_pod_status_phase{phase="Pending"}`, `kube_persistentvolumeclaim_status_phase{phase!="Bound"}` | KSM | Scheduling panel | **PodPending / PVCUnbound** |
 
-**Limitations.** The validation cluster is **single-node** (ADR-017), so
-multi-node/HA signals have little to show; CPU throttling on the pipeline is
+**Limitations.** The validation cluster is **small** (a 2-node group by default,
+ADR-017; the Sprint 7 validation run used 1), so multi-node/HA signals have limited
+value; CPU throttling on the pipeline is
 **expected** (the CPU limit is the memory-safety control, ADR-011) and is
 information, not an alert.
 
@@ -144,13 +146,19 @@ endpoint on the Job's container is therefore unscrapable — there is nothing to
 scrape between runs, and a fast run can finish *between two scrapes*. A naïve
 long-running `/metrics` endpoint is **not** automatically the right design here.
 
-**The chosen answer — kube-state-metrics reflects the persistent `Job` object, not
-the pod.** KSM is a long-running Deployment that watches the Kubernetes API and
-exposes API-object *state* as metrics. The **`Job` object outlives its pod** (until
-deleted or `ttlSecondsAfterFinished` elapses), so the Job's terminal state is a
-**stable series on an always-up target** — no live pod required. Every Layer 2
-operational question except per-stage timing is answered this way, with **zero
-application change**.
+**The chosen answer — kube-state-metrics reflects the persistent `Job` (and its
+finished `Pod`) object, not a live scrape target.** KSM is a long-running
+Deployment that watches the Kubernetes API and exposes API-object *state* as
+metrics. The **`Job` object outlives the pod's process** (until deleted or
+`ttlSecondsAfterFinished` elapses), so the Job's terminal state is a **stable
+series on an always-up target** — no live pod required. Most Layer 2 signals come
+from the **Job** object (`kube_job_status_*`); the one exception is **OOMKilled**,
+which is a **Pod**-object series (`kube_pod_container_status_last_terminated_reason`)
+— it stays scrapable because the Job's finished pod is retained by owner-reference
+for as long as the Job itself (the same `ttlSecondsAfterFinished` cascade removes
+both). Either way KSM is scraping a persistent API object, not the exited process,
+so every Layer 2 operational question except per-stage timing is answered with
+**zero application change**.
 
 ### Trade-off analysis of the candidate approaches
 
@@ -176,8 +184,18 @@ this reliable — both are design obligations, not afterthoughts:
 2. **Scrape once, keep forever (within retention).** Once Prometheus has scraped
    the terminal state, those samples live in its TSDB for the **whole retention
    window** even after the Job object is deleted. So the narrow requirement is:
-   *the finished Job object must outlive one scrape interval* — which (1)
+   *the finished Job (and its pod) must outlive one scrape interval* — which (1)
    guarantees.
+
+> **Re-run tension (a PR-2 design note).** The base Job has a fixed
+> `metadata.name: mlops-pipeline` ([`k8s/base/job.yaml`](../k8s/base/job.yaml)), and
+> a finished Job of that name must be deleted before the same-named Job can be
+> re-submitted. So "retain the finished Job for many scrapes" and "re-run the
+> pipeline" pull against each other: deleting the old Job to re-run drops its **live**
+> KSM gauges (the already-scraped samples still persist in the TSDB per (2), but the
+> "last-run" tile then tracks the newest Job). PR 2 must choose the TTL — and whether
+> to move to `generateName` / delete-before-recreate — with this trade-off explicit,
+> not silently.
 
 **Deferred, and only if justified — Pushgateway for per-stage duration.** The one
 genuinely operational signal KSM cannot give is *"which stage took the longest?"*.
@@ -221,8 +239,15 @@ claimed** without long-term data.
 |---|---|---|---|
 | **Pipeline success indicator** | The last submitted pipeline Job reaches `Complete` (exit 0) | ADR-009/011 completion semantics | `PipelineJobFailed` alert; last-run tile |
 | **MLflow availability** | `/health` returns 200 during a pipeline execution window | Existing `/health` probe (ADR-026) | `MLflowDown` alert (blackbox `probe_success`) |
-| **Memory headroom** | No workload sustains **> 90%** of its memory limit | Measured limits (ADR-011: 512 Mi pipeline; ADR-026: 2 Gi MLflow, 512 Mi PG) | `*MemoryHigh` alerts |
+| **Memory headroom** | No **long-running** workload sustains **> 90%** of its memory limit | Measured limits (ADR-026: 2 Gi MLflow, 512 Mi PG) | `*MemoryHigh` alerts |
 | **Storage headroom** | Postgres PVC stays **< 85%** full | Fixed 1 Gi PVC (ADR-026) | `PostgresPVCAlmostFull` alert |
+
+> **Memory headroom applies to the long-running workloads (MLflow, PostgreSQL).**
+> The pipeline **Job** runs for under a minute, so a "sustained > 90% for N min"
+> expectation cannot meaningfully fire for it — its memory-safety control is the
+> **`OOMKilled`** signal (`PipelineJobOOMKilled`, [Layer 2](#layer-2--mlops-pipeline-the-ephemeral-job)),
+> not a sustained-usage threshold. The pipeline's 512 Mi limit is still enforced by
+> the kernel (ADR-011); it just surfaces as a kill event, not a headroom gauge.
 
 > **Not claimed:** a "% of runs succeeded" SLO (needs run history the project does
 > not yet accumulate), a 99.x% availability figure (single replica, ephemeral
@@ -247,7 +272,11 @@ claimed** without long-term data.
 ## 8. Retention & resource trade-offs
 
 - **Local TSDB, short retention (target 7–15 days).** No long-term/remote store —
-  that is production capacity this project does not need (ADR-020).
+  that is production capacity this project does not need (ADR-020). The window is
+  meaningful mainly for a **persistent local cluster** (e.g. Docker Desktop); on the
+  **same-day provision→prove→destroy** cloud run (ADR-020) the effective history is
+  only as long as the stack is live, so cloud evidence is captured in-session (see
+  [§ runtime evidence](#runtime-evidence-what-later-sprint-8-prs-must-prove)).
 - **Storage: PVC vs `emptyDir`, resolved per environment.** A small **PVC**
   survives a Prometheus pod restart but is a standing EBS cost and a teardown step;
   an **`emptyDir`** is free and truly ephemeral but loses metrics on restart/teardown.

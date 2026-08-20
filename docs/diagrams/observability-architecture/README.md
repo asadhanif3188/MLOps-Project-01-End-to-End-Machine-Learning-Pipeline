@@ -107,9 +107,12 @@ Layers surfaced:  1) K8s platform   2) Pipeline Job (ephemeral, via KSM)   3) ML
 
 The pipeline **pod exits in under a minute** and has no Service to scrape
 (ADR-009/011). The dashed **Job OBJECT** node is the key: **kube-state-metrics
-watches the persistent `Job` API object, not the ephemeral pod**, so
-`succeeded / failed / start_time / completion_time / OOMKilled` remain scrapable
-after the pod is gone — provided the finished Job outlives one scrape
+watches the persistent `Job` API object, not the ephemeral process**, so
+`succeeded / failed / start_time / completion_time` remain scrapable after the pod
+is gone. The one Pod-object signal, **OOMKilled**
+(`kube_pod_container_status_last_terminated_reason`), stays scrapable too because the
+Job's finished pod is retained by owner-reference for as long as the Job — all
+provided the finished Job (and its pod) outlives one scrape
 (`ttlSecondsAfterFinished`). Full reasoning and the rejected alternatives
 (Pushgateway, custom exporter, keep-alive sidecar) are in
 [docs/observability.md § 4](../../observability.md#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable)

@@ -36,7 +36,8 @@ metadata, and an S3 dataset path, all proven on real EKS
 ([Sprint 7 runtime evidence](../proof/sprint-07-runtime-evidence.md)). But its
 **operational visibility is exactly what it was in Sprint 5**: `kubectl get`,
 `kubectl describe`, `kubectl logs`, and the pipeline's structured logs. The
-roadmap has always named this gap honestly — monitoring is ⬜ in
+roadmap has always named this gap honestly — monitoring, ⬜ through Sprint 7 and
+🚧 as of this ADR, in
 [v5](../roadmap.md#version-5--production-cloud-platform) ("diagnosis is `kubectl`
 + structured logs") and a headline objective of
 [v6](../roadmap.md#version-6--enterprise-mlops). Answering questions like *"did
@@ -129,13 +130,14 @@ workload needs rather than what is possible.
 This is the load-bearing decision. The pipeline Job's pod exits; a pull-scraped
 `/metrics` endpoint on it cannot work. The strategy:
 
-**Primary — kube-state-metrics reflects the persistent `Job` object, not the
-ephemeral pod.** KSM is a long-running Deployment that watches the Kubernetes API
-and exposes the *state of API objects* as metrics. The **`Job` object survives its
-pod** (until it is deleted or its `ttlSecondsAfterFinished` elapses), so the Job's
-terminal state is a **stable, scrapable series on an always-up target** — no live
-pod required. This makes the ephemeral Job's *operational* signals queryable
-after the fact, entirely without touching the application:
+**Primary — kube-state-metrics reflects the persistent `Job` (and its finished
+`Pod`) object, not the ephemeral process.** KSM is a long-running Deployment that
+watches the Kubernetes API and exposes the *state of API objects* as metrics. The
+**`Job` object survives the pod's process** (until it is deleted or its
+`ttlSecondsAfterFinished` elapses), so the Job's terminal state is a **stable,
+scrapable series on an always-up target** — no live pod required. This makes the
+ephemeral Job's *operational* signals queryable after the fact, entirely without
+touching the application:
 
 - `kube_job_status_succeeded` / `kube_job_status_failed` → **did the last run
   succeed?**
@@ -144,7 +146,10 @@ after the fact, entirely without touching the application:
 - `kube_job_status_failed` climbing across attempts → **did it burn `backoffLimit`
   retries** (the ADR-011 transient-fault path)?
 - `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}` → **was it
-  killed at its memory limit** (the exact ADR-011 failure mode)?
+  killed at its memory limit** (the exact ADR-011 failure mode)? *(This one is a
+  **Pod**-object series; it stays scrapable because the Job's finished pod is
+  retained by owner-reference for as long as the Job — the same TTL cascade removes
+  both.)*
 - `kube_job_status_active` / a `DeadlineExceeded` condition → **did it stall into
   `activeDeadlineSeconds`?**
 
@@ -164,7 +169,7 @@ design requirements, not afterthoughts:
   before Prometheus sees it.
 - Once Prometheus **has** scraped the terminal state, those samples live in its
   TSDB for the whole retention window even after the Job object is gone. So the
-  requirement is narrow: *the finished Job object must outlive one scrape*, which a
+  requirement is narrow: *the finished Job (and its pod) must outlive one scrape*, which a
   sensible TTL guarantees.
 
 **Deferred — Pushgateway, for per-stage granularity only, and only if justified.**
