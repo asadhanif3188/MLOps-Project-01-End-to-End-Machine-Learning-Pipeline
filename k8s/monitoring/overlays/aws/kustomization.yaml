@@ -1,0 +1,24 @@
+# AWS monitoring overlay — the metrics foundation on the Terraform-provisioned EKS
+# platform. Sprint 8, PR 2.
+#
+# The monitoring base is environment-independent: the component images are pulled
+# from public registries (the private EKS nodes reach them via the NAT gateway,
+# ADR-015), and the TSDB is an emptyDir — no cloud-specific storage class or
+# credential is required for this PR. So, like the local overlay, this one
+# currently just includes the base.
+#
+# Deferred cloud deltas that would land HERE, not in the base, when justified:
+#   * a gp3-backed PVC for the Prometheus TSDB (the same env-specific
+#     storageClassName pattern the mlops AWS overlay applies to the Postgres PVC),
+#     if survive-a-restart is ever wanted on a longer-lived cluster;
+#   * remote_write to Amazon Managed Prometheus (AMP) — explicitly OUT OF SCOPE
+#     per ADR-028 § 5 (no long-term/remote store on an ephemeral cluster).
+# Keeping the base clean means EKS inherits the identical, hardened stack the
+# local cluster validates — the local/cloud parity principle of ADR-026/ADR-027.
+#
+# Render and inspect with:  kustomize build k8s/monitoring/overlays/aws
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base

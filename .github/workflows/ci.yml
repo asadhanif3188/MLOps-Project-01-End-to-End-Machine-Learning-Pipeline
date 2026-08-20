@@ -328,7 +328,11 @@ jobs:
       - name: Render + schema validation (kustomize + kubeconform)
         run: |
           set -euo pipefail
-          for target in k8s/base k8s/overlays/local k8s/overlays/aws; do
+          # The mlops workload (base + both overlays) AND the SEPARATE monitoring
+          # kustomize root (Sprint 8, PR 2 — k8s/monitoring). The monitoring stack
+          # is its own root with its own namespace, so it renders independently.
+          for target in k8s/base k8s/overlays/local k8s/overlays/aws \
+                        k8s/monitoring/base k8s/monitoring/overlays/local k8s/monitoring/overlays/aws; do
             echo "::group::kubeconform ${target} (k8s ${K8S_SCHEMA_VERSION}, strict)"
             kustomize build "${target}" \
               | kubeconform -strict -summary -verbose \
@@ -355,6 +359,13 @@ jobs:
       # proves its cloud-specific patch (ECR image, pull policy, dataset mount)
       # keeps every Sprint 5 security control intact — the overlay inherits them
       # from the base and weakens none.
+      # NOTE: each invocation ALSO runs the monitoring-stack contract pass
+      # (Sprint 8, PR 2 — k8s/monitoring): validate.py validates the given mlops
+      # overlay and then, automatically, the separate k8s/monitoring/base render
+      # against its own security contract (read-only RBAC, the token-iff-API rule,
+      # the single documented node-exporter hostPath/PSA exception, ClusterIP-only
+      # exposure, and the pipeline Job's ttlSecondsAfterFinished queryability
+      # contract). See k8s/validate.py `validate_monitoring()` and ADR-029.
       - name: Static security, required-field & runtime-contract checks (k8s/validate.py)
         run: |
           set -euo pipefail
@@ -561,5 +572,25 @@ jobs:
           for overlay in k8s/overlays/local k8s/overlays/aws; do
             echo "::group::kubectl apply -k ${overlay} --dry-run=server (admission only)"
             kubectl apply -k "${overlay}" --dry-run=server
+            echo "::endgroup::"
+          done
+          # The SEPARATE monitoring stack (Sprint 8, PR 2). Like the mlops overlays,
+          # its namespaced objects need the namespace to exist first (a server
+          # dry-run does not persist the Namespace object in the same stream). We
+          # create `monitoring` for real WITH its `privileged` Pod Security label —
+          # the label node-exporter's read-only hostPath requires (ADR-029) — so the
+          # DaemonSet's pod template is evaluated against the correct PSA level.
+          echo "::group::create namespace monitoring (real, privileged PSA, on throwaway cluster)"
+          kubectl create namespace monitoring --dry-run=client -o yaml \
+            | kubectl label --local -f - -o yaml \
+                pod-security.kubernetes.io/enforce=privileged \
+                pod-security.kubernetes.io/enforce-version=v1.31 \
+            | kubectl apply -f -
+          echo "::endgroup::"
+          # Cluster-scoped RBAC (ClusterRole/Binding) is admitted too. Proves the
+          # stack is admissible (API validation + Pod Security), not that it runs.
+          for target in k8s/monitoring/overlays/local k8s/monitoring/overlays/aws; do
+            echo "::group::kubectl apply -k ${target} --dry-run=server (admission only)"
+            kubectl apply -k "${target}" --dry-run=server
             echo "::endgroup::"
           done

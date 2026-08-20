@@ -82,6 +82,27 @@ spec:
   # performance SLO; tightening it toward the real runtime would risk killing a
   # legitimately slow-but-progressing run on a constrained node.
   activeDeadlineSeconds: 1800
+  # Retain the FINISHED Job (and its pod) for one hour after completion, then let
+  # the Job controller auto-delete it. This honours the observability "queryability
+  # contract" (ADR-028 § 3, docs/observability.md § 4): the pipeline pod exits in
+  # under a minute, but kube-state-metrics reflects the persistent `Job`/`Pod`
+  # OBJECT, so `kube_job_status_succeeded/_failed/_completion_time` and the pod's
+  # `last_terminated_reason` (OOMKilled) stay scrapable ONLY while the finished Job
+  # object exists. 3600s comfortably outlives many 30s Prometheus scrape intervals
+  # (the scrape config in k8s/monitoring/base/prometheus-config.yaml), so the
+  # last-run gauges remain live for an ample post-completion evidence read; once
+  # Prometheus has scraped them, the samples persist in its TSDB for the whole
+  # retention window regardless. The value is a deliberate balance, not a default:
+  #   * long ENOUGH that the terminal state cannot vanish before a scrape (a tiny
+  #     TTL would lose history);
+  #   * bounded, so finished Jobs auto-reap instead of accumulating.
+  # Re-run tension (called out in docs/observability.md § 4): the Job has a fixed
+  # metadata.name, so re-submitting the SAME-named Job within the hour still needs
+  # the finished one deleted first (`kubectl delete job mlops-pipeline`). Already-
+  # scraped samples survive that delete in the TSDB; only the live "last-run" gauge
+  # then tracks the newest Job. Moving to `generateName` / delete-before-recreate is
+  # a deferred option, recorded — not silently adopted — in ADR-029.
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:

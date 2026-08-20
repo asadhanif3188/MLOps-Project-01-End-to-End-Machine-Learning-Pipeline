@@ -276,16 +276,25 @@ infrastructure defined as code.
   plan/apply (e.g. via OIDC) is future work. Provisioning today is a deliberate,
   operator-driven, own-account step.
 - 🚧 **Monitoring** and centralized logging for pipeline and infrastructure health —
-  the observability **architecture is now defined** (Sprint 8, PR 1): a self-hosted
+  the observability **architecture is defined** (Sprint 8, PR 1): a self-hosted
   Prometheus + Grafana stack over a four-layer model (Kubernetes platform, the
   batch pipeline Job, MLflow, PostgreSQL), with the ephemeral-Job metric problem
   solved via kube-state-metrics and SLO-style operational objectives
   ([Observability & Operations](observability.md),
-  [ADR-028](decisions/ADR-028-observability-architecture.md)). **Design only — no
-  component is deployed yet**; the stack, dashboards, exporters, alerts, and runtime
-  proof are the remaining Sprint 8 PRs (2–6). Centralized **log aggregation** and
-  **tracing** are deliberately deferred; today's diagnosis is `kubectl` + structured
-  logs.
+  [ADR-028](decisions/ADR-028-observability-architecture.md)). The **metrics
+  foundation is now built** (Sprint 8, PR 2) — version-controlled, hardened,
+  statically-validated manifests for **Prometheus + kube-state-metrics +
+  node-exporter + a cAdvisor scrape** (Layer 1 + the Layer 2 batch-Job signals);
+  **Grafana is not part of PR 2** (it is PR 3). Minimal, hand-written Kustomize,
+  ephemeral TSDB, read-only RBAC, and a single documented node-exporter Pod
+  Security exception
+  ([`k8s/monitoring/`](../k8s/monitoring/),
+  [Monitoring Operations](monitoring-operations.md),
+  [ADR-029](decisions/ADR-029-monitoring-foundation.md)). **Manifests only — not
+  deployed/runtime-proven yet** (no live cluster; runtime evidence is PR 6);
+  Grafana (PR 3), MLflow/Postgres exporters (PR 4), and alerts (PR 5) remain.
+  Centralized **log aggregation** and **tracing** are deliberately deferred;
+  today's diagnosis is `kubectl` + structured logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the
   **experiment-tracking** path (tracking now runs on the in-cluster MLflow platform,
   [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), but the DVC **data/model

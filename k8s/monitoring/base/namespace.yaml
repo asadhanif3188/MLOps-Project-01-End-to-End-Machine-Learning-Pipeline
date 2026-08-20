@@ -1,0 +1,66 @@
+# Namespace for the platform observability stack (Sprint 8, PR 2).
+#
+# A dedicated `monitoring` namespace owns the metrics foundation — Prometheus,
+# kube-state-metrics, and node-exporter (and, in later Sprint 8 PRs, Grafana,
+# blackbox-exporter, and postgres-exporter). Isolating the stack here keeps its
+# lifecycle, RBAC, and Pod Security expectations separate from the `mlops`
+# workload namespace, exactly as ADR-028 § 4 requires. The stack scrapes the
+# `mlops` workloads across the namespace boundary via least-privilege RBAC (see
+# prometheus.yaml); nothing in `mlops` is modified by this PR.
+#
+# Design of record: docs/decisions/ADR-028-observability-architecture.md and
+# docs/decisions/ADR-029-monitoring-foundation.md.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Pod Security Admission — the one deliberate, documented departure from the
+# `restricted` baseline the rest of the fleet enforces (the `mlops` namespace is
+# `restricted`, k8s/base/namespace.yaml).
+#
+# WHY `privileged` here, and ONLY here: node-exporter reads the node's kernel
+# interfaces (`/proc`, `/sys`) and the root filesystem to report node CPU,
+# memory, and disk metrics — the Layer 1 signals in docs/observability.md that no
+# other exporter can produce. Reading them requires `hostPath` volumes, which the
+# `restricted` AND `baseline` Pod Security Standards both forbid. There is no PSA
+# level between `baseline` and `privileged`, and PSA is namespace-scoped (it
+# cannot exempt a single workload), so admitting node-exporter's hostPath mounts
+# forces this namespace to `privileged` enforce. This is the sole reviewed
+# exception, justified in ADR-029.
+#
+# The exception is NARROW and COMPENSATED, not a blanket relaxation:
+#   * node-exporter's hostPaths are READ-ONLY and it still runs fully hardened —
+#     non-root (uid 65534), drop ALL capabilities, no privilege escalation, no
+#     privileged container, no host namespaces, seccomp RuntimeDefault.
+#   * Prometheus and kube-state-metrics use NO hostPath and remain
+#     restricted-EQUIVALENT by explicit securityContext (they would pass
+#     `restricted` on their own).
+#   * `warn`/`audit` are pinned at `baseline` so any workload that regresses in a
+#     way OTHER than node-exporter's known hostPath (a privileged container, a
+#     host namespace, a root user) is still surfaced at admission. node-exporter
+#     itself trips this baseline warn on its hostPath — that is expected and is
+#     the reviewed exception, not a new finding.
+#   * The extended k8s/validate.py monitoring contract (ADR-012/ADR-029) is the
+#     real, CI-enforced control: it asserts every component is hardened, that
+#     hostPath appears ONLY on node-exporter and only read-only, and that all
+#     RBAC is read-only. PSA is the cluster backstop; validate.py is the gate.
+#
+# Versions are pinned (not `latest`) so the admitted ruleset is deterministic
+# across cluster upgrades, matching the pinned schema (kubeconform) and admission
+# (kind v1.31) gates in CI; bump deliberately.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/managed-by: kustomize
+    # See the header: `privileged` enforce is required by node-exporter's
+    # read-only hostPath mounts; warn/audit stay at `baseline` to catch any
+    # regression beyond that single reviewed exception.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: v1.31
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.31
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.31

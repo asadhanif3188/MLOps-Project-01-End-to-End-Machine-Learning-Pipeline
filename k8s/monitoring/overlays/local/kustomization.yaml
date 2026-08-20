@@ -1,0 +1,16 @@
+# Local monitoring overlay — the metrics foundation for a local cluster
+# (Docker Desktop / kind / minikube). Sprint 8, PR 2.
+#
+# The monitoring base is already environment-independent (public images, emptyDir
+# TSDB), so locally there is nothing to change yet: this overlay simply includes
+# the base. It exists to preserve the repo's base/overlay convention ("render
+# through an overlay, never apply the base directly") and to give local-specific
+# tweaks a home when they arise (e.g. pinning imagePullPolicy for side-loaded
+# images, or a longer retention on a persistent Docker Desktop cluster).
+#
+# Render and inspect with:  kustomize build k8s/monitoring/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
