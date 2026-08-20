@@ -92,6 +92,12 @@ strict_equality = true
 # installed here. Ignoring their missing imports scopes "untyped" strictly to
 # those third-party boundaries; it does not weaken checking of the pipeline's own
 # code. (python-dotenv ships its own types, so it is omitted and stays checked.)
+#
+# prometheus_client (src/pipeline_metrics.py) DOES ship py.typed, so where it is
+# installed mypy uses its real types and fully checks our usage. It is listed only
+# so that a lean dev environment WITHOUT it installed does not fail the type check
+# on a "cannot find module" error for the lazily-imported push functions — CI always
+# has it (requirements.txt). ignore_missing_imports is a no-op when it is present.
 [[tool.mypy.overrides]]
 module = [
     "mlflow.*",
@@ -102,5 +108,7 @@ module = [
     "pandas",
     "pandas.*",
     "yaml",
+    "prometheus_client",
+    "prometheus_client.*",
 ]
 ignore_missing_imports = true

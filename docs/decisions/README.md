@@ -37,6 +37,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-027](ADR-027-s3-dataset-runtime-retrieval.md) | S3-Backed Runtime Dataset Retrieval (init container + Pod Identity) — closes M-04 | Accepted (validated) | 2026-08-19 |
 | [ADR-028](ADR-028-observability-architecture.md) | Observability Architecture (Prometheus + Grafana; four-layer model; batch-Job metrics via kube-state-metrics) | Accepted (design) | 2026-08-20 |
 | [ADR-029](ADR-029-monitoring-foundation.md) | Monitoring Foundation (Sprint 8 PR 2) — minimal hand-written Prometheus + kube-state-metrics + node-exporter; ephemeral TSDB; read-only RBAC; node-exporter PSA exception | Accepted (design) | 2026-08-20 |
+| [ADR-030](ADR-030-pipeline-operational-metrics.md) | Pipeline Operational Metrics (Sprint 8 PR 3) — per-stage duration/success via Pushgateway; bounded cardinality; per-run reset lifecycle; operational-vs-MLflow boundary; supersedes ADR-028's "Pushgateway deferred" | Accepted (design) | 2026-08-20 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and

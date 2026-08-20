@@ -284,15 +284,22 @@ infrastructure defined as code.
   [ADR-028](decisions/ADR-028-observability-architecture.md)). The **metrics
   foundation is now built** (Sprint 8, PR 2) — version-controlled, hardened,
   statically-validated manifests for **Prometheus + kube-state-metrics +
-  node-exporter + a cAdvisor scrape** (Layer 1 + the Layer 2 batch-Job signals);
-  **Grafana is not part of PR 2** (it is PR 3). Minimal, hand-written Kustomize,
-  ephemeral TSDB, read-only RBAC, and a single documented node-exporter Pod
-  Security exception
+  node-exporter + a cAdvisor scrape** (Layer 1 + the Layer 2 batch-Job signals).
+  Minimal, hand-written Kustomize, ephemeral TSDB, read-only RBAC, and a single
+  documented node-exporter Pod Security exception
   ([`k8s/monitoring/`](../k8s/monitoring/),
   [Monitoring Operations](monitoring-operations.md),
-  [ADR-029](decisions/ADR-029-monitoring-foundation.md)). **Manifests only — not
-  deployed/runtime-proven yet** (no live cluster; runtime evidence is PR 6);
-  Grafana (PR 3), MLflow/Postgres exporters (PR 4), and alerts (PR 5) remain.
+  [ADR-029](decisions/ADR-029-monitoring-foundation.md)). The **pipeline's own
+  operational metrics are now instrumented** (Sprint 8, PR 3): per-stage duration +
+  success/failure pushed to a scoped, hardened **Pushgateway** (the per-stage
+  granularity KSM cannot give), with bounded label cardinality, a per-run reset to
+  avoid stale series, best-effort emission, and a strict operational-vs-MLflow
+  ownership boundary — reversing ADR-028's "Pushgateway deferred" for this scoped use
+  ([`src/pipeline_metrics.py`](../src/pipeline_metrics.py),
+  [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)). **Manifests +
+  instrumentation only — not deployed/runtime-proven yet** (no live cluster; runtime
+  evidence is PR 6); **Grafana dashboards** (resequenced after PR 3),
+  MLflow/Postgres exporters (PR 4), and alerts (PR 5) remain.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the

@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from exceptions import PipelineError
 from logging_config import get_logger
+from pipeline_metrics import time_stage
 
 
 def run_stage(stage: str, main: Callable[[], None]) -> None:
@@ -27,13 +28,25 @@ def run_stage(stage: str, main: Callable[[], None]) -> None:
     exit with status ``1``. ``KeyboardInterrupt`` and ``SystemExit`` are *not*
     caught, so Ctrl-C and explicit exits behave normally.
 
+    As a side effect, the stage's operational metrics (wall-clock duration and
+    success/failure) are pushed to the Prometheus Pushgateway via
+    :func:`pipeline_metrics.time_stage` — a no-op unless ``PUSHGATEWAY_URL`` is set,
+    and best-effort so a monitoring outage never changes the outcome here
+    (Sprint 8, PR 3 — ADR-030).
+
     Args:
         stage: Stage name, used as the logger name (e.g. ``"train"``).
         main: Zero-argument callable that runs the stage end to end.
     """
     logger = get_logger(stage)
     try:
-        main()
+        # time_stage wraps the run to emit the stage's operational metrics
+        # (duration + success/failure) to the Pushgateway on exit — a no-op unless
+        # PUSHGATEWAY_URL is set, and best-effort so it never changes this
+        # function's failure behaviour (ADR-030). It re-raises any stage failure
+        # unchanged, so the except arms below are reached exactly as before.
+        with time_stage(stage):
+            main()
     except PipelineError as exc:
         # Expected failure: the message is already actionable; log it once here
         # (with the chained cause) rather than at every boundary it passed.

@@ -29,6 +29,7 @@ CORE_MODULES = [
     "exceptions",
     "logging_config",
     "pipeline_io",
+    "pipeline_metrics",
     "mlflow_config",
     "fetch_dataset",
     "stage_runner",

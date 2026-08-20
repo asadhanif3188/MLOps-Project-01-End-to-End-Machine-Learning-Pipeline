@@ -4,3 +4,4 @@ mlflow
 dvc-s3
 boto3
 python-dotenv
+prometheus-client

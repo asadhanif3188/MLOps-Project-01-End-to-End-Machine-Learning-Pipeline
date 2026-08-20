@@ -37,7 +37,7 @@ repository.
 | [Kubernetes Operations](kubernetes-operations.md) | Day-2 operations runbook: deploy/observe/logs/re-run/cleanup, a troubleshooting matrix, and the honest observability posture (local only) |
 | [Kubernetes Security](kubernetes-security.md) | Identity, `securityContext`, secret handling, controls→evidence checklist, and what is explicitly not claimed |
 | [Observability & Operations](observability.md) | 🚧 The Sprint 8 observability *architecture* (design only): the Prometheus/Grafana stack, the four-layer signal catalogue, how an ephemeral batch `Job`'s metrics stay queryable, SLO-style objectives, deferred areas, and the PR 2–6 delivery plan |
-| [Monitoring Operations](monitoring-operations.md) | 🚧 Runbook for the Sprint 8 PR 2 **metrics foundation** (Prometheus + kube-state-metrics + node-exporter): deploy, reach Prometheus, run a PromQL query, troubleshoot, and clean up (manifests defined & validated; not yet runtime-proven) |
+| [Monitoring Operations](monitoring-operations.md) | 🚧 Runbook for the Sprint 8 metrics foundation (Prometheus + kube-state-metrics + node-exporter, PR 2) **and the pipeline's operational metrics** (Pushgateway per-stage duration/success, PR 3): deploy, reach Prometheus, run a PromQL query, troubleshoot, and clean up (manifests defined & validated; not yet runtime-proven) |
 | [Cloud Operations](cloud-operations.md) | AWS/EKS lifecycle runbook (auth → init → plan → apply → verify → run → evidence → **destroy → verify clean**), the **AWS cost drivers**, safe teardown, and the honest limitations of the ephemeral validation environment |
 | [MLflow Platform](mlflow-platform.md) | The in-cluster MLflow tracking platform (server + PostgreSQL + S3): deploy, operate, the persistence test, and the AWS (EKS Pod Identity) notes |
 | [Dataset](dataset.md) | Dataset identity, version, and integrity — the S3 runtime-retrieval source of truth and how the `fetch-dataset` init container verifies it |
@@ -81,6 +81,7 @@ repository.
 | [ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md) | S3 Dataset Runtime Retrieval via EKS Pod Identity — closes M-04 |
 | [ADR-028](decisions/ADR-028-observability-architecture.md) | Observability Architecture (Prometheus + Grafana; four-layer model; batch-Job metrics via kube-state-metrics) |
 | [ADR-029](decisions/ADR-029-monitoring-foundation.md) | Monitoring Foundation (Sprint 8 PR 2) — minimal hand-written Prometheus + KSM + node-exporter; ephemeral TSDB; read-only RBAC; node-exporter PSA exception |
+| [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) | Pipeline Operational Metrics (Sprint 8 PR 3) — per-stage duration/success via Pushgateway; bounded cardinality; per-run reset lifecycle; operational-vs-MLflow boundary |
 
 ### Engineering Reviews
 
