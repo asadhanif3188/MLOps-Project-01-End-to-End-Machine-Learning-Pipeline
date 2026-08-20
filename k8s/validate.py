@@ -1237,8 +1237,7 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
         if name == HOSTPATH_EXEMPT_WORKLOAD:
             if hostpath_vols:
                 ro_ok = all(
-                    _mounts_readonly(c, hostpath_vols)
-                    for _, c in all_containers_of(wl)
+                    _mounts_readonly(c, hostpath_vols) for _, c in all_containers_of(wl)
                 )
                 r.check(
                     sec,
