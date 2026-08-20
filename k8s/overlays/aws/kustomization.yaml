@@ -26,6 +26,14 @@ kind: Kustomization
 
 resources:
   - ../../base
+  # AWS S3 NetworkPolicies (Sprint 8, PR 7; ADR-034): pipeline/MLflow egress to
+  # real Amazon S3 on 443, bounded to the PUBLIC internet only (0.0.0.0/0 minus
+  # RFC1918). This is the tightest HONEST bound the VPC CNI's standard NetworkPolicy
+  # can express — S3's dynamic public IPs cannot be pinned, and prefix lists / VPC
+  # endpoints / SGs are not expressible here. The "which bucket/actions" precision
+  # lives in IAM (Pod Identity) + a recommended VPC S3 endpoint. See the file header
+  # and ADR-034 § AWS egress.
+  - networkpolicy.yaml
 
 # Cloud image source. Nodes run in the PRIVATE subnets (ADR-015) and cannot see a
 # locally built image, so on EKS the workload image is PULLED from a registry —

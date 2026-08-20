@@ -38,6 +38,12 @@ resources:
   - grafana/grafana-datasource.yaml
   - grafana/grafana-dashboard-provider.yaml
   - grafana/grafana.yaml
+  # Least-privilege INGRESS NetworkPolicies (Sprint 8, PR 7; ADR-034): a
+  # default-deny-ingress baseline plus one explicit scrape/query path per component
+  # (Grafana->Prometheus, Prometheus->exporters, pipeline+Prometheus->Pushgateway).
+  # Egress is deliberately left unrestricted in this namespace (Prometheus/KSM must
+  # reach the env-specific Kubernetes API server) — see ADR-034 and the file header.
+  - networkpolicy.yaml
 
 # The three dashboard JSON files are kept as first-class, version-controlled,
 # individually-validatable files under grafana/dashboards/ and packaged into ONE

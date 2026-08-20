@@ -1,0 +1,184 @@
+# NetworkPolicies — the MLflow tracking platform's least-privilege paths
+# (Sprint 8, PR 7; ADR-034). Environment-INDEPENDENT ingress/egress for the three
+# platform workloads that live in every environment: the MLflow tracking server,
+# the PostgreSQL metadata backend, and the postgres-exporter. They compose with the
+# namespace-wide default-deny + DNS rules in ../networkpolicy.yaml (additive union)
+# and with the per-overlay S3 egress (local MinIO / AWS S3).
+#
+# The design mirrors the data-flow (ADR-026): the pipeline talks ONLY to the
+# tracking server; the tracking server is the ONLY client of Postgres and of S3;
+# the DB accepts connections ONLY from the server and its read-only exporter.
+# Expressed as policy, that means Postgres has NO egress path at all (it never
+# initiates a connection — DNS included, requirement "DNS only if actually
+# needed"), which is the tightest possible posture for the most sensitive workload.
+---
+# MLflow tracking server — INGRESS. The server is reached by exactly two clients:
+#   * the pipeline Job (mlflow-server:5000) — run logging + the readiness poll;
+#   * blackbox-exporter in the monitoring namespace — the Layer 3 /health probe
+#     (ADR-031). Prometheus does NOT connect to MLflow directly (MLflow has no
+#     native /metrics); it scrapes blackbox, which performs the GET — so only
+#     blackbox appears here, not Prometheus.
+# Health/readiness probes from the kubelet arrive from the NODE, not from a pod;
+# the enforcing CNIs this project targets (AWS VPC CNI network policy, Calico,
+# Cilium) permit node-sourced probe traffic, so a default-deny ingress does not
+# break the server's probes — the runtime allowed-path test verifies the pod stays
+# Ready under policy (ADR-034 § Health probes).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-ingress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The pipeline Job (same namespace).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlops-pipeline
+        # blackbox-exporter's /health probe (monitoring namespace).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: blackbox-exporter
+      ports:
+        - protocol: TCP
+          port: 5000
+---
+# MLflow tracking server — EGRESS (env-independent part). The server needs the
+# PostgreSQL backend (mlflow-postgres:5432) for experiment/run metadata. DNS is
+# covered by the namespace-wide allow-dns-egress. Its OTHER egress need — S3 for
+# artifact bytes — is environment-specific and added by the overlays (local:
+# MinIO:9000; aws: Amazon S3:443). The server does not call the Kubernetes API, so
+# no API-server egress is granted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-server
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-server
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# PostgreSQL — INGRESS. The metadata DB accepts connections from EXACTLY two
+# peers, both in this namespace:
+#   * the MLflow tracking server (its backend-store client);
+#   * the postgres-exporter (the read-only Layer 4 stats scraper, ADR-031).
+# Nothing else — not the pipeline, not Prometheus, not any other pod — may open a
+# connection to 5432. PostgreSQL has NO egress policy, so the default-deny leaves
+# it with zero outbound paths (it never initiates a connection; pg_isready probes
+# use 127.0.0.1). This is the least-privilege endpoint of the whole namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: mlflow-postgres
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow-server
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres-exporter
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# postgres-exporter — INGRESS. Scraped by Prometheus from the monitoring namespace
+# on its metrics port (9187). This is the cross-namespace path that keeps the
+# Layer 4 DB-health scrape working under default-deny (requirement 5 — do not block
+# monitoring).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-exporter-ingress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+---
+# postgres-exporter — EGRESS. It connects to PostgreSQL (mlflow-postgres:5432) to
+# read the statistics views (ADR-031). DNS is covered by allow-dns-egress (it
+# resolves the `mlflow-postgres` Service name). No other egress is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-exporter-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow-postgres
+      ports:
+        - protocol: TCP
+          port: 5432

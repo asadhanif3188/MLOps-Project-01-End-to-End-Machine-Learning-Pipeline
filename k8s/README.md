@@ -104,16 +104,34 @@ k8s/
 │   ├── dvc-config.yaml       # DVC no-SCM runtime config (config.local: core.no_scm=true) — PR 8
 │   ├── secret.example.yaml   # Secret TEMPLATE (placeholders; excluded from kustomize)
 │   ├── job.yaml              # the pipeline as a run-to-completion batch Job
+│   ├── networkpolicy.yaml    # least-privilege net paths: default-deny + DNS + pipeline egress — S8 PR7
 │   └── kustomization.yaml    # aggregates the base, applies common labels
 ├── overlays/
 │   ├── local/                # specialization for a local cluster (kind/minikube)
 │   │   ├── job-runtime.yaml   # dataset source: fetch-dataset init container → MinIO (S7 PR8)
+│   │   ├── networkpolicy.yaml # local S3 (MinIO) net paths — precise pod selectors (S8 PR7)
 │   │   └── kustomization.yaml # pins the image to ml-pipeline:local; applies the patch
 │   └── aws/                  # specialization for Terraform-provisioned EKS — Sprint 6 PR 5
 │       ├── job-cloud.yaml     # cloud patch: imagePullPolicy + dataset source (S3 via Pod Identity)
+│       ├── networkpolicy.yaml # AWS S3 egress: 443 internet-only (the documented limitation, S8 PR7)
 │       └── kustomization.yaml # repoints the image to Amazon ECR; applies the patch
-└── validate.py              # static validation (security + required + runtime) — PR 6/8
+├── tests/
+│   └── netpol/               # runtime NetworkPolicy verification (allowed/denied + canary) — S8 PR7
+└── validate.py              # static validation (security + required + runtime + netpol) — PR 6/8
 ```
+
+> **Network policies (Sprint 8, PR 7).** The manifests above include a
+> **default-deny + explicit-allow** `NetworkPolicy` set for both the `mlops` and
+> `monitoring` namespaces (the MLflow platform's policies live in
+> `base/mlflow/networkpolicy.yaml`). They fence every real communication path to
+> least privilege while preserving DNS, Pod Identity, and Prometheus scraping. See
+> [`docs/network-policies.md`](../docs/network-policies.md) for the communication
+> matrix and the AWS S3-egress limitation, and
+> [ADR-034](../docs/decisions/ADR-034-network-policies.md) for the decision.
+> Enforcement needs a CNI that supports NetworkPolicy — on EKS the VPC CNI with
+> `enableNetworkPolicy=true` (`terraform/eks.tf`); the default Docker Desktop CNI
+> does **not** enforce it. `k8s/tests/netpol/run.sh` verifies the live paths on an
+> enforcing cluster; `k8s/validate.py` asserts the policy set statically in CI.
 
 Why Kustomize (and not raw `kubectl apply -f`): a single base is specialized per
 environment through overlays with no duplicated YAML. Today the local overlay

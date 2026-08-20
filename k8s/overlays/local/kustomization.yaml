@@ -20,6 +20,12 @@ resources:
   - minio.yaml
   - minio-setup-job.yaml
   - mlflow-boto-config.yaml
+  # LOCAL S3 NetworkPolicies (Sprint 8, PR 7; ADR-034): pipeline/MLflow/minio-setup
+  # egress to the in-cluster MinIO (:9000) and MinIO's ingress. Locally the S3 path
+  # is a pod, so it is expressed PRECISELY (no CIDR wildcard) — unlike the AWS
+  # overlay, where S3 is public and cannot be pinned. Composes with the base
+  # default-deny + DNS + env-independent egress.
+  - networkpolicy.yaml
 
 # Pin the base image to the tag built locally per the README (§ "Running with
 # Docker") and docker-compose (`ml-pipeline:local`). For a local kind/minikube

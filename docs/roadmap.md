@@ -315,9 +315,23 @@ infrastructure defined as code.
   "not Running"), OOMKill, MLflow/Postgres unavailable, PVC-fill, memory headroom, and
   crash-looping — each with a severity, human summary/description, documented
   threshold and a runbook, unit-tested with `promtool` in CI
-  ([ADR-033](decisions/ADR-033-alerting.md)). **Manifests + instrumentation +
-  dashboards + alert rules only — not deployed/runtime-proven yet** (no live cluster;
-  live firing + the failure-injection campaign are the runtime-evidence PR 7);
+  ([ADR-033](decisions/ADR-033-alerting.md)). **Least-privilege NetworkPolicies are
+  now added** (Sprint 8, PR 7): an evidence-mapped communication matrix drives a
+  **default-deny + explicit-allow** set across both namespaces — PostgreSQL is
+  reachable by exactly two peers with zero egress, the pipeline provably cannot reach
+  the DB directly, and DNS, Pod Identity, and the full scrape graph are preserved and
+  asserted in CI (validate.py §8/M12) alongside a runtime harness with an enforcement
+  canary; NetworkPolicy enforcement is switched on for EKS via the VPC CNI
+  `enableNetworkPolicy` flag. The AWS **S3-egress limitation** is documented rather
+  than faked: S3's dynamic public IPs cannot be pinned in a standard NetworkPolicy, so
+  egress is bounded to internet-only:443 and the "which bucket/actions" precision is
+  delegated to IAM (Pod Identity) + a recommended VPC S3 endpoint; **no service mesh**
+  ([ADR-034](decisions/ADR-034-network-policies.md)). **Manifests + instrumentation +
+  dashboards + alert rules + network policies only — not deployed/runtime-proven yet**
+  (no live cluster; live firing, the failure-injection campaign, and the live
+  allowed/denied-path capture are the runtime-evidence work — the network-policy
+  capture is tracked as a checklist in
+  [`docs/proof/sprint-08-network-policy-runtime-evidence.md`](proof/sprint-08-network-policy-runtime-evidence.md));
   Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
