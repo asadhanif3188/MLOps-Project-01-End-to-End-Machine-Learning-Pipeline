@@ -67,8 +67,11 @@ Terraform with applied state), plus **Trivy** on PATH, and **cosign** only if yo
 # The ECR repo URL is read from `terraform output` (account id stays out of git).
 scripts/release-image.sh --tag 1.6.0 --out ./release-evidence
 
-#   … MLflow server image (same recipe, its own ECR repo):
-scripts/release-image.sh --mlflow --tag 0.1.0 --out ./release-evidence
+#   … MLflow server image — layered FROM the pipeline image just released, so pass
+#   that image's ECR ref as BASE_IMAGE (it is in the local daemon from the push above;
+#   its tag differs from the MLflow --tag, so it must be named explicitly):
+BASE_IMAGE="$(terraform -chdir=terraform output -raw ecr_repository_url):1.6.0" \
+  scripts/release-image.sh --mlflow --tag 0.1.0 --out ./release-evidence
 ```
 
 It prints the chain and writes `release-evidence/mlops-pipeline-1.6.0.provenance.json`:

@@ -95,6 +95,13 @@ if [ "${VARIANT}" = "mlflow" ]; then
   BUILD_TARGET=""                       # the MLflow Dockerfile is single-stage
   TF_REPO_OUTPUT="mlflow_server_ecr_repository_url"
   IMAGE_TITLE="mlflow-server"
+  # The MLflow image is built FROM the already-released pipeline image. That base
+  # must be named EXPLICITLY: the pipeline release tags its image with the full ECR
+  # ref (…/mlops-pipeline:<tag>), never a bare `mlops-pipeline:<tag>`, and the MLflow
+  # tag (--tag here) differs from the pipeline tag — so there is no safe default to
+  # guess. Require BASE_IMAGE rather than fabricate a name that resolves to nothing.
+  [ -n "${BASE_IMAGE:-}" ] \
+    || die "--mlflow requires BASE_IMAGE=<pipeline-ECR-repo>:<pipeline-tag> — the pipeline image from an earlier 'scripts/release-image.sh --tag …' run (present in the local daemon). e.g. BASE_IMAGE=\"\$(terraform -chdir=terraform output -raw ecr_repository_url):1.6.0\""
 fi
 
 # --- prerequisites -------------------------------------------------------------
@@ -111,7 +118,7 @@ SHORT="$(git -C "${REPO_ROOT}" rev-parse --short "${GITREF}")"
 GITTAG="$(git -C "${REPO_ROOT}" tag --points-at "${COMMIT}" | paste -sd, - || true)"
 
 if [ "${ALLOW_DIRTY}" -eq 0 ] && ! git -C "${REPO_ROOT}" diff --quiet HEAD 2>/dev/null; then
-  die "working tree is dirty — a released digest must map to a committed source state. Commit/stash, or pass --allow-dirty for a throwaway build."
+  die "tracked files differ from HEAD — a released digest should map to a committed source state. Commit/stash, or pass --allow-dirty for a throwaway build. (Untracked files are NOT checked here; keep them out of the build context via .dockerignore.)"
 fi
 
 # --- resolve the ECR repository URL --------------------------------------------
@@ -148,9 +155,9 @@ build_args=( --platform linux/amd64
              -f "${DOCKERFILE}" -t "${IMAGE_REF}" )
 [ -n "${BUILD_TARGET}" ] && build_args+=( --target "${BUILD_TARGET}" )
 if [ "${VARIANT}" = "mlflow" ]; then
-  # The MLflow image layers FROM the pipeline image; pass it through so the base is
-  # explicit rather than whatever the Dockerfile's default ARG resolves to.
-  build_args+=( --build-arg "BASE_IMAGE=${BASE_IMAGE:-mlops-pipeline:${TAG}}" )
+  # The MLflow image layers FROM the pipeline image; BASE_IMAGE is required (asserted
+  # above) so the base is the exact released pipeline ref, not a guessed default.
+  build_args+=( --build-arg "BASE_IMAGE=${BASE_IMAGE}" )
 fi
 # --provenance/--sbom=false: we generate our OWN CycloneDX SBOM below rather than
 # embed BuildKit's attestation manifests, which otherwise confuse image scanners
@@ -181,7 +188,13 @@ if [ "${DO_PUSH}" -eq 1 ]; then
       --image-ids "imageTag=${TAG}" \
       --region "$(printf '%s' "${REGISTRY}" | cut -d. -f4)" \
       --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
-  if [ -n "${ECR_DIGEST}" ] && [ "${ECR_DIGEST}" != "None" ] && [ "${ECR_DIGEST}" != "${DIGEST}" ]; then
+  if [ -z "${ECR_DIGEST}" ] || [ "${ECR_DIGEST}" = "None" ]; then
+    # The cross-check is defence-in-depth (DIGEST already comes from the post-push
+    # RepoDigest, which is registry-derived). If describe-images is unavailable
+    # (throttling, a push-only IAM policy without ecr:DescribeImages, a mis-parsed
+    # region), do NOT silently pretend it ran — say so, and proceed on the RepoDigest.
+    log "warning: could not cross-check the digest against 'aws ecr describe-images' (permission/throttle/region?) — recording the post-push RepoDigest WITHOUT the second-source confirmation."
+  elif [ "${ECR_DIGEST}" != "${DIGEST}" ]; then
     die "digest mismatch: local RepoDigest ${DIGEST} != ECR ${ECR_DIGEST} — refusing to record an inconsistent chain"
   fi
   log "Immutable digest: ${DIGEST}"
@@ -231,9 +244,11 @@ if [ "${DO_SIGN}" -eq 1 ]; then
   # Keyless: identity comes from an OIDC token; the signature + certificate are
   # recorded in the Rekor transparency log. No long-lived key to store or leak.
   COSIGN_EXPERIMENTAL=1 cosign sign --yes "${REPO}@${DIGEST}"
-  log "Signed. Verify with:"
+  log "Signed. Verify against your EXPECTED signer — never '.*', which accepts a"
+  log "signature from ANY identity/issuer and proves nothing:"
   log "  cosign verify ${REPO}@${DIGEST} \\"
-  log "    --certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*'"
+  log "    --certificate-identity-regexp '<your expected OIDC identity, e.g. https://github.com/<org>/<repo>/.github/workflows/release.yml@refs/tags/v.*>' \\"
+  log "    --certificate-oidc-issuer '<your issuer, e.g. https://token.actions.githubusercontent.com>'"
 fi
 
 # --- next steps ----------------------------------------------------------------

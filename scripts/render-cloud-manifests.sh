@@ -153,10 +153,13 @@ subst "${OVERLAY}/kustomization.yaml" "s|newName: .*/mlflow-server$|newName: ${M
 pin_image() {
   local literal="$1" tag="$2" digest="$3"
   if [ -n "${digest}" ]; then
-    case "${digest}" in
-      sha256:[0-9a-f]*) : ;;
-      *) die "invalid digest '${digest}' — expected sha256:<hex> (from scripts/release-image.sh)" ;;
-    esac
+    # STRICT validation: exactly `sha256:` + 64 lowercase hex. A loose check (e.g.
+    # `sha256:[0-9a-f]*`, which only constrains the first char) would let a value
+    # containing the sed delimiter `|` or `;` break out of the `s|…|…|` below and
+    # rewrite ANY line of the rendered kustomization.yaml — including the registry
+    # pointer — so the whole 64-char body must be validated before interpolation.
+    [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+      || die "invalid digest '${digest}' — expected sha256:<64 lowercase hex> (from scripts/release-image.sh)"
     # `newTag: "<literal>"` (with its surrounding indentation) becomes `digest: "…"`.
     subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"${literal}\"|digest: \"${digest}\"|"
   else
