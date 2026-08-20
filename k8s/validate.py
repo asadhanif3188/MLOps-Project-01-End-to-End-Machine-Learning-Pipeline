@@ -31,6 +31,7 @@ Exit code 0 = all checks passed; 1 = at least one failure (or a render error).
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -1497,6 +1498,153 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
         any("prober: http" in c for c in bb_cfgs),
         "blackbox-exporter-config must define a module with 'prober: http'",
     )
+
+    # -- M10. Grafana dashboards layer (Sprint 8, PR 5 — ADR-032) -- #
+    # Grafana renders the three purpose-built dashboards over the Prometheus datasource;
+    # everything (datasource, provider, dashboard JSON) is PROVISIONED from version-
+    # controlled files. kustomize embeds the dashboard JSON as an opaque ConfigMap
+    # string, so a malformed dashboard would render + schema-validate fine and only
+    # break Grafana at runtime. This pass parse-validates each dashboard file, asserts
+    # it points at the provisioned datasource, and enforces the brief's "no AWS account
+    # IDs on a dashboard" rule — the checks a generic schema validator cannot express.
+    sec = "M10. Grafana dashboards"
+    grafana_dir = REPO_ROOT / "k8s/monitoring/base/grafana"
+    dashboards_dir = grafana_dir / "dashboards"
+
+    # The workload + provisioning must all be present in the render.
+    r.check(
+        sec,
+        "Grafana Deployment present",
+        any(
+            d.get("metadata", {}).get("name") == "grafana"
+            for d in by_kind.get("Deployment", [])
+        ),
+        "no Deployment/grafana in the monitoring render",
+    )
+    r.check(
+        sec,
+        "Grafana Service present",
+        any(
+            s.get("metadata", {}).get("name") == "grafana"
+            for s in by_kind.get("Service", [])
+        ),
+        "no Service/grafana in the monitoring render",
+    )
+    cms_by_name = {
+        cm.get("metadata", {}).get("name"): cm for cm in by_kind.get("ConfigMap", [])
+    }
+    for cm_name in (
+        "grafana-datasources",
+        "grafana-dashboard-provider",
+        "grafana-dashboards",
+    ):
+        r.check(
+            sec,
+            f"{cm_name} ConfigMap present",
+            cm_name in cms_by_name,
+            f"no ConfigMap/{cm_name} in the monitoring render (dashboards)",
+        )
+
+    # The provisioned datasource must declare the fixed uid the dashboards reference,
+    # and it must be internal proxy access (never a browser-direct/public URL).
+    ds_cfg = (cms_by_name.get("grafana-datasources", {}).get("data", {}) or {}).get(
+        "datasources.yaml", ""
+    )
+    r.check(
+        sec,
+        "datasource declares the fixed uid 'prometheus'",
+        "uid: prometheus" in ds_cfg,
+        "grafana-datasources must pin 'uid: prometheus' (the handle dashboards use)",
+    )
+    r.check(
+        sec,
+        "datasource uses server-side proxy access (internal-only)",
+        "access: proxy" in ds_cfg,
+        "the Prometheus datasource must use access: proxy so Prometheus stays internal",
+    )
+
+    # Parse-validate every dashboard JSON file on disk (the source of truth kustomize
+    # packages into grafana-dashboards).
+    dash_files = (
+        sorted(dashboards_dir.glob("*.json")) if dashboards_dir.is_dir() else []
+    )
+    # The count is pinned to the three dashboards ADR-032 defines (EKS/Platform Health,
+    # MLOps Pipeline Operations, MLflow Platform Health) — bump this deliberately when a
+    # dashboard is added/removed, in lock-step with the configMapGenerator file list.
+    # The per-file "packaged into the ConfigMap" check below is the redundant backstop.
+    r.check(
+        sec,
+        "three dashboard JSON files present",
+        len(dash_files) == 3,
+        f"expected 3 dashboards in {dashboards_dir}, found {len(dash_files)}",
+    )
+    cm_data_keys = set(
+        (cms_by_name.get("grafana-dashboards", {}).get("data", {}) or {}).keys()
+    )
+    # A 12-digit run of digits — an AWS account id shape the brief says must not appear.
+    account_id = re.compile(r"\b\d{12}\b")
+    for f in dash_files:
+        rel = f.relative_to(REPO_ROOT).as_posix()
+        raw = f.read_text(encoding="utf-8")
+        try:
+            dash = json.loads(raw)
+            parsed = True
+        except json.JSONDecodeError as exc:
+            parsed = False
+            r.check(
+                sec, f"dashboard parses as JSON: {rel}", False, f"invalid JSON: {exc}"
+            )
+        if not parsed:
+            continue
+        r.check(sec, f"dashboard parses as JSON: {rel}", True)
+        panels = dash.get("panels", [])
+        r.check(
+            sec,
+            f"{rel}: has a uid and non-empty panels",
+            bool(dash.get("uid")) and bool(panels),
+            f"uid={dash.get('uid')!r}, panels={len(panels)}",
+        )
+        ids = [p.get("id") for p in panels]
+        r.check(
+            sec,
+            f"{rel}: panel ids are unique",
+            len(ids) == len(set(ids)),
+            f"duplicate panel ids: {ids}",
+        )
+        r.check(
+            sec,
+            f"{rel}: every panel has title + type + gridPos",
+            all(p.get("title") and p.get("type") and p.get("gridPos") for p in panels),
+            "a panel is missing title/type/gridPos",
+        )
+        # Every query panel must target the provisioned datasource uid (so provisioning
+        # is deterministic — no dangling ${DS_*} or a stale hard-coded id).
+        bad_ds = [
+            (p.get("id"))
+            for p in panels
+            for t in (p.get("targets", []) or [])
+            if (t.get("datasource", {}) or {}).get("uid") not in (None, "prometheus")
+        ]
+        r.check(
+            sec,
+            f"{rel}: query panels use the 'prometheus' datasource uid",
+            not bad_ds,
+            f"panels with a non-prometheus datasource uid: {bad_ds}",
+        )
+        r.check(
+            sec,
+            f"{rel}: no AWS account id exposed",
+            not account_id.search(raw),
+            "a 12-digit account-id-shaped string is present (never on a dashboard)",
+        )
+        # The file must actually be packaged into the ConfigMap kustomize generates.
+        r.check(
+            sec,
+            f"{rel}: packaged into the grafana-dashboards ConfigMap",
+            f.name in cm_data_keys,
+            f"{f.name} is not a key in the grafana-dashboards ConfigMap "
+            f"(add it to the kustomization configMapGenerator)",
+        )
 
     return r.render()
 

@@ -39,6 +39,7 @@ short, dated records. Each ADR captures the **context**, the **decision**, the
 | [ADR-029](ADR-029-monitoring-foundation.md) | Monitoring Foundation (Sprint 8 PR 2) — minimal hand-written Prometheus + kube-state-metrics + node-exporter; ephemeral TSDB; read-only RBAC; node-exporter PSA exception | Accepted (design) | 2026-08-20 |
 | [ADR-030](ADR-030-pipeline-operational-metrics.md) | Pipeline Operational Metrics (Sprint 8 PR 3) — per-stage duration/success via Pushgateway; bounded cardinality; per-run reset lifecycle; operational-vs-MLflow boundary; supersedes ADR-028's "Pushgateway deferred" | Accepted (design) | 2026-08-20 |
 | [ADR-031](ADR-031-mlflow-postgres-monitoring.md) | MLflow & PostgreSQL Monitoring (Sprint 8 PR 4) — blackbox-exporter (Layer 3 `/health`) + postgres-exporter with a dedicated `pg_monitor`-only role (Layer 4 up/connections/size) + scoped kubelet volume-stats scrape (PVC-fill); no DB creds in config; eight scrape jobs | Accepted (design) | 2026-08-20 |
+| [ADR-032](ADR-032-grafana-dashboards.md) | Grafana Dashboards (Sprint 8 PR 5) — three purpose-built, version-controlled dashboards (EKS/Platform Health, MLOps Pipeline Operations, MLflow Platform Health) mapped to operational questions; file-provisioned datasource + dashboards; hardened internal-only Grafana; stable PromQL, bounded windows; model quality stays in MLflow | Accepted (design) | 2026-08-20 |
 
 > **"Accepted (validated)"** marks the design ADRs (014–018) whose configuration was
 > **provisioned and exercised** in the Sprint 6 PR 7 runtime test (2026-08-15) and

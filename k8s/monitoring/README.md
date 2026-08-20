@@ -28,6 +28,15 @@ base/
                            #   Layer 3 MLflow /health availability probing
   prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 8 scrape jobs
   prometheus.yaml          # Prometheus: SA + read-only ClusterRole + binding + Deployment + Service
+  grafana/                 # Grafana dashboards layer (PR 5 — ADR-032):
+    grafana.yaml           #   SA + hardened, internal-only Deployment + Service
+    grafana-datasource.yaml         #   ConfigMap: provisioned Prometheus datasource
+    grafana-dashboard-provider.yaml #   ConfigMap: file-based dashboard provider
+    grafana-admin-secret.example.yaml  # admin-credential TEMPLATE (never applied)
+    dashboards/            #   the three version-controlled dashboard JSON files:
+      eks-platform-health.json         #     Dashboard 1 — Layer 1 platform health
+      mlops-pipeline-operations.json   #     Dashboard 2 — Layer 2 pipeline ops
+      mlflow-platform-health.json      #     Dashboard 3 — Layer 3/4 MLflow + Postgres
   kustomization.yaml
 overlays/
   local/                   # Docker Desktop / kind / minikube  (currently == base)
@@ -46,8 +55,10 @@ operational metrics the pipeline pushes to the **Pushgateway** (PR 3 —
 [ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)), and the
 **Layer 3/4 platform depth** (PR 4 — [ADR-031](../../docs/decisions/ADR-031-mlflow-postgres-monitoring.md)):
 MLflow `/health` (blackbox), PostgreSQL backend health (postgres-exporter), and the
-Postgres PVC-fill signal (a scoped kubelet volume-stats scrape). Grafana dashboards
-and alerts (PR 5) are **not** here.
+Postgres PVC-fill signal (a scoped kubelet volume-stats scrape). The **Grafana
+dashboards layer** (PR 5 — [ADR-032](../../docs/decisions/ADR-032-grafana-dashboards.md))
+now lives in `grafana/`: a hardened, internal-only Grafana that provisions three
+purpose-built dashboards over these signals. **Alerts** (PR 6) are **not** here.
 
 ## Build & validate
 
@@ -84,5 +95,14 @@ deploy, port-forward Prometheus, run a PromQL query, troubleshoot, and tear down
   gateway with `honor_labels: true`. In-memory (no persistence), reset once per run
   by the pipeline to avoid stale series, internal-only. Operational metrics only —
   model accuracy/params stay in MLflow ([ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)).
+- **Grafana (PR 5):** dashboards, the datasource, and the dashboard provider are all
+  **provisioned from version-controlled files** (the JSON stays as first-class
+  `.json`, packaged into one ConfigMap by a `configMapGenerator`) — nothing is
+  UI-authored, `allowUiUpdates: false` keeps git authoritative. Hardened like the rest
+  (non-root, drop ALL, read-only root FS, no API token), **internal-only ClusterIP**,
+  anonymous **Viewer** access so a port-forward needs no login; the admin password is
+  out-of-band (`grafana/grafana-admin-secret.example.yaml`). Stateless emptyDir — no
+  PVC. Model quality stays in MLflow, not a dashboard
+  ([ADR-032](../../docs/decisions/ADR-032-grafana-dashboards.md)).
 - **Ephemeral storage:** the Prometheus TSDB is an `emptyDir` with 7d/1GB retention
   — no PVC, no long-term store (cost discipline, ADR-020/ADR-028 § 5).

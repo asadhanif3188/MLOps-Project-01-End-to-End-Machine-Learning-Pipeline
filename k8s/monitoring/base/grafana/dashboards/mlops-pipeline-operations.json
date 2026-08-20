@@ -1,0 +1,231 @@
+{
+  "annotations": { "list": [] },
+  "description": "Layer 2 operational view of the ephemeral mlops-pipeline batch Job. Answers: did the most recent run succeed, how long did it take, which stage dominates runtime, did dataset retrieval fail, and are recent failures visible? Run-level signals come from kube-state-metrics (the persistent Job object outlives the pod); per-stage signals are pushed by the pipeline to the Pushgateway (ADR-030). Model accuracy / model comparison is intentionally NOT here — it lives in MLflow.",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["mlops", "pipeline", "layer-2"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "MLOps Pipeline Operations",
+  "uid": "mlops-pipeline-operations",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Last run result",
+      "description": "Did the most recent mlops-pipeline Job Complete? kube_job_status_succeeded == 1 means success. Reflects the persistent Job object, so it survives the pod exiting (queryability contract, ADR-028 §3).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "no run seen",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "NOT succeeded", "color": "red" }, "1": { "text": "Succeeded", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_succeeded{job_name=\"mlops-pipeline\"})", "instant": true } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Last run failed count",
+      "description": "kube_job_status_failed for the mlops-pipeline Job — failed pod attempts (bounded by backoffLimit, ADR-011). > 0 with an eventual success = a retried run.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_failed{job_name=\"mlops-pipeline\"})", "instant": true } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Last run duration",
+      "description": "Wall-clock run time = completion_time - start_time (kube_job_status_*). Only meaningful once the Job has Completed; a running Job has no completion_time yet.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "not completed",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 600 }, { "color": "red", "value": 1200 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_completion_time{job_name=\"mlops-pipeline\"}) - max(kube_job_status_start_time{job_name=\"mlops-pipeline\"})", "instant": true } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Last run start",
+      "description": "When the most recent mlops-pipeline Job started (kube_job_status_start_time, epoch seconds).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "no run seen",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_start_time{job_name=\"mlops-pipeline\"}) * 1000", "instant": true } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Dataset retrieval",
+      "description": "Did the fetch_dataset init stage succeed? mlops_pipeline_stage_success{stage=\"fetch_dataset\"} == 1 OK, == 0 failed, absent = the stage did not run this pipeline (Pushgateway, ADR-030).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "did not run",
+          "mappings": [ { "type": "value", "options": { "0": { "text": "FAILED", "color": "red" }, "1": { "text": "OK", "color": "green" } } } ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(mlops_pipeline_stage_success{stage=\"fetch_dataset\"})", "instant": true } ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Stage duration — last run (which stage dominates?)",
+      "description": "Per-stage wall-clock seconds from the most recent run (mlops_pipeline_stage_duration_seconds), pushed by the pipeline before each stage exits. The longest bar is the runtime bottleneck.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 120 }, { "color": "red", "value": 300 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "mlops_pipeline_stage_duration_seconds", "instant": true, "legendFormat": "{{stage}}" } ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Stage duration trend",
+      "description": "Per-stage duration across recent runs (mlops_pipeline_stage_duration_seconds). Watch for a stage creeping up over time.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "always", "spanNulls": true },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "mlops_pipeline_stage_duration_seconds", "legendFormat": "{{stage}}" } ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Stage success — last run (recent failures)",
+      "description": "Per-stage outcome from the most recent run (mlops_pipeline_stage_success): 1 = OK, 0 = FAILED. A per-run reset clears prior stages, so absent stages simply did not run this pipeline (ADR-030).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "align": "auto" },
+          "mappings": [ { "type": "value", "options": { "0": { "text": "FAILED", "color": "red" }, "1": { "text": "OK", "color": "green" } } } ]
+        },
+        "overrides": []
+      },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "mlops_pipeline_stage_success", "instant": true, "format": "table" } ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "endpoint": true, "service": true, "container": true, "pod": true, "namespace": true }, "renameByName": { "Value": "success" } } } ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Pipeline Job outcomes",
+      "description": "kube_job_status_succeeded and kube_job_status_failed for the mlops-pipeline Job over time — the run-level pass/fail record from kube-state-metrics.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "always", "spanNulls": true },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_succeeded{job_name=\"mlops-pipeline\"})", "legendFormat": "succeeded" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(kube_job_status_failed{job_name=\"mlops-pipeline\"})", "legendFormat": "failed" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Pipeline pod OOMKilled",
+      "description": "Was the pipeline pod's last termination an OOMKill? kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} for mlops-pipeline pods. The memory-safety signal for the ephemeral Job (ADR-011).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kube_pod_container_status_last_terminated_reason{namespace=\"mlops\",pod=~\"mlops-pipeline.*\",reason=\"OOMKilled\"})", "instant": true } ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Sum of stage durations — last run",
+      "description": "Sum of all per-stage durations from the most recent run (sum of mlops_pipeline_stage_duration_seconds). A pipeline-side view of total processing time to compare against the Job wall-clock.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "no stages seen",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(mlops_pipeline_stage_duration_seconds)", "instant": true } ]
+    },
+    {
+      "id": 12,
+      "type": "text",
+      "title": "Where is model accuracy?",
+      "description": "",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 20 },
+      "options": { "mode": "markdown", "content": "**Model accuracy and model comparison live in MLflow, not here.** This dashboard covers *operational* health only — did the run succeed, how long, which stage dominated. ML-semantic metrics (accuracy, best params, per-run artifacts) are owned by MLflow by design (ADR-028 §5, ADR-030). See the [MLflow Platform](../../docs/mlflow-platform.md) doc and the MLflow UI (port-forward `svc/mlflow` in the `mlops` namespace)." }
+    }
+  ]
+}
