@@ -275,8 +275,17 @@ infrastructure defined as code.
   ([ADR-019](decisions/ADR-019-terraform-ci-validation.md)); credentialed
   plan/apply (e.g. via OIDC) is future work. Provisioning today is a deliberate,
   operator-driven, own-account step.
-- ⬜ **Monitoring** and centralized logging for pipeline and infrastructure health —
-  not implemented; diagnosis is `kubectl` + structured logs (roadmap v6).
+- 🚧 **Monitoring** and centralized logging for pipeline and infrastructure health —
+  the observability **architecture is now defined** (Sprint 8, PR 1): a self-hosted
+  Prometheus + Grafana stack over a four-layer model (Kubernetes platform, the
+  batch pipeline Job, MLflow, PostgreSQL), with the ephemeral-Job metric problem
+  solved via kube-state-metrics and SLO-style operational objectives
+  ([Observability & Operations](observability.md),
+  [ADR-028](decisions/ADR-028-observability-architecture.md)). **Design only — no
+  component is deployed yet**; the stack, dashboards, exporters, alerts, and runtime
+  proof are the remaining Sprint 8 PRs (2–6). Centralized **log aggregation** and
+  **tracing** are deliberately deferred; today's diagnosis is `kubectl` + structured
+  logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the
   **experiment-tracking** path (tracking now runs on the in-cluster MLflow platform,
   [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), but the DVC **data/model
@@ -331,8 +340,9 @@ reproducibly from code with clear separation of environments.
 > "validated on cloud" to "production cloud platform" and are why v5 is 🚧, not ✅.
 >
 > **TODO:** Ratify remote-state, credentialed CI/CD (OIDC), a production module
-> structure, monitoring, and the serving mechanism as ADRs before a production
-> deployment.
+> structure, and the serving mechanism as ADRs before a production deployment.
+> *(Monitoring is now ratified — [ADR-028](decisions/ADR-028-observability-architecture.md),
+> Sprint 8; implementation PRs 2–6 pending.)*
 
 ---
 
@@ -343,7 +353,11 @@ reproducibly from code with clear separation of environments.
 **Objectives:**
 
 - **Model serving** via a versioned inference endpoint with rollback.
-- **Monitoring and alerting** for data quality, latency, and model performance.
+- **Monitoring and alerting** for data quality, latency, and model performance —
+  building on the Sprint 8 observability foundation
+  ([ADR-028](decisions/ADR-028-observability-architecture.md),
+  [Observability & Operations](observability.md)), which ratifies the
+  Prometheus/Grafana stack and the four-layer platform-health model this extends.
 - **Drift detection** (data and concept drift) with automated retraining
   triggers.
 - **Governance:** model lineage, approval gates, and auditability.
@@ -352,8 +366,9 @@ reproducibly from code with clear separation of environments.
 **Expected outcome:** A production-grade MLOps platform demonstrating engineering
 judgment well beyond model building.
 
-> **TODO:** Ratify the monitoring stack, drift metrics, and retraining triggers
-> as ADRs.
+> **TODO:** Ratify drift metrics and retraining triggers as ADRs. *(The monitoring
+> stack itself is ratified in [ADR-028](decisions/ADR-028-observability-architecture.md),
+> Sprint 8.)*
 
 ---
 
