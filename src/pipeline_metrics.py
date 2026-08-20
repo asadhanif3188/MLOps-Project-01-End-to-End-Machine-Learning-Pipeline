@@ -35,11 +35,15 @@ run in a given execution is therefore simply *absent*, which reads correctly ("t
 pipeline never got there").
 
 **Best-effort, never fatal.** Metrics are observability, not a pipeline output: a
-push failure (gateway down, package absent) is logged at WARNING and swallowed so a
-monitoring hiccup can never fail a real pipeline run. The catch is narrow —
-``OSError`` (every urllib/socket network failure the push can raise) and
-``ImportError`` (``prometheus_client`` not installed) are the only things that can
-go wrong here, given the metric names and values are compile-time constants.
+push failure (gateway down, package absent, a malformed HTTP response mid-roll) is
+logged at WARNING and swallowed so a monitoring hiccup can never fail a real
+pipeline run. The catch is deliberately **broad** (any ``Exception``), not narrow:
+``prometheus_client``'s push runs over ``urllib``/``http.client``, which raises not
+only ``OSError`` (connect/timeout/DNS/TLS/4xx-5xx) and ``ImportError`` (client
+absent) but also ``http.client.HTTPException`` subclasses like ``BadStatusLine``
+(e.g. the gateway pod rolled mid-response) that are **not** ``OSError`` — a narrow
+catch would let exactly that hiccup fail a stage whose real work already succeeded.
+The broad catch always logs (never a silent ``pass``), the sanctioned form here.
 
 **Disabled unless configured.** Emission is a no-op unless ``PUSHGATEWAY_URL`` is
 set, so ``dvc repro`` on a workstation, the CI fixture run, and the unit tests do
@@ -172,8 +176,9 @@ def push_stage_metrics(
 
     A no-op when no gateway is configured (:func:`resolve_gateway_url` returns
     ``None``). An unknown ``stage`` is refused rather than emitted, to keep label
-    cardinality bounded. Any network/import failure is logged at WARNING and
-    swallowed — metrics must never fail the pipeline.
+    cardinality bounded. Any push failure — of any kind — is logged at WARNING and
+    swallowed; metrics must never fail the pipeline (see the module docstring for why
+    the catch is deliberately broad).
 
     Args:
         stage: The stage name; must be one of :data:`PIPELINE_STAGES`.
@@ -199,8 +204,16 @@ def push_stage_metrics(
     pusher = push or _default_push
     try:
         pusher(target, stage, float(duration_seconds), bool(success))
-    except (OSError, ImportError) as exc:
-        # Best-effort: a gateway outage or a missing client must not fail the run.
+    except Exception as exc:  # noqa: BLE001 — deliberate best-effort sink
+        # Metrics are observability, not a pipeline output, so ANY failure here is
+        # logged and swallowed — a monitoring hiccup must never fail a real run. The
+        # catch is deliberately broad, not narrow: prometheus_client's push path runs
+        # over urllib/http.client, which can raise not just OSError (connect/timeout/
+        # DNS/TLS/4xx-5xx) but also http.client.HTTPException subclasses such as
+        # BadStatusLine (e.g. the gateway pod rolled mid-response) that are NOT
+        # OSError — narrowing the catch would let exactly that hiccup fail a stage
+        # whose real work already succeeded. Logged (not silently passed), which is
+        # the sanctioned form of a broad catch here.
         logger.warning(
             "Could not push metrics for stage %s to %s: %s", stage, target, exc
         )
@@ -239,7 +252,11 @@ def reset_pipeline_metrics(
     for stage in PIPELINE_STAGES:
         try:
             deleter(target, stage)
-        except (OSError, ImportError) as exc:
+        except Exception as exc:  # noqa: BLE001 — deliberate best-effort sink
+            # Same broad-catch rationale as push_stage_metrics: this reset runs
+            # first thing in the pipeline (fetch_dataset.main), so an uncaught
+            # exception here would abort the whole run before any work — exactly what
+            # a best-effort clear must never do. Swallow-and-continue per stage.
             logger.warning(
                 "Could not clear stale metrics for stage %s at %s: %s",
                 stage,

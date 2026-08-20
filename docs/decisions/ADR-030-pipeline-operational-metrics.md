@@ -145,11 +145,15 @@ accumulates stale series"), and the design neutralises it **at the producer**:
 ### 6. Best-effort, and disabled unless configured
 
 - **Never fatal.** Metric emission is observability, not a pipeline output. Every
-  push/delete is wrapped so a gateway outage or a missing client is logged at
-  WARNING and **swallowed** — a monitoring hiccup can never fail a real run. The
-  catch is narrow (`OSError` for any urllib/socket failure, `ImportError` for an
-  absent `prometheus_client`); metric names and values are constants, so nothing
-  else can go wrong.
+  push/delete is wrapped so **any** failure is logged at WARNING and **swallowed** —
+  a monitoring hiccup can never fail a real run. The catch is deliberately **broad**
+  (`except Exception`, always logged — never a silent `pass`): `prometheus_client`'s
+  push runs over `urllib`/`http.client`, which raises not only `OSError`
+  (connect/timeout/DNS/TLS/4xx-5xx) and `ImportError` (client absent) but also
+  `http.client.HTTPException` subclasses like `BadStatusLine` (e.g. the gateway pod
+  rolled mid-response) that are **not** `OSError`. A narrow catch would let exactly
+  that hiccup fail a stage whose real work already succeeded — precisely the outcome
+  this guarantee forbids (a PR-3 review finding; regression-tested).
 - **Opt-in by config.** Emission is a **no-op** unless `PUSHGATEWAY_URL` is set.
   In-cluster the base ConfigMap injects it; local `dvc repro`, the CI fixture run,
   and unit tests leave it unset and do **zero** network I/O. `prometheus_client` is
@@ -221,11 +225,34 @@ it must never be exposed publicly, same rule as Prometheus/MLflow). The extended
   gateway pod restarts (accepted: the pipeline re-pushes; evidence is captured while
   live, ADR-020). Per-run reset means only the *latest* run's stages are live at any
   time — by design.
-- **Unauthenticated push surface.** Any workload that can reach the ClusterIP can
-  push or delete. Acceptable on a single-operator internal cluster; a **NetworkPolicy**
-  restricting who may POST is the right added control on a shared cluster and is
-  **deferred** with the rest of the stack's NetworkPolicy work (ADR-029 §
-  Consequences).
+- **Unauthenticated push surface — a monitoring-*integrity* risk, not just DoS.**
+  Any workload that can reach the ClusterIP (from **any** namespace — the cluster has
+  no NetworkPolicy anywhere yet) can push **or delete**. Because the scrape uses
+  `honor_labels`, a forged push (`stage=train, success=1`) is stored
+  indistinguishably from a real one, and a `DELETE` can erase a genuine failure
+  group before the next scrape — i.e. an attacker with a foothold pod could make the
+  dashboards **lie** about pipeline health or **erase failure evidence**, and could
+  flood distinct grouping keys to OOM the 64Mi gateway. Note the bounded-cardinality
+  guard (§ 4) is **client-side** in `pipeline_metrics.py` — it does not protect the
+  gateway's raw HTTP endpoint, and the per-run reset (§ 5) only clears the app's own
+  five known groups, so externally-injected groups persist until the pod restarts.
+  Exploitation requires an already-running in-cluster pod (the Service is correctly
+  ClusterIP, not externally reachable). Acceptable on a single-operator internal
+  validation cluster; a **NetworkPolicy** restricting who may POST is the right added
+  control on a shared cluster and is **deferred** with the rest of the stack's
+  NetworkPolicy work (ADR-029 § Consequences).
+- **Per-stage failure attribution misses hard kills.** `mlops_pipeline_stage_success
+  == 0` is set only for **Python-level** failures caught by `time_stage`'s
+  `except Exception`. A `SIGKILL` — notably the ADR-011 **OOMKill** — terminates the
+  process before the `except` runs, so that stage is **absent** rather than
+  `success=0` (and a naïve `min()` over surviving stages could read 1). This is why
+  KSM remains primary: run-level `kube_job_status_failed` /
+  `kube_pod_container_status_last_terminated_reason="OOMKilled"` (ADR-028) catch the
+  kill that the per-stage push cannot. The two sources are complementary by design.
+- **No per-stage CPU/memory.** All five stages share one Job pod, so cAdvisor
+  (PR 2) gives pod-level resource use but cannot decompose it per stage; only
+  duration/success are per-stage. Per-stage resource accounting would need a
+  different execution model and is not pursued.
 - **Deviation from ADR-028's delivery plan** — Pushgateway lands in PR 3 and Grafana
   moves later. Recorded here explicitly rather than left implicit.
 

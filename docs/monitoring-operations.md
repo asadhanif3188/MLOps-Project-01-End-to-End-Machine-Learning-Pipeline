@@ -147,13 +147,17 @@ curl -s --data-urlencode 'query=mlops_pipeline_stage_duration_seconds' http://lo
 curl -s --data-urlencode 'query=mlops_pipeline_stage_duration_seconds{stage="fetch_dataset"}' http://localhost:9090/api/v1/query
 
 # Did the last run succeed end to end? (1 == every stage that ran succeeded)
-curl -s --data-urlencode 'query=min(mlops_pipeline_stage_success)' http://localhost:9090/api/v1/query
+# NOTE: catches Python-level stage failures; a hard OOMKill leaves the stage ABSENT,
+# so pair this with the KSM run-level OOM query above (§ Layer 2, ADR-030).
+curl -s --data-urlencode 'query=min by (job) (mlops_pipeline_stage_success)' http://localhost:9090/api/v1/query
 
 # Which stage failed (if any)?
 curl -s --data-urlencode 'query=mlops_pipeline_stage_success == 0' http://localhost:9090/api/v1/query
 
-# Approximate run cadence over the last day (Pushgateway's built-in push_time):
-curl -s --data-urlencode 'query=changes(push_time_seconds{job="mlops_pipeline"}[1d])' http://localhost:9090/api/v1/query
+# Approximate run count over the last day. push_time_seconds is per-group (one
+# series per stage, each ~= the run count), so count() over one stage gives a single
+# number; using all stages would return five identical-ish series.
+curl -s --data-urlencode 'query=changes(push_time_seconds{job="mlops_pipeline",stage="preprocess"}[1d])' http://localhost:9090/api/v1/query
 ```
 
 > **Operational only.** These series describe *execution* (how long, did it

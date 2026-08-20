@@ -114,6 +114,22 @@ def test_push_swallows_missing_client() -> None:
     push_stage_metrics("train", 1.0, success=True, url=_URL, push=boom)
 
 
+def test_push_swallows_non_oserror() -> None:
+    """A non-OSError from the push path is still swallowed (never fatal).
+
+    prometheus_client's urllib/http.client path can raise HTTPException subclasses
+    such as BadStatusLine (gateway rolled mid-response) that are NOT OSError. The
+    catch is deliberately broad so such a hiccup cannot fail a succeeded stage.
+    """
+    from http.client import BadStatusLine
+
+    def boom(*_args: object) -> None:
+        raise BadStatusLine("garbled response line")
+
+    # Must not raise.
+    push_stage_metrics("train", 1.0, success=True, url=_URL, push=boom)
+
+
 # --------------------------------------------------------------------------- #
 # reset_pipeline_metrics (batch lifecycle)
 # --------------------------------------------------------------------------- #
@@ -142,6 +158,25 @@ def test_reset_is_best_effort_across_stages() -> None:
     reset_pipeline_metrics(url=_URL, delete=flaky_delete)
     # Every stage except the one that raised was still attempted.
     assert deleted == [s for s in PIPELINE_STAGES if s != "split"]
+
+
+def test_reset_swallows_non_oserror() -> None:
+    """A non-OSError while clearing a group is swallowed too (never fatal).
+
+    reset runs first thing in the pipeline (fetch_dataset.main); an uncaught
+    exception here would abort the run before any work. The broad catch prevents it.
+    """
+    from http.client import BadStatusLine
+
+    deleted: list[str] = []
+
+    def flaky_delete(_url: str, stage: str) -> None:
+        if stage == "train":
+            raise BadStatusLine("garbled response line")
+        deleted.append(stage)
+
+    reset_pipeline_metrics(url=_URL, delete=flaky_delete)
+    assert deleted == [s for s in PIPELINE_STAGES if s != "train"]
 
 
 # --------------------------------------------------------------------------- #
