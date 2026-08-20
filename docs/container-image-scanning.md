@@ -51,7 +51,11 @@ Each image is scanned **twice**:
 2. **Gate** (`--ignore-unfixed --exit-code 1`) — fails only on **fixable** HIGH/CRITICAL.
 
 The reports are uploaded as the **`trivy-image-reports`** artifact with `always()`, so
-a failing run has the full findings one click away.
+a failing run has the full findings one click away. The report passes run with
+**`--show-suppressed`**, so any CVE an active exception is accepting appears as a
+**Suppressed** row (id + rationale + source) — the artifact distinguishes "clean" from
+"clean because of a live exception". (The gate pass excludes suppressed findings so the
+exception doesn't block the build.)
 
 ---
 
@@ -82,8 +86,13 @@ Rules:
   the IaC `.trivyignore` were later *removed* once the config was actually fixed — the
   same expectation applies here.)
 
-The file ships with **zero active exceptions** — the images pass the fixable gate on
-their own.
+The file ships with **two active, time-boxed exceptions** — `msgpack`
+(GHSA-6v7p-g79w-8964) and `setuptools` (CVE-2025-47273), both pip-**vendored** copies
+(`pip/_vendor/…`) that no `pip install -U` can fix and that stay only because the
+MLflow image needs pip; each expires `2026-11-18` and is re-triaged then. The one
+genuinely fixable finding (cryptography → 50.0.0, CVE-2026-69247) was **remediated** in
+the Dockerfile, not excepted. See the
+[scan evidence](proof/sprint-08-image-scan-evidence.md).
 
 ---
 

@@ -124,13 +124,21 @@ false-positive / unreachable in our usage), a **specific** exception is recorded
   forever.
 
 There is **no blanket severity mute and no un-scoped ignore** — the same discipline
-`terraform/.trivyignore` follows. The file ships with **zero active exceptions**.
+`terraform/.trivyignore` follows. The file ships with **two active, time-boxed
+exceptions** — `msgpack` (GHSA-6v7p-g79w-8964) and `setuptools` (CVE-2025-47273), both
+pip-**vendored** copies that no dependency bump can fix, expiring `2026-11-18` (see
+§ "Findings" and the [evidence doc](../proof/sprint-08-image-scan-evidence.md)).
 
 ### 6. Artifact
 
 The report tables + JSON are uploaded as the `trivy-image-reports` build artifact with
 `if: always()`, so a *failing* run — exactly when triage is needed — has the full
-findings (including the non-gating, non-fixable ones) one click away.
+findings (including the non-gating, non-fixable ones) one click away. The report passes
+run with **`--show-suppressed`**, so any finding an active `.trivyignore.yaml` exception
+is accepting appears in the artifact as a **Suppressed** row with its id + rationale +
+source — a "clean" report and a "clean only because of a live exception" report are
+distinguishable for audit. (The gate pass still *excludes* suppressed findings, so the
+exception does its job of not blocking the build.)
 
 ### 7. Secure, credential-free integration
 

@@ -321,14 +321,28 @@ jobs:
             set -- $pair; name="$1"; img="$2"
 
             echo "::group::Report — ${img} (all ${TRIVY_SEVERITY}, incl. non-fixable)"
-            trivy image --scanners vuln --pkg-types os,library \
-              --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
-              --skip-version-check --format table "${img}" \
-              | tee "trivy-reports/${name}-report.txt"
-            trivy image --scanners vuln --pkg-types os,library \
-              --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
-              --skip-version-check --format json \
-              --output "trivy-reports/${name}-report.json" "${img}"
+            # `--show-suppressed` keeps findings that .trivyignore.yaml suppresses
+            # VISIBLE in the report (marked as ignored), so the published artifact
+            # records exactly which CVEs an active exception is currently accepting —
+            # a "clean" report and a "clean only because of a live exception" report
+            # are distinguishable for audit (the gate pass below still EXCLUDES them).
+            # Report passes are non-gating (no --exit-code), so a non-zero here means
+            # Trivy itself errored (e.g. a vuln-DB fetch failure), not "found vulns".
+            # Surface that as a warning so an empty/truncated report artifact is never
+            # mistaken for a clean "no vulnerabilities" result. (The gate pass below
+            # still fails the job on the same error — this only makes it legible.)
+            if ! trivy image --scanners vuln --pkg-types os,library \
+                  --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
+                  --show-suppressed --skip-version-check --format table "${img}" \
+                  | tee "trivy-reports/${name}-report.txt"; then
+              echo "::warning::Trivy table report generation failed for ${img} (see gate below)"
+            fi
+            if ! trivy image --scanners vuln --pkg-types os,library \
+                  --severity "${TRIVY_SEVERITY}" --ignorefile .trivyignore.yaml \
+                  --show-suppressed --skip-version-check --format json \
+                  --output "trivy-reports/${name}-report.json" "${img}"; then
+              echo "::warning::Trivy JSON report generation failed for ${img} (see gate below)"
+            fi
             echo "::endgroup::"
 
             echo "::group::Gate — ${img} (FIXABLE ${TRIVY_SEVERITY} only)"
