@@ -38,6 +38,7 @@ repository.
 | [Kubernetes Security](kubernetes-security.md) | Identity, `securityContext`, secret handling, controls→evidence checklist, and what is explicitly not claimed |
 | [Observability & Operations](observability.md) | 🚧 The Sprint 8 observability *architecture* (design only): the Prometheus/Grafana stack, the four-layer signal catalogue, how an ephemeral batch `Job`'s metrics stay queryable, SLO-style objectives, deferred areas, and the PR 2–7 delivery plan |
 | [Monitoring Operations](monitoring-operations.md) | 🚧 Runbook for the Sprint 8 metrics + dashboards stack — Prometheus + kube-state-metrics + node-exporter (PR 2), the pipeline's Pushgateway per-stage metrics (PR 3), the MLflow/PostgreSQL depth exporters (PR 4), and **Grafana with three provisioned dashboards** (PR 5): deploy, reach Prometheus and Grafana, run a PromQL query, troubleshoot, and clean up (manifests defined & validated; not yet runtime-proven) |
+| [Alerting](alerting.md) | 🚧 The Sprint 8 alerting design + runbook (PR 6): eight high-signal, promtool-unit-tested Prometheus alert rules encoding the § 6 objectives, their threshold rationale, a per-alert runbook (the `runbook_url` target), and known limitations (design + unit-tested; not yet fired on a live cluster) |
 | [Cloud Operations](cloud-operations.md) | AWS/EKS lifecycle runbook (auth → init → plan → apply → verify → run → evidence → **destroy → verify clean**), the **AWS cost drivers**, safe teardown, and the honest limitations of the ephemeral validation environment |
 | [MLflow Platform](mlflow-platform.md) | The in-cluster MLflow tracking platform (server + PostgreSQL + S3): deploy, operate, the persistence test, and the AWS (EKS Pod Identity) notes |
 | [Dataset](dataset.md) | Dataset identity, version, and integrity — the S3 runtime-retrieval source of truth and how the `fetch-dataset` init container verifies it |
@@ -84,6 +85,7 @@ repository.
 | [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) | Pipeline Operational Metrics (Sprint 8 PR 3) — per-stage duration/success via Pushgateway; bounded cardinality; per-run reset lifecycle; operational-vs-MLflow boundary |
 | [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md) | MLflow & PostgreSQL Monitoring (Sprint 8 PR 4) — blackbox `/health` (Layer 3) + postgres-exporter with a dedicated read-only role (Layer 4) + scoped kubelet PVC-fill scrape; no DB credentials in config |
 | [ADR-032](decisions/ADR-032-grafana-dashboards.md) | Grafana Dashboards (Sprint 8 PR 5) — three purpose-built, version-controlled dashboards mapped to operational questions; file-provisioned datasource + dashboards; hardened internal-only Grafana; stable PromQL, bounded windows; model quality stays in MLflow |
+| [ADR-033](decisions/ADR-033-alerting.md) | Alerting (Sprint 8 PR 6) — eight high-signal, promtool-unit-tested Prometheus alert rules encoding the § 6 objectives; batch-correct pipeline-failure signal; documented thresholds; severity + summary/description + runbook per rule; no arbitrary alerts; Alertmanager routing deferred |
 
 ### Engineering Reviews
 

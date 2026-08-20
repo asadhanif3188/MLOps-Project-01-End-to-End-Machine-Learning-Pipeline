@@ -22,11 +22,16 @@
 #   8. postgres-exporter     — PostgreSQL backend health: pg_up, connections, size
 #                              (Layer 4 — PR 4). Scraped cross-namespace in `mlops`.
 #
-# No alerting rules and no Alertmanager here (that is PR 5); no remote_write / no
-# long-term store (ADR-028 § 5 — short local retention only). The config is a
-# plain ConfigMap (fixed name, matching the repo's mlflow-config style) mounted at
-# /etc/prometheus; changing it requires a pod restart, which is fine for a config
-# that changes rarely on a single-operator cluster.
+# Alert RULES are loaded via rule_files below (Sprint 8, PR 6; ADR-033) — a small,
+# high-signal set in the separate prometheus-alerts ConfigMap (k8s/monitoring/base/
+# prometheus/alerts.yml), kept out of this file so it is promtool-testable on its
+# own. There is still NO Alertmanager here: rules evaluate and expose firing alerts
+# on Prometheus's own /alerts + /api/v1/alerts, but routing them to a real notifier
+# (email/Slack/PagerDuty) is a deliberate deferral (ADR-028 § 6, ADR-033). No
+# remote_write / no long-term store (ADR-028 § 5 — short local retention only). The
+# config is a plain ConfigMap (fixed name, matching the repo's mlflow-config style)
+# mounted at /etc/prometheus; changing it requires a pod restart, which is fine for
+# a config that changes rarely on a single-operator cluster.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -48,6 +53,13 @@ data:
       evaluation_interval: 30s
       external_labels:
         cluster: mlops-pipeline
+
+    # Alerting rules (Sprint 8, PR 6; ADR-033). Loaded from the prometheus-alerts
+    # ConfigMap mounted read-only at /etc/prometheus/rules by the Deployment. Kept
+    # in its own file (prometheus/alerts.yml) so `promtool check rules` /
+    # `promtool test rules` validate it directly, un-wrapped from any ConfigMap.
+    rule_files:
+      - /etc/prometheus/rules/alerts.yml
 
     scrape_configs:
       # 1. Prometheus self-monitoring.

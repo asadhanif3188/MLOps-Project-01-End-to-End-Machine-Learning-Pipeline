@@ -2,9 +2,10 @@
 #
 # Quality gates that run on every push to `main` and every pull request. CI is
 # validation ONLY: it lints, tests, builds the container image to prove it
-# assembles and runs, and STATICALLY validates the Kubernetes manifests (YAML
-# syntax, upstream schema, Kustomize rendering, and the workload's security
-# contract). It does NOT deploy, does NOT push images to any registry, and does
+# assembles and runs, STATICALLY validates the Kubernetes manifests (YAML syntax,
+# upstream schema, Kustomize rendering, and the workload's security contract), and
+# unit-tests the Prometheus alert rules with promtool (Sprint 8, PR 6). It does NOT
+# deploy, does NOT push images to any registry, and does
 # NOT run the workload on a cluster. The one job that touches a Kubernetes API
 # server — `k8s-cluster-dry-run` — is opt-in (workflow_dispatch only) and does a
 # server-side *dry run* that admits the manifests without persisting or executing
@@ -374,6 +375,62 @@ jobs:
             python k8s/validate.py "${overlay}"
             echo "::endgroup::"
           done
+
+  # ---------------------------------------------------------------------------
+  # prometheus-rules — STATIC validation + UNIT TESTS of the Prometheus alert
+  # rules (Sprint 8, PR 6 — ADR-033). Independent of the other jobs (needs no
+  # Python package, image, or cluster), so it runs in parallel for fast feedback.
+  # `promtool check rules` proves the rule file is structurally valid; `promtool
+  # test rules` runs the offline unit-test suite (alerts_test.yml) that asserts
+  # each alert transitions Pending -> Firing at its for-duration (and Resolved on
+  # recovery) with the expected labels + rendered annotations — the rule LOGIC and
+  # thresholds proven deterministically, no cluster. promtool is pinned to the SAME
+  # Prometheus version the Deployment runs (k8s/monitoring/base/prometheus.yaml) and
+  # installed as a checksum-verified static binary — the same supply-chain pattern
+  # the k8s-validate job uses for kustomize/kubeconform. Design of record: ADR-033.
+  # ---------------------------------------------------------------------------
+  prometheus-rules:
+    name: Prometheus Alert Rules (promtool)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Pinned to match the Prometheus image in k8s/monitoring/base/prometheus.yaml
+      # so the rule engine that VALIDATES here is the one that RUNS in the cluster.
+      PROMETHEUS_VERSION: 2.53.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # promtool ships inside the Prometheus release tarball. Download it to the
+      # exact filename sha256sums.txt references so `sha256sum -c -` can verify it
+      # before we trust the binary (integrity against a corrupted/tampered download).
+      - name: Install promtool (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"; cd "$tmp"
+          tar="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          base="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}"
+          curl -fsSLo "${tar}" "${base}/${tar}"
+          curl -fsSLo sha256sums.txt "${base}/sha256sums.txt"
+          grep "${tar}" sha256sums.txt | sha256sum -c -
+          tar -xzf "${tar}"
+          sudo install -m 0755 \
+            "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" \
+            /usr/local/bin/promtool
+          promtool --version
+
+      # Structural validation: the rule file parses and every rule is well-formed.
+      - name: Check alert rules (promtool check rules)
+        run: promtool check rules k8s/monitoring/base/prometheus/alerts.yml
+
+      # Unit tests: drive synthetic series through the rules and assert the
+      # Pending -> Firing -> Resolved transitions, labels and annotations. Run from
+      # the rules directory so the test file's relative `rule_files: [alerts.yml]`
+      # resolves.
+      - name: Unit-test alert rules (promtool test rules)
+        working-directory: k8s/monitoring/base/prometheus
+        run: promtool test rules alerts_test.yml
 
   # ---------------------------------------------------------------------------
   # terraform-validate — STATIC validation of the Terraform IaC under terraform/.
