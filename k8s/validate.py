@@ -291,14 +291,51 @@ def _ingress_rules_for(nps: list[dict], name: str) -> list[dict]:
     ]
 
 
+def _peer_id(peer: dict) -> str:
+    """A stable identifier for a from/to peer, for `exactly {…}` set comparisons.
+
+    A peer with a podSelector is identified by its app name. A peer with NO
+    podSelector is deliberately made CONSPICUOUS rather than dropped, so an
+    over-broad rule breaks an `exactly {…}` check instead of silently passing:
+      * namespace-ONLY peer (allows every pod in a namespace) -> "ns:<name>:*";
+      * ipBlock peer (a CIDR)                                 -> "ipBlock:<cidr>";
+      * a peer with neither selector                          -> "any:*".
+    """
+    name = _peer_name(peer)
+    if name:
+        return name
+    if "ipBlock" in peer:
+        return f"ipBlock:{(peer.get('ipBlock') or {}).get('cidr')}"
+    ns = _peer_namespace(peer)
+    if ns is not None:
+        return f"ns:{ns}:*"
+    return "any:*"
+
+
 def _ingress_peer_names(nps: list[dict], name: str) -> set[str]:
-    """Every pod name permitted to INGRESS to `name` across its policies."""
+    """Every peer permitted to INGRESS to `name` across its policies, identified so
+    an over-broad (namespace-only / ipBlock / peerless) peer is visible, not
+    dropped — see _peer_id."""
     return {
-        _peer_name(p)
+        _peer_id(p)
         for r in _ingress_rules_for(nps, name)
         for p in (r.get("from", []) or [])
-        if _peer_name(p)
     }
+
+
+def _peerless_allow_rules(nps: list[dict]) -> list[str]:
+    """Policies with an ingress/egress rule that names NO peers — i.e. a `from:`/
+    `to:`-less rule, which the NetworkPolicy API treats as ALLOW FROM/TO ANYWHERE
+    (the most permissive rule, defeating a least-privilege allow-list). The empty
+    rule LIST of a default-deny is NOT flagged (it has no rule items at all)."""
+    hits: list[str] = []
+    for np in nps:
+        nm = np.get("metadata", {}).get("name", "?")
+        for direction, key in (("ingress", "from"), ("egress", "to")):
+            for rule in _np_rules(np, direction):
+                if key not in rule:
+                    hits.append(f"{nm}:{direction}")
+    return hits
 
 
 def _has_open_ipblock(nps: list[dict]) -> list[str]:
@@ -1200,6 +1237,17 @@ def validate() -> int:
     nps = by_kind.get("NetworkPolicy", [])
     r.check(sec, "NetworkPolicy objects rendered", bool(nps), "no NetworkPolicy found")
 
+    # No `from:`/`to:`-less allow rule (which would mean allow-from/to-ANYWHERE and
+    # silently defeat the allow-list). The default-deny's empty rule LIST is fine.
+    peerless = _peerless_allow_rules(nps)
+    r.check(
+        sec,
+        "no peerless allow-all rule (every allow rule names its peers)",
+        not peerless,
+        f"allow-all (from/to-less) rule(s) present: {sorted(set(peerless))} "
+        "— an allow rule with no peer selector permits ANY source/destination",
+    )
+
     # (a) Default-deny baseline: a policy that selects EVERY pod and denies both
     # ingress and egress (both policyTypes, no allow rules of its own).
     deny_all = [
@@ -1266,18 +1314,18 @@ def validate() -> int:
     )
 
     # (d) MLflow server: ingress from the pipeline + blackbox only (5000); egress to
-    # PostgreSQL (5432).
+    # PostgreSQL (5432). The port is verified on EVERY ingress rule (not just one
+    # peer), so moving a peer to the wrong port fails this check too.
     mlflow_from = _ingress_peer_names(nps, "mlflow-server")
+    mlflow_ingress_rules = _ingress_rules_for(nps, "mlflow-server")
     r.check(
         sec,
         "MLflow ingress is exactly {pipeline, blackbox-exporter} on 5000",
         mlflow_from == {"mlops-pipeline", "blackbox-exporter"}
-        and any(
-            _rule_allows(x, "mlops-pipeline", 5000)
-            for x in _ingress_rules_for(nps, "mlflow-server")
-        ),
+        and bool(mlflow_ingress_rules)
+        and all(5000 in _rule_ports(x) for x in mlflow_ingress_rules),
         f"MLflow ingress peers={sorted(mlflow_from)} "
-        "(expected exactly the pipeline and blackbox-exporter on port 5000)",
+        "(expected exactly the pipeline and blackbox-exporter, every rule on 5000)",
     )
     r.check(
         sec,
@@ -1360,18 +1408,28 @@ def validate() -> int:
                 ),
                 f"no {client} egress rule to the in-cluster minio:9000",
             )
+        minio_ingress_rules = _ingress_rules_for(nps, "minio")
         r.check(
             sec,
             "MinIO ingress is exactly {pipeline, mlflow-server, minio-setup} on 9000",
             _ingress_peer_names(nps, "minio")
-            == {"mlops-pipeline", "mlflow-server", "minio-setup"},
-            f"MinIO ingress peers={sorted(_ingress_peer_names(nps, 'minio'))}",
+            == {"mlops-pipeline", "mlflow-server", "minio-setup"}
+            and bool(minio_ingress_rules)
+            and all(9000 in _rule_ports(x) for x in minio_ingress_rules),
+            f"MinIO ingress peers={sorted(_ingress_peer_names(nps, 'minio'))} "
+            "(expected exactly those three, every rule on 9000)",
         )
     else:
         # AWS overlay: the S3 clients get a 443-to-public-internet bound. Assert the
-        # rule shape that makes it internet-only (an ipBlock 0.0.0.0/0 with an
-        # RFC1918 `except`) rather than a blanket allow-all-egress.
-        rfc1918 = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+        # rule shape that makes it internet-only — an ipBlock 0.0.0.0/0 whose
+        # `except` excludes every RFC1918 range AND link-local (169.254.0.0/16: the
+        # EC2 IMDS + Pod Identity agent) — rather than a blanket allow-all-egress.
+        internet_except = {
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+        }
         for client in ("mlops-pipeline", "mlflow-server"):
             good = False
             for x in _egress_rules_for(nps, client):
@@ -1379,16 +1437,17 @@ def validate() -> int:
                     continue
                 for p in x.get("to", []) or []:
                     ib = p.get("ipBlock", {}) or {}
-                    if ib.get("cidr") == "0.0.0.0/0" and rfc1918 <= set(
+                    if ib.get("cidr") == "0.0.0.0/0" and internet_except <= set(
                         ib.get("except", []) or []
                     ):
                         good = True
             r.check(
                 sec,
-                f"{client} S3 egress is 443 to public-internet-only (RFC1918 excepted)",
+                f"{client} S3 egress is 443 to public-internet-only "
+                "(RFC1918 + link-local excepted)",
                 good,
-                f"{client} must egress on 443 to 0.0.0.0/0 with RFC1918 in `except` "
-                "(the tightest honest S3 bound on the VPC CNI — ADR-034)",
+                f"{client} must egress on 443 to 0.0.0.0/0 with RFC1918 + "
+                "169.254.0.0/16 in `except` (the tightest honest S3 bound — ADR-034)",
             )
 
     return r.render()
@@ -2167,6 +2226,14 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
         not open_blocks,
         f"unexpected ipBlock peer(s) in {sorted(set(open_blocks))} — monitoring "
         "ingress must be pod/namespace selectors only",
+    )
+    # No `from:`-less allow-all ingress rule (would allow ANY source).
+    peerless = _peerless_allow_rules(nps)
+    r.check(
+        sec,
+        "no peerless allow-all rule (every ingress allow names its peers)",
+        not peerless,
+        f"allow-all (peer-less) rule(s) present: {sorted(set(peerless))}",
     )
 
     return r.render()

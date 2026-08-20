@@ -72,7 +72,11 @@ start_probe() {
   if [ "$appname" != "none" ]; then
     label_args=(--labels "app.kubernetes.io/name=$appname")
   fi
-  kubectl -n "$ns" run "$name" --image="$PROBE_IMAGE" "${label_args[@]}" \
+  # Expand the array with the `${arr[@]+"${arr[@]}"}` guard so a ZERO-element array
+  # (the unlabelled probe) does not trip `set -u` on bash < 4.4 (e.g. macOS's
+  # default /bin/bash 3.2), which this suite's local-dev audience may run on.
+  kubectl -n "$ns" run "$name" --image="$PROBE_IMAGE" \
+    ${label_args[@]+"${label_args[@]}"} \
     --restart=Never \
     --overrides='{
       "spec": {

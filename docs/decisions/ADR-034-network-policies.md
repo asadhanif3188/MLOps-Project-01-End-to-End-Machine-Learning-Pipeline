@@ -138,9 +138,14 @@ would be brittle (they rotate) — the exact anti-pattern the brief forbids.
 
 What the AWS overlay *does* express is the tightest **honest** bound: the two S3
 clients (pipeline + MLflow) may egress on **TCP/443 to the public internet only** —
-`0.0.0.0/0` with every RFC1918 range in `except`, so the allowance cannot reach any
-in-VPC / in-cluster address (pod net, Service CIDR, node/control-plane ENIs, the API
-server). It restricts the *port* and *direction*, **not which S3 host/bucket**.
+`0.0.0.0/0` with every RFC1918 range **and link-local `169.254.0.0/16`** in
+`except`, so the allowance cannot reach any in-VPC / in-cluster address (pod net,
+Service CIDR, node/control-plane ENIs, the API server) or any link-local endpoint
+(the EC2 IMDS `169.254.169.254`, the Pod Identity agent `169.254.170.23`). It
+restricts the *port* and *direction*, **not which S3 host/bucket**. (The `except`
+list assumes an RFC1918 VPC CIDR — the default `10.0.0.0/16`, `terraform/variables.tf`;
+a CGNAT `100.64.0.0/10` VPC would need adding, a coupling noted here since the two
+files must stay consistent.)
 
 The missing precision lives where it *can* be expressed (defence in depth):
 
@@ -178,6 +183,16 @@ enforcing CNIs this project targets (AWS VPC CNI network policy, Calico, Cilium)
 permit node-sourced probe traffic, so a default-deny ingress does not break probes.
 The runtime allowed-path test verifies pods stay Ready under policy; if a CNI ever
 did block probes, that test — not a silent outage — would catch it.
+
+This is the **highest-blast-radius unverified assumption** in the PR (every workload
+except PostgreSQL, which probes over loopback, health-checks over the pod network),
+so it is the **first** thing to exercise via `k8s/tests/netpol/run.sh` on the actual
+target CNI before the policy set is trusted there. Were it wrong, MLflow would never
+become Ready, its Service would have zero Endpoints, and the pipeline's
+`wait-for-mlflow` init container would fail the whole Job — a platform-wide outage,
+not a partial one. There is no portable way to select "the node" in a NetworkPolicy,
+so the mitigation is the CNI's documented node-probe exemption plus this runtime
+guard, not an extra ingress rule.
 
 ## Alternatives considered
 

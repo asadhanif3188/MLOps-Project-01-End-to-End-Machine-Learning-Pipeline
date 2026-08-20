@@ -20,11 +20,12 @@
 # WHAT THIS POLICY DOES express — the tightest HONEST bound: allow the two S3
 # clients (the pipeline's fetch-dataset init container and the MLflow artifact
 # store) egress on TCP/443 to the PUBLIC internet ONLY, by allowing 0.0.0.0/0 with
-# every RFC1918 private range in `except`. That is meaningfully more than "allow
-# all egress": it cannot be used to reach any in-VPC or in-cluster service (pod
-# network, Service CIDR, node/control-plane ENIs, the API server) — only outward to
-# public endpoints such as S3, on one port. It does NOT, and cannot here, restrict
-# *which* public host (i.e. which bucket/region) is reachable.
+# every RFC1918 private range AND link-local (169.254.0.0/16) in `except`. That is
+# meaningfully more than "allow all egress": it cannot be used to reach any in-VPC
+# or in-cluster service (pod network, Service CIDR, node/control-plane ENIs, the API
+# server) or any link-local endpoint (the EC2 IMDS, the Pod Identity agent) — only
+# outward to public endpoints such as S3, on one port. It does NOT, and cannot here,
+# restrict *which* public host (i.e. which bucket/region) is reachable.
 #
 # WHERE THE MISSING PRECISION ACTUALLY LIVES (defence in depth, ADR-034 § AWS
 # egress): the "which S3 / which bucket / which actions" control is enforced at the
@@ -70,9 +71,18 @@ spec:
             # pinned more tightly at this layer.
             cidr: 0.0.0.0/0
             except:
+              # RFC1918 private ranges (cover the VPC CIDR, the pod CIDR — VPC CNI
+              # uses VPC IPs — the Service CIDR, and the control-plane ENIs) PLUS
+              # link-local 169.254.0.0/16 (the EC2 IMDS 169.254.169.254 and the EKS
+              # Pod Identity agent 169.254.170.23). So this 443 allowance reaches
+              # only PUBLIC endpoints such as S3, never any in-VPC/in-cluster/
+              # link-local address. NOTE: this assumes an RFC1918 VPC CIDR (the
+              # default 10.0.0.0/16, terraform/variables.tf); a CGNAT VPC CIDR
+              # (100.64.0.0/10) would need adding here.
               - 10.0.0.0/8
               - 172.16.0.0/12
               - 192.168.0.0/16
+              - 169.254.0.0/16
       ports:
         - protocol: TCP
           port: 443
@@ -100,9 +110,18 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
+              # RFC1918 private ranges (cover the VPC CIDR, the pod CIDR — VPC CNI
+              # uses VPC IPs — the Service CIDR, and the control-plane ENIs) PLUS
+              # link-local 169.254.0.0/16 (the EC2 IMDS 169.254.169.254 and the EKS
+              # Pod Identity agent 169.254.170.23). So this 443 allowance reaches
+              # only PUBLIC endpoints such as S3, never any in-VPC/in-cluster/
+              # link-local address. NOTE: this assumes an RFC1918 VPC CIDR (the
+              # default 10.0.0.0/16, terraform/variables.tf); a CGNAT VPC CIDR
+              # (100.64.0.0/10) would need adding here.
               - 10.0.0.0/8
               - 172.16.0.0/12
               - 192.168.0.0/16
+              - 169.254.0.0/16
       ports:
         - protocol: TCP
           port: 443

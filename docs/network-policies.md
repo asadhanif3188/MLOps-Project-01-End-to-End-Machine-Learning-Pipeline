@@ -124,10 +124,13 @@ egress is not expressible at this layer.** Pinning S3's rotating CIDRs would be
 brittle — the anti-pattern the brief forbids.
 
 The AWS overlay expresses the tightest **honest** bound: the pipeline and MLflow may
-egress on **TCP/443 to the public internet only** (`0.0.0.0/0` minus RFC1918), which
-cannot reach any in-VPC / in-cluster address. It restricts *port* and *direction*,
-not *which bucket*. The "which bucket / which actions" precision lives where it can
-be expressed:
+egress on **TCP/443 to the public internet only** (`0.0.0.0/0` minus RFC1918 **and
+link-local `169.254.0.0/16`** — so it also cannot reach the EC2 IMDS or the Pod
+Identity agent), which cannot reach any in-VPC / in-cluster / link-local address. It
+restricts *port* and *direction*, not *which bucket*. (The `except` list assumes an
+RFC1918 VPC CIDR — the default `10.0.0.0/16`; a CGNAT `100.64.0.0/10` VPC would need
+adding.) The "which bucket / which actions" precision lives where it can be
+expressed:
 
 1. **IAM via Pod Identity** (ADR-024/027) — roles grant only the specific bucket +
    actions today.
@@ -173,3 +176,15 @@ cluster in this PR (the static contract passes in CI; the runtime suite is the
 executable harness). Capture is a runtime-evidence activity: on EKS (VPC CNI flag on)
 or a local kind+Calico cluster, run the suite and record the allowed/denied/canary
 results here, as the Sprint 6 runtime test did for the network foundation.
+
+> **Verify this first — kubelet health probes.** The single highest-blast-radius
+> assumption is that the enforcing CNI permits **node-sourced** kubelet
+> liveness/readiness probes under a default-deny ingress (every workload except
+> PostgreSQL — which probes over loopback — health-checks over the pod network). If a
+> CNI blocked them, MLflow (and the monitoring components) would never become Ready,
+> the `mlflow` Service would have zero Endpoints, and the pipeline's
+> `wait-for-mlflow` init container would fail the whole Job. The targeted CNIs (AWS
+> VPC CNI network policy, Calico, Cilium) permit node→pod probe traffic, but this is
+> **unverified on a live cluster**. The runtime suite's allowed-path checks (pods
+> reachable + Ready under policy) are the guard — run them **before** trusting the
+> policy set in any environment.
