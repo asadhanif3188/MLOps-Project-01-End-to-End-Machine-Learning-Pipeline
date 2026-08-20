@@ -29,6 +29,12 @@ resources:
   # provider provisioning ConfigMaps and the hardened, internal-only Grafana
   # Deployment/Service/SA. The admin Secret is created out-of-band (see
   # grafana/grafana-admin-secret.example.yaml), never rendered here.
+  #
+  # NOTE: Grafana reads the datasource + dashboard-provider provisioning YAML ONLY at
+  # process start, so editing either of these two ConfigMaps requires a
+  # `kubectl -n monitoring rollout restart deploy/grafana` to take effect (documented
+  # in docs/monitoring-operations.md). The dashboard JSON is different — the provider
+  # re-reads it on an interval, so a dashboard edit hot-reloads with no restart.
   - grafana/grafana-datasource.yaml
   - grafana/grafana-dashboard-provider.yaml
   - grafana/grafana.yaml

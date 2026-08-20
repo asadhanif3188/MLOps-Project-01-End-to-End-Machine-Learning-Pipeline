@@ -106,7 +106,7 @@
         "overrides": []
       },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
-      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "mlops_pipeline_stage_success{stage=\"fetch_dataset\"}", "instant": true } ]
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max(mlops_pipeline_stage_success{stage=\"fetch_dataset\"})", "instant": true } ]
     },
     {
       "id": 6,

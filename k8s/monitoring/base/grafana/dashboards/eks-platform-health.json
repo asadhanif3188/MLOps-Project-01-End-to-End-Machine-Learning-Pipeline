@@ -267,7 +267,10 @@
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_job_status_failed", "instant": true, "format": "table" },
         { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "kube_job_status_active", "instant": true, "format": "table" }
       ],
-      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "endpoint": true, "service": true, "uid": true } } } ]
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "endpoint": true, "service": true, "uid": true, "container": true, "pod": true }, "renameByName": { "job_name": "Job", "Value #A": "succeeded", "Value #B": "failed", "Value #C": "active" } } }
+      ]
     }
   ]
 }

@@ -160,6 +160,13 @@ Deep-link a specific dashboard by uid, e.g.
 > need those workloads up and, for `pg_*`, the postgres-exporter role/Secret (§ 1).
 > This is expected — it is the runtime-evidence PR that proves panels populate.
 >
+> **Editing a dashboard vs. editing provisioning.** A change to a **dashboard JSON**
+> (`grafana/dashboards/*.json`) hot-reloads — the provider re-reads the directory
+> every 30 s, so `kubectl apply -k …` is enough. A change to the **datasource** or
+> **dashboard-provider** ConfigMap is read by Grafana **only at start-up**, so after
+> `apply` you must also restart it:
+> `kubectl -n monitoring rollout restart deploy/grafana`.
+>
 > **Model accuracy is not in Grafana.** The pipeline dashboard says so explicitly:
 > accuracy / best params / per-run artifacts live in **MLflow** (the ownership
 > boundary, [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) /

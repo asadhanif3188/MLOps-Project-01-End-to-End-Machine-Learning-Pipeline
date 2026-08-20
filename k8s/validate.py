@@ -1568,6 +1568,10 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
     dash_files = (
         sorted(dashboards_dir.glob("*.json")) if dashboards_dir.is_dir() else []
     )
+    # The count is pinned to the three dashboards ADR-032 defines (EKS/Platform Health,
+    # MLOps Pipeline Operations, MLflow Platform Health) — bump this deliberately when a
+    # dashboard is added/removed, in lock-step with the configMapGenerator file list.
+    # The per-file "packaged into the ConfigMap" check below is the redundant backstop.
     r.check(
         sec,
         "three dashboard JSON files present",

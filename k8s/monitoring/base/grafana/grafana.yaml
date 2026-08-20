@@ -60,8 +60,11 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: grafana
-  # Recreate, not RollingUpdate: a single replica bound to one emptyDir — recreating
-  # avoids two Grafanas briefly contending on the same (ephemeral) state dir.
+  # Recreate, not RollingUpdate: a single-replica dashboards tool with no need for a
+  # zero-downtime overlap during an upgrade. Recreate also means a provisioning-
+  # ConfigMap change (which needs a fresh Grafana process to take effect — see
+  # docs/monitoring-operations.md) is picked up cleanly by a `kubectl rollout restart`
+  # rather than two generations briefly running the old and new config side by side.
   strategy:
     type: Recreate
   template:
