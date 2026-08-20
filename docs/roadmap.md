@@ -329,7 +329,9 @@ infrastructure defined as code.
   ([ADR-034](decisions/ADR-034-network-policies.md)). **Manifests + instrumentation +
   dashboards + alert rules + network policies only — not deployed/runtime-proven yet**
   (no live cluster; live firing, the failure-injection campaign, and the live
-  allowed/denied-path capture are the runtime-evidence work);
+  allowed/denied-path capture are the runtime-evidence work — the network-policy
+  capture is tracked as a checklist in
+  [`docs/proof/sprint-08-network-policy-runtime-evidence.md`](proof/sprint-08-network-policy-runtime-evidence.md));
   Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.

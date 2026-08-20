@@ -175,7 +175,13 @@ The runtime allowed/denied paths have **not** yet been exercised on a live enfor
 cluster in this PR (the static contract passes in CI; the runtime suite is the
 executable harness). Capture is a runtime-evidence activity: on EKS (VPC CNI flag on)
 or a local kind+Calico cluster, run the suite and record the allowed/denied/canary
-results here, as the Sprint 6 runtime test did for the network foundation.
+results, as the Sprint 6 runtime test did for the network foundation.
+
+> **Tracking checklist:**
+> [`docs/proof/sprint-08-network-policy-runtime-evidence.md`](proof/sprint-08-network-policy-runtime-evidence.md)
+> holds the step-by-step capture checklist (prerequisites, the probe-assumption
+> gate, and the results table to fill in). Complete it the next time an enforcing
+> cluster exists.
 
 > **Verify this first — kubelet health probes.** The single highest-blast-radius
 > assumption is that the enforcing CNI permits **node-sourced** kubelet

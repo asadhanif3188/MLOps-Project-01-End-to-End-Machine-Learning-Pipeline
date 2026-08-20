@@ -235,4 +235,6 @@ new runtime components.
 
 **Runtime evidence.** To be captured on an enforcing cluster: apply an overlay, run
 `k8s/tests/netpol/run.sh`, and record the allowed/denied/​canary results, as the
-Sprint 6 runtime test did for the network foundation.
+Sprint 6 runtime test did for the network foundation. The step-by-step capture
+checklist (with the probe-assumption gate and a results table to fill in) is tracked
+in [`docs/proof/sprint-08-network-policy-runtime-evidence.md`](../proof/sprint-08-network-policy-runtime-evidence.md).
