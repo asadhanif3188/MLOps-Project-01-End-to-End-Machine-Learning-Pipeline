@@ -3,7 +3,7 @@
 # This is deliberately MINIMAL and hand-written — exactly the targets this
 # project's four-layer model needs and nothing more (the sprint brief: "explicitly
 # configure only what the project needs", do not blindly import a packaged stack).
-# Five scrape jobs cover Layer 1 (K8s platform) and Layer 2 (the batch Job):
+# Eight scrape jobs cover all four layers:
 #   1. prometheus            — self-monitoring (is Prometheus itself healthy?).
 #   2. kube-state-metrics    — API-object state: Job success/duration/OOM (Layer 2)
 #                              and node/pod/PVC/Deployment/StatefulSet state (L1/3/4).
@@ -14,9 +14,13 @@
 #                              per-stage duration + success/failure, pushed before
 #                              the pod exits (Layer 2 per-stage granularity KSM
 #                              cannot give — Sprint 8, PR 3; ADR-030).
-#
-# Layer 3/4 DEPTH (blackbox `/health`, postgres-exporter) is intentionally ABSENT
-# — it is Sprint 8 PR 4, and adding it now would exceed this PR's scope.
+#   6. kubelet               — the kubelet's own /metrics, SCOPED to
+#                              kubelet_volume_stats_* only: the Postgres PVC-fill
+#                              signal (Layer 4 — Sprint 8, PR 4; ADR-031).
+#   7. blackbox-mlflow-health — MLflow /health availability via blackbox-exporter
+#                              (Layer 3 — MLflow has no native /metrics; PR 4).
+#   8. postgres-exporter     — PostgreSQL backend health: pg_up, connections, size
+#                              (Layer 4 — PR 4). Scraped cross-namespace in `mlops`.
 #
 # No alerting rules and no Alertmanager here (that is PR 5); no remote_write / no
 # long-term store (ADR-028 § 5 — short local retention only). The config is a
@@ -127,3 +131,74 @@ data:
           - source_labels: [__meta_kubernetes_endpoint_port_name]
             action: keep
             regex: http
+
+      # 6. kubelet /metrics — the kubelet's OWN metrics endpoint (distinct from the
+      #    cAdvisor subresource in job 4), scraped through the API server proxy with
+      #    the same pod token + CA and the same nodes/proxy RBAC. This project scrapes
+      #    it for ONE thing: the PersistentVolume usage stats (kubelet_volume_stats_*)
+      #    behind the Layer 4 Postgres PVC-fill signal (ADR-031). The endpoint exposes
+      #    a large surface, so a metric_relabel keep drops everything else at ingestion
+      #    — minimal by construction, no duplication of cAdvisor's container metrics.
+      - job_name: kubelet
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: kubelet_volume_stats_.*
+            action: keep
+
+      # 7. blackbox-mlflow-health — Layer 3 MLflow availability. MLflow has no native
+      #    /metrics, so Prometheus cannot scrape it directly. Instead it scrapes the
+      #    blackbox-exporter's /probe endpoint, handing it the MLflow /health URL as
+      #    the `target` param; blackbox performs the GET and returns probe_success /
+      #    probe_http_status_code / probe_duration_seconds. The relabel chain is the
+      #    standard blackbox pattern: carry the static target into __param_target and
+      #    the `instance` label, then rewrite __address__ to the exporter's Service so
+      #    the actual scrape hits blackbox, not MLflow (ADR-031). /health is exempt
+      #    from MLflow's host allow-list and is a cheap "server up" handler, so one GET
+      #    per 30s scrape adds negligible load.
+      - job_name: blackbox-mlflow-health
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        static_configs:
+          - targets:
+              - http://mlflow.mlops.svc.cluster.local:5000/health
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: blackbox-exporter.monitoring.svc.cluster.local:9115
+
+      # 8. postgres-exporter — Layer 4 PostgreSQL backend health (pg_up, connections,
+      #    database size). The exporter runs in the `mlops` namespace beside the DB
+      #    (so its credential Secret stays there), so this job discovers endpoints in
+      #    `mlops` — permitted by Prometheus's existing cluster-wide read-only
+      #    endpoints RBAC (prometheus.yaml) with no extra grant (ADR-031).
+      - job_name: postgres-exporter
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ["mlops"]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+            action: keep
+            regex: postgres-exporter
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics

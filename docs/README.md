@@ -82,6 +82,7 @@ repository.
 | [ADR-028](decisions/ADR-028-observability-architecture.md) | Observability Architecture (Prometheus + Grafana; four-layer model; batch-Job metrics via kube-state-metrics) |
 | [ADR-029](decisions/ADR-029-monitoring-foundation.md) | Monitoring Foundation (Sprint 8 PR 2) — minimal hand-written Prometheus + KSM + node-exporter; ephemeral TSDB; read-only RBAC; node-exporter PSA exception |
 | [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md) | Pipeline Operational Metrics (Sprint 8 PR 3) — per-stage duration/success via Pushgateway; bounded cardinality; per-run reset lifecycle; operational-vs-MLflow boundary |
+| [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md) | MLflow & PostgreSQL Monitoring (Sprint 8 PR 4) — blackbox `/health` (Layer 3) + postgres-exporter with a dedicated read-only role (Layer 4) + scoped kubelet PVC-fill scrape; no DB credentials in config |
 
 ### Engineering Reviews
 

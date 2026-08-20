@@ -853,6 +853,62 @@ def validate() -> int:
         f"mlops-pipeline-config MLFLOW_TRACKING_URI values: {tracking_uri_vals}",
     )
 
+    # (f) Layer 4 DB-health exporter (Sprint 8, PR 4; ADR-031). postgres-exporter
+    # lives in the mlops namespace beside the DB so its credential Secret never
+    # enters the monitoring namespace. Its pod hardening is already enforced by the
+    # uniform contract (Section 7); the checks here are the PR-4 SECURITY contract
+    # the brief calls out: the DB password must come from a Secret (never inline),
+    # and the connection target must carry no embedded credential.
+    pgx = next(
+        (
+            d
+            for d in deployments
+            if d.get("metadata", {}).get("name") == "postgres-exporter"
+        ),
+        None,
+    )
+    r.check(
+        sec,
+        "postgres-exporter Deployment present (Layer 4 DB health)",
+        pgx is not None,
+        "no Deployment/postgres-exporter in render",
+    )
+    r.check(
+        sec,
+        "postgres-exporter Service present",
+        any(
+            s.get("metadata", {}).get("name") == "postgres-exporter"
+            for s in by_kind.get("Service", [])
+        ),
+        "no Service/postgres-exporter in render",
+    )
+    if pgx is not None:
+        pgx_cs = containers_of(pgx)
+        pgx_env = container_env(pgx_cs[0]) if pgx_cs else {}
+        # The password must be a secretKeyRef, not an inline value — the whole point
+        # of "do not expose database credentials in metrics/config".
+        pass_entry = pgx_env.get("DATA_SOURCE_PASS")
+        pass_from_secret = isinstance(pass_entry, dict) and "secretKeyRef" in (
+            pass_entry.get("valueFrom", {}) or {}
+        )
+        r.check(
+            sec,
+            "postgres-exporter password sourced from a Secret (secretKeyRef)",
+            pass_from_secret,
+            "DATA_SOURCE_PASS must be a secretKeyRef, never an inline value "
+            "(no DB credentials in config — ADR-031)",
+        )
+        # The non-secret connection target must not smuggle a credential in a DSN
+        # (`user:pass@host`); the split DATA_SOURCE_URI form carries host/db only.
+        uri_val = pgx_env.get("DATA_SOURCE_URI", "")
+        uri_str = uri_val if isinstance(uri_val, str) else ""
+        r.check(
+            sec,
+            "postgres-exporter DATA_SOURCE_URI carries no inline credential",
+            "@" not in uri_str,
+            f"DATA_SOURCE_URI must be host/db only (no 'user:pass@'); got {uri_str!r}",
+        )
+
     # ------------------------------------------------------------------ #
     # Section 7 — Uniform workload security-context contract (Sprint 7 PR 11).
     # ------------------------------------------------------------------ #
@@ -1362,6 +1418,13 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             "node-exporter",
             "cadvisor",
             "pushgateway",
+            # Sprint 8, PR 4 (ADR-031) — Layer 3/4 depth:
+            "blackbox-mlflow-health",  # MLflow /health availability (Layer 3)
+            "postgres-exporter",  # PostgreSQL backend health (Layer 4)
+            # The Postgres PVC-fill signal comes from the kubelet's volume stats;
+            # the metric_relabel keep names the family, so this needle proves the
+            # kubelet scrape exists AND is scoped to just those series (Layer 4).
+            "kubelet_volume_stats_",
         )
         for needle in scrape_needles:
             r.check(
@@ -1381,6 +1444,59 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             "the pushgateway scrape job must set 'honor_labels: true' so pushed "
             "job/stage labels are preserved (ADR-030)",
         )
+        # The MLflow availability probe must target MLflow's STABLE /health endpoint
+        # (exempt from the server's host allow-list, and a cheap "server up" handler)
+        # — not the root or a heavier path (ADR-031). This asserts the blackbox job
+        # actually probes the right thing, not merely that a job name exists.
+        r.check(
+            sec,
+            "blackbox scrape targets MLflow /health",
+            "mlflow.mlops.svc.cluster.local:5000/health" in cfg,
+            "the blackbox scrape must probe the MLflow /health endpoint "
+            "(the stable, load-free availability target — ADR-031)",
+        )
+
+    # -- M9. Layer 3 exporter (blackbox) present & wired -- #
+    # postgres-exporter (Layer 4) is deliberately NOT here — it lives in the mlops
+    # namespace beside the DB (so its credential Secret never enters `monitoring`),
+    # and is validated by the mlops pass (Section 6f). blackbox-exporter carries no
+    # credentials and is a pure monitoring component, so it lives in this stack.
+    sec = "M9. Layer 3/4 exporters"
+    bb_dep = next(
+        (
+            d
+            for d in by_kind.get("Deployment", [])
+            if d.get("metadata", {}).get("name") == "blackbox-exporter"
+        ),
+        None,
+    )
+    r.check(
+        sec,
+        "blackbox-exporter Deployment present (Layer 3 availability)",
+        bb_dep is not None,
+        "no Deployment/blackbox-exporter in the monitoring render",
+    )
+    r.check(
+        sec,
+        "blackbox-exporter Service present",
+        any(
+            s.get("metadata", {}).get("name") == "blackbox-exporter"
+            for s in by_kind.get("Service", [])
+        ),
+        "no Service/blackbox-exporter in the monitoring render",
+    )
+    # Its module config must define an http prober (the /health probe recipe).
+    bb_cfgs = [
+        cm.get("data", {}).get("blackbox.yml", "")
+        for cm in by_kind.get("ConfigMap", [])
+        if cm.get("metadata", {}).get("name") == "blackbox-exporter-config"
+    ]
+    r.check(
+        sec,
+        "blackbox-exporter module config defines an http prober",
+        any("prober: http" in c for c in bb_cfgs),
+        "blackbox-exporter-config must define a module with 'prober: http'",
+    )
 
     return r.render()
 

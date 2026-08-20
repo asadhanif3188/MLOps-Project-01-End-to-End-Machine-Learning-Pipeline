@@ -138,9 +138,12 @@ app-side exporter — **deferred** (ADR-028 § 6). `/health` is a **shallow** ch
 
 **Limitations.** pg-exporter needs a **dedicated read-only monitoring role** and an
 out-of-band Secret (the never-committed pattern of `mlflow-db-credentials`) — a new
-identity, which is why Layer 4 depth lands in a later PR. Single instance → no
-replication/lag signals (none exist by design, ADR-026). The **PVC-fill** alert is
-the single highest-value signal here given the fixed 1 Gi.
+identity, **delivered in PR 4** ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)):
+a `pg_monitor`-only `mlflow_exporter` role, the exporter co-located with the DB in
+the `mlops` namespace so the credential never enters `monitoring`. Single instance →
+no replication/lag signals (none exist by design, ADR-026). The **PVC-fill** signal
+(the single highest-value one here given the fixed 1 Gi) comes from the **kubelet's**
+volume stats, scraped in PR 4 scoped to `kubelet_volume_stats_*` only.
 
 ---
 
@@ -318,7 +321,7 @@ work stays static/dry-run in CI per ADR-012 until the runtime-evidence PR).
 |----|-------|---------------------|
 | **PR 2 — Metrics core** ✅ *(manifests; not deployed)* | Prometheus + kube-state-metrics + node-exporter in a hardened `monitoring` namespace; cAdvisor scrape; least-privilege scrape RBAC | **Delivered:** [`k8s/monitoring/`](../k8s/monitoring/) renders Layer 1 signals **and** the Layer 2 batch-Job signals (via KSM); Job `ttlSecondsAfterFinished` set to honour the [queryability contract](#the-queryability-contract-a-design-requirement-for-the-runtime-prs); extended `k8s/validate.py` monitoring pass green over `k8s/monitoring`; `kustomize build` + `kubeconform` (CI) green. Minimal hand-written Kustomize (no Helm), ephemeral `emptyDir` TSDB, read-only RBAC, one documented node-exporter Pod Security exception — [ADR-029](decisions/ADR-029-monitoring-foundation.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (no live cluster; runtime proof is PR 6). |
 | **PR 3 — Pipeline operational metrics** ✅ *(manifests + instrumentation; not deployed)* | Per-stage duration + success/failure pushed by the pipeline to a scoped **Pushgateway**; 5th Prometheus scrape job | **Delivered:** `src/pipeline_metrics.py` (best-effort, bounded-cardinality, per-run reset) wired into `stage_runner` + the `fetch-dataset` init container; [`k8s/monitoring/base/pushgateway.yaml`](../k8s/monitoring/base/pushgateway.yaml) (hardened, internal-only) + `honor_labels` scrape; `PUSHGATEWAY_URL` in the base ConfigMap; unit tests for emission/timing/failure/reset; extended `k8s/validate.py`. Operational-vs-MLflow boundary preserved. [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof is PR 6). |
-| **PR 4 — MLflow & PostgreSQL depth** | blackbox-exporter (`/health`) + postgres-exporter with a dedicated **read-only** monitoring role (out-of-band Secret) | Layer 3 availability/memory + Layer 4 up/**PVC-fill**/connections signals present; new DB role is least-privilege; secret hygiene checks pass |
+| **PR 4 — MLflow & PostgreSQL depth** ✅ *(manifests; not deployed)* | blackbox-exporter (`/health`) + postgres-exporter with a dedicated **read-only** monitoring role (out-of-band Secret) | **Delivered:** [`blackbox-exporter.yaml`](../k8s/monitoring/base/blackbox-exporter.yaml) (Layer 3 MLflow `/health` — a stable, load-free probe) + [`postgres-exporter.yaml`](../k8s/base/mlflow/postgres-exporter.yaml) (Layer 4 `pg_up`/connections/size via a `pg_monitor`-only role, credential in `mlops` only) + a scoped **kubelet** volume-stats scrape (Layer 4 **PVC-fill**); three new scrape jobs (→ eight); extended `k8s/validate.py` (password from Secret, no credential in the DSN). Run-level replica/readiness/restart/CPU/memory signals already collectable from PR 2 (KSM + cAdvisor). Secret hygiene green. [ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof is PR 6). |
 | **PR 5 — Alerting** | Prometheus alert rules encoding **exactly** the [§ 6](#6-operational-objectives-slo-style-not-production-slos) objectives | The defined alert set exists and no others (no arbitrary alerts); rules unit-testable (e.g. `promtool test rules`) |
 | **PR 6 — Runtime evidence & operations** | Provision → run pipeline → prove signals → tear down; observability operations runbook | The [runtime-evidence expectations](#runtime-evidence-what-later-sprint-8-prs-must-prove) are all met and recorded in a redacted proof doc matching the Sprint 6/7 conventions; environment destroyed & verified clean (ADR-020) |
 

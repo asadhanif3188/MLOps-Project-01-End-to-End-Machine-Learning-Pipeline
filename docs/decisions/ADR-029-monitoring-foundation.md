@@ -84,6 +84,14 @@ Alertmanager (PR 5); runtime evidence + operations runbook proof (PR 6). No
 pipeline custom metrics and no Pushgateway *in this PR* (ADR-028 § 3 keeps ML
 semantics in MLflow).
 
+> **Update ([ADR-031](ADR-031-mlflow-postgres-monitoring.md), Sprint 8 PR 4).** The
+> Layer 3/4 depth landed: **blackbox-exporter** (MLflow `/health`) and
+> **postgres-exporter** (a dedicated read-only `pg_monitor` role), plus a scoped
+> **kubelet** volume-stats scrape for the Postgres PVC-fill signal — taking the stack
+> to **eight scrape jobs**. The "four/five scrape jobs" counts in this ADR describe
+> the PR-2 state and remain accurate as of PR 2; see ADR-030 (PR 3) and ADR-031
+> (PR 4) for the current picture.
+
 > **Update ([ADR-030](ADR-030-pipeline-operational-metrics.md), Sprint 8 PR 3).**
 > The sprint resequenced the plan: **PR 3 delivered the pipeline's operational
 > metrics** via a scoped Pushgateway (per-stage duration/success — a **5th** scrape

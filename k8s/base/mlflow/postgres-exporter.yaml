@@ -1,0 +1,188 @@
+# postgres-exporter — Layer 4 PostgreSQL backend health (Sprint 8, PR 4; ADR-031).
+# The Postgres StatefulSet's readiness probe (`pg_isready`, ADR-026) tells the
+# cluster the DB accepts connections, and KSM/cAdvisor give its readiness, restarts,
+# and CPU/memory (Layer 4 run-level signals, already collectable since PR 2). What
+# neither can give is the DB's OWN backend health — can a client actually connect and
+# run a query (`pg_up`), how many backends are connected vs the limit, how large the
+# database has grown. postgres-exporter connects to PostgreSQL and exposes exactly
+# those as metrics (the Layer 4 catalogue in docs/observability.md § 3).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY A SEPARATE DEPLOYMENT (not a StatefulSet sidecar): a standalone exporter is
+# independently observable — if the DB is down it reports `pg_up 0` (a positive
+# signal), whereas a sidecar would go down WITH the DB pod and only surface as a
+# scrape `up == 0`. It also keeps the exporter's lifecycle/restarts out of the
+# stateful DB pod. The trade-off (an extra network hop to the DB) is nil here: the
+# hop is intra-cluster to the existing headless Service, the same path the MLflow
+# server already uses. Sidecar remains a documented alternative (ADR-031).
+#
+# WHY IN THE mlops NAMESPACE (not monitoring): the exporter needs DB credentials,
+# and a Secret is namespace-scoped. Placing the exporter beside the database keeps
+# that credential in `mlops` — it is never copied into the `monitoring` namespace.
+# Prometheus scrapes it cross-namespace via a dedicated scrape job (its existing
+# cluster-wide read-only endpoints RBAC already permits mlops discovery).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SECURITY — reviewed carefully (the brief's explicit ask):
+#   * DEDICATED, LEAST-PRIVILEGE DB ROLE. The exporter authenticates as a
+#     purpose-made `mlflow_exporter` role granted only the built-in `pg_monitor`
+#     role (read access to Postgres' statistics views — pg_stat_*, pg_database size —
+#     and NOTHING else: no table data, no writes). It is NOT the `mlflow` application
+#     role. Create it out-of-band alongside the Secret (see
+#     postgres-exporter-secret.example.yaml for the exact SQL).
+#   * NO CREDENTIALS IN CONFIG OR METRICS. The password is delivered ONLY as an env
+#     var from a Secret (DATA_SOURCE_PASS ← secretKeyRef) — never in argv, never in a
+#     ConfigMap, never in the exposed /metrics. The non-secret connection target
+#     (host/port/db) is the split DATA_SOURCE_URI env, so the password is never part
+#     of a DSN string. The single-target env form is used (NOT the multi-target
+#     `?target=` API), so no DSN is ever passed in a scrape query parameter.
+#   * SCOPED COLLECTORS. Only the exporter's built-in cluster-level collectors run
+#     (`--auto-discover-databases=false`, no custom per-table/index query files) —
+#     enough for up/connections/size, deliberately NOT a full database-monitoring
+#     product (the brief: "do not overcomplicate", "do not add a full DB monitoring
+#     product").
+#   * FLEET HARDENING. Non-root uid 65534, drop ALL, no privilege escalation, seccomp
+#     RuntimeDefault, read-only root FS, no API token — it satisfies the mlops
+#     namespace's `restricted` Pod Security Standard and the k8s/validate.py contract.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres-exporter
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+# The exporter talks to PostgreSQL, never to the Kubernetes API, so it needs no
+# token — mount off, matching the fleet-wide default (least privilege).
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Single replica: the exporter is a stateless reflector of DB state; one is
+  # right-sized for a single-writer metadata DB (matches the DB's own single
+  # replica, ADR-026).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: exporter
+    spec:
+      serviceAccountName: postgres-exporter
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The postgres-exporter image runs as nobody (65534); state it numerically
+        # so runAsNonRoot admits without name resolution.
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-exporter
+          # Pinned, non-latest. The prometheus-community exporter image.
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          args:
+            - --web.listen-address=:9187
+            # Only the default cluster-level collectors; do not fan out per database.
+            # Keeps the exporter to up/connections/size — not a full DB monitor.
+            - --auto-discover-databases=false
+          env:
+            # The NON-SECRET connection target (host:port/dbname + options). The
+            # split DATA_SOURCE_URI form keeps the password OUT of any DSN string;
+            # sslmode=disable because in-cluster Postgres is not TLS-terminated here
+            # (the same posture as the MLflow server's own backend connection).
+            - name: DATA_SOURCE_URI
+              value: "mlflow-postgres:5432/mlflow?sslmode=disable"
+            # The dedicated read-only monitoring role's credentials, from the
+            # out-of-band Secret (never committed; see the *.example.yaml template).
+            # Delivered as env vars — never in argv, a ConfigMap, or the metrics.
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-postgres-exporter-credentials
+                  key: POSTGRES_EXPORTER_USER
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-postgres-exporter-credentials
+                  key: POSTGRES_EXPORTER_PASSWORD
+          ports:
+            - name: metrics
+              containerPort: 9187
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # The exporter writes nothing to disk — lock the root filesystem
+            # read-only (exceeds the restricted PSS baseline; matches the monitoring
+            # stack's posture).
+            readOnlyRootFilesystem: true
+          # Conservative resources: the exporter holds no state and runs a few small
+          # queries per scrape. Requests/limits are mandatory (the workload contract);
+          # tightened from MEASURED usage in the runtime-evidence PR (PR 6).
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          # The exporter's landing page ('/') proves the process is serving. Note it
+          # is UP even when the DB is unreachable — that is deliberate: an up exporter
+          # reporting `pg_up 0` is exactly the Layer 4 "DB down" signal we want.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+# Service — the internal endpoint Prometheus scrapes via mlops endpoints service
+# discovery (the `postgres-exporter` scrape job, prometheus-config.yaml). ClusterIP:
+# internal-only, never exposed outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: mlops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres-exporter
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics

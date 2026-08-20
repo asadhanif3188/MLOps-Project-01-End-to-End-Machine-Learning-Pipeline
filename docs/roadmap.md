@@ -296,10 +296,18 @@ infrastructure defined as code.
   avoid stale series, best-effort emission, and a strict operational-vs-MLflow
   ownership boundary — reversing ADR-028's "Pushgateway deferred" for this scoped use
   ([`src/pipeline_metrics.py`](../src/pipeline_metrics.py),
-  [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)). **Manifests +
+  [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)). **MLflow &
+  PostgreSQL platform depth is now added** (Sprint 8, PR 4): a **blackbox-exporter**
+  probing MLflow's stable `/health` (Layer 3 availability — MLflow has no native
+  `/metrics`), a **postgres-exporter** reporting `pg_up`/connections/size via a
+  dedicated read-only `pg_monitor` role (credentials confined to the `mlops`
+  namespace), and a scoped **kubelet** volume-stats scrape for the Postgres
+  **PVC-fill** signal — eight scrape jobs in all; the run-level replica/readiness/
+  restart/CPU/memory signals were already collectable from PR 2's KSM + cAdvisor
+  ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)). **Manifests +
   instrumentation only — not deployed/runtime-proven yet** (no live cluster; runtime
-  evidence is PR 6); **Grafana dashboards** (resequenced after PR 3),
-  MLflow/Postgres exporters (PR 4), and alerts (PR 5) remain.
+  evidence is PR 6); **Grafana dashboards** (resequenced after PR 3) and alerts
+  (PR 5) remain.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the

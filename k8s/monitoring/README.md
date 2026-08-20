@@ -24,7 +24,9 @@ base/
   node-exporter.yaml       # node-exporter: SA + DaemonSet + headless Service
   pushgateway.yaml         # Pushgateway (PR 3): SA + Deployment + Service — sink for the
                            #   ephemeral pipeline's per-stage operational metrics
-  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 5 scrape jobs
+  blackbox-exporter.yaml   # blackbox (PR 4): SA + module ConfigMap + Deployment + Service —
+                           #   Layer 3 MLflow /health availability probing
+  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 8 scrape jobs
   prometheus.yaml          # Prometheus: SA + read-only ClusterRole + binding + Deployment + Service
   kustomization.yaml
 overlays/
@@ -32,11 +34,20 @@ overlays/
   aws/                     # EKS                                 (currently == base)
 ```
 
+> **Layer 4 postgres-exporter lives elsewhere.** The PostgreSQL exporter (PR 4) is in
+> the **mlops** workload ([`k8s/base/mlflow/postgres-exporter.yaml`](../base/mlflow/postgres-exporter.yaml)),
+> not this stack — it is co-located with the DB so its dedicated read-only credential
+> Secret stays in the `mlops` namespace. Prometheus scrapes it cross-namespace
+> ([ADR-031](../../docs/decisions/ADR-031-mlflow-postgres-monitoring.md)).
+
 Covers **Layer 1** (Kubernetes platform — node-exporter + cAdvisor + KSM), the
-**Layer 2** batch-Job run-level signals (via KSM, PR 2), and the **Layer 2
-per-stage** operational metrics the pipeline pushes to the **Pushgateway** (PR 3 —
-[ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)). Grafana
-dashboards, MLflow/Postgres exporters (PR 4), and alerts (PR 5) are **not** here.
+**Layer 2** batch-Job run-level signals (via KSM, PR 2), the **Layer 2 per-stage**
+operational metrics the pipeline pushes to the **Pushgateway** (PR 3 —
+[ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)), and the
+**Layer 3/4 platform depth** (PR 4 — [ADR-031](../../docs/decisions/ADR-031-mlflow-postgres-monitoring.md)):
+MLflow `/health` (blackbox), PostgreSQL backend health (postgres-exporter), and the
+Postgres PVC-fill signal (a scoped kubelet volume-stats scrape). Grafana dashboards
+and alerts (PR 5) are **not** here.
 
 ## Build & validate
 
@@ -60,7 +71,14 @@ deploy, port-forward Prometheus, run a PromQL query, troubleshoot, and tear down
   and KSM stay restricted-equivalent.
 - **Least privilege:** Prometheus/KSM ClusterRoles are **read-only**
   (`get`/`list`/`watch`); their tokens are mounted only because they genuinely use
-  the API; node-exporter and the Pushgateway mount no token (neither calls the API).
+  the API; node-exporter, the Pushgateway, and the blackbox/postgres exporters mount
+  no token (none calls the API).
+- **Layer 3/4 depth (PR 4):** blackbox probes MLflow's **stable, load-free `/health`**
+  (MLflow has no native `/metrics`); postgres-exporter reports `pg_up`/connections/
+  size via a **dedicated `pg_monitor`-only DB role** (credentials in a `mlops` Secret,
+  never in config or metrics); the Postgres **PVC-fill** signal comes from a **scoped
+  kubelet** volume-stats scrape (`kubelet_volume_stats_*` only). Run-level replica/
+  readiness/restart/CPU/memory signals came from KSM + cAdvisor in PR 2.
 - **Pushgateway (PR 3):** the ephemeral pipeline Job cannot be pull-scraped, so each
   stage **pushes** its duration + success here before exiting; Prometheus scrapes the
   gateway with `honor_labels: true`. In-memory (no persistence), reset once per run
