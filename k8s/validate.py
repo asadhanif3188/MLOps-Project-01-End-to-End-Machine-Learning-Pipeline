@@ -1737,7 +1737,7 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             "a 12-digit account-id-shaped string is present in alerts.yml",
         )
         try:
-            spec = yaml.safe_load(raw) or {}
+            alerts_doc = yaml.safe_load(raw) or {}
             parsed = True
         except yaml.YAMLError as exc:
             parsed = False
@@ -1746,7 +1746,7 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
             r.check(sec, "alerts.yml parses as YAML", True)
             rules = [
                 rule
-                for group in (spec.get("groups", []) or [])
+                for group in (alerts_doc.get("groups", []) or [])
                 for rule in (group.get("rules", []) or [])
             ]
             names = [rule.get("alert") for rule in rules]
