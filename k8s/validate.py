@@ -1232,6 +1232,20 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
                 "ALL" in drops,
                 f"capabilities.drop={sorted(drops)}",
             )
+            # readOnlyRootFilesystem: every monitoring container locks its root FS.
+            # Unlike the mlops pipeline Job (which must keep it writable for
+            # `dvc repro`, ADR-010), no monitoring component writes to its root:
+            # Prometheus/pushgateway use dedicated volumes / in-memory state, KSM and
+            # node-exporter write nothing. Asserting it here means a future monitoring
+            # workload cannot silently drop the control and still pass — backing the
+            # "hardened" claim the ADRs make (Sprint 8, PR 3 review follow-up).
+            r.check(
+                sec,
+                f"{kind}/{name}: {role} {cname} readOnlyRootFilesystem true",
+                csc.get("readOnlyRootFilesystem") is True,
+                f"readOnlyRootFilesystem={csc.get('readOnlyRootFilesystem')!r} "
+                f"(monitoring containers must lock the root filesystem)",
+            )
         # hostPath: permitted ONLY on node-exporter, and only read-only.
         hostpath_vols = {v.get("name") for v in volumes_of(wl) if "hostPath" in v}
         if name == HOSTPATH_EXEMPT_WORKLOAD:
@@ -1343,13 +1357,30 @@ def validate_monitoring(path: str = MONITORING_DIR) -> int:
     r.check(sec, "prometheus-config ConfigMap present", prom_cm is not None)
     if prom_cm is not None:
         cfg = (prom_cm.get("data", {}) or {}).get("prometheus.yml", "")
-        for needle in ("kube-state-metrics", "node-exporter", "cadvisor"):
+        scrape_needles = (
+            "kube-state-metrics",
+            "node-exporter",
+            "cadvisor",
+            "pushgateway",
+        )
+        for needle in scrape_needles:
             r.check(
                 sec,
                 f"scrape config covers {needle}",
                 needle in cfg,
                 f"prometheus.yml has no scrape job referencing {needle}",
             )
+        # The Pushgateway scrape MUST set honor_labels so the pipeline's pushed
+        # job/stage labels survive the scrape instead of being overwritten with the
+        # gateway's own job name (Sprint 8, PR 3; ADR-030). Without it, per-stage
+        # attribution is silently lost.
+        r.check(
+            sec,
+            "pushgateway scrape sets honor_labels",
+            "honor_labels: true" in cfg,
+            "the pushgateway scrape job must set 'honor_labels: true' so pushed "
+            "job/stage labels are preserved (ADR-030)",
+        )
 
     return r.render()
 

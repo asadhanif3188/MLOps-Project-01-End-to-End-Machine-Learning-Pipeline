@@ -127,6 +127,13 @@ workload needs rather than what is possible.
 
 ### 3. Batch-workload metric strategy — kube-state-metrics is the answer, not Pushgateway
 
+> **Superseded in part by [ADR-030](ADR-030-pipeline-operational-metrics.md)
+> (Sprint 8, PR 3).** KSM remains the **primary**, app-change-free source for
+> run-level Job signals exactly as decided here. What changed: the Pushgateway,
+> *deferred* below for per-stage granularity, was **adopted (scoped)** in PR 3 to add
+> `mlops_pipeline_stage_*` (per-stage duration/success) — the one gap KSM cannot
+> fill — with the sticky-metric and ownership trade-offs addressed there.
+
 This is the load-bearing decision. The pipeline Job's pod exits; a pull-scraped
 `/metrics` endpoint on it cannot work. The strategy:
 
@@ -360,6 +367,10 @@ Ratified here, detailed in
   Passes an extended `k8s/validate.py`; static/dry-run CI only — no deploy claim.
 - **PR 3 — Dashboards.** Grafana (internal-only) with the four-layer dashboards
   rendering the documented signals, provisioned as code.
+  > **Resequenced ([ADR-030](ADR-030-pipeline-operational-metrics.md)).** The actual
+  > PR 3 delivered the pipeline's **operational metrics** (per-stage Pushgateway) —
+  > the deferred item from § 3 — and **Grafana dashboards moved to a later PR**. The
+  > dashboards then have the per-stage series to render in addition to Layers 1–4.
 - **PR 4 — MLflow & PostgreSQL depth.** blackbox-exporter (`/health`) +
   postgres-exporter with a least-privilege read-only monitoring role; Layer 3/4
   availability, memory-headroom, and **PVC-fill** signals present.

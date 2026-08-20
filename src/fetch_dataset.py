@@ -57,6 +57,7 @@ from dotenv import load_dotenv
 from exceptions import ConfigError, DataError
 from logging_config import configure_logging, get_logger
 from pipeline_io import require_env
+from pipeline_metrics import reset_pipeline_metrics, time_stage
 
 logger = get_logger("fetch_dataset")
 
@@ -256,8 +257,19 @@ def main() -> None:
     """
     load_dotenv()
     configure_logging()
+
+    # This init container is the FIRST thing that runs in a pipeline execution, so
+    # it owns the once-per-run metric reset: clear every stage's Pushgateway group
+    # up front so a shorter/failed run can never leave a previous run's later-stage
+    # series behind as stale data (ADR-030). Best-effort and a no-op unless
+    # PUSHGATEWAY_URL is set, so local runs and tests are unaffected.
+    reset_pipeline_metrics()
+
     try:
-        fetch_dataset()
+        # Time the retrieval as the "fetch_dataset" stage; time_stage pushes its
+        # duration + success/failure on exit and re-raises any failure unchanged.
+        with time_stage("fetch_dataset"):
+            fetch_dataset()
     except (ConfigError, DataError) as exc:
         logger.error("Dataset retrieval failed: %s", exc)
         raise SystemExit(1) from exc

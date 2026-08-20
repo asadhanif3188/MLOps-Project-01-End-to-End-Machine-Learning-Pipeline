@@ -22,7 +22,9 @@ base/
   namespace.yaml           # monitoring ns + Pod Security labels (privileged — see below)
   kube-state-metrics.yaml  # KSM: SA + read-only ClusterRole + binding + Deployment + Service
   node-exporter.yaml       # node-exporter: SA + DaemonSet + headless Service
-  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 4 scrape jobs
+  pushgateway.yaml         # Pushgateway (PR 3): SA + Deployment + Service — sink for the
+                           #   ephemeral pipeline's per-stage operational metrics
+  prometheus-config.yaml   # Prometheus scrape config (ConfigMap): 5 scrape jobs
   prometheus.yaml          # Prometheus: SA + read-only ClusterRole + binding + Deployment + Service
   kustomization.yaml
 overlays/
@@ -30,9 +32,11 @@ overlays/
   aws/                     # EKS                                 (currently == base)
 ```
 
-Covers **Layer 1** (Kubernetes platform — node-exporter + cAdvisor + KSM) and the
-**Layer 2** batch-Job signals (via KSM). Grafana (PR 3), MLflow/Postgres exporters
-(PR 4), and alerts (PR 5) are **not** here.
+Covers **Layer 1** (Kubernetes platform — node-exporter + cAdvisor + KSM), the
+**Layer 2** batch-Job run-level signals (via KSM, PR 2), and the **Layer 2
+per-stage** operational metrics the pipeline pushes to the **Pushgateway** (PR 3 —
+[ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)). Grafana
+dashboards, MLflow/Postgres exporters (PR 4), and alerts (PR 5) are **not** here.
 
 ## Build & validate
 
@@ -56,6 +60,11 @@ deploy, port-forward Prometheus, run a PromQL query, troubleshoot, and tear down
   and KSM stay restricted-equivalent.
 - **Least privilege:** Prometheus/KSM ClusterRoles are **read-only**
   (`get`/`list`/`watch`); their tokens are mounted only because they genuinely use
-  the API; node-exporter mounts no token.
+  the API; node-exporter and the Pushgateway mount no token (neither calls the API).
+- **Pushgateway (PR 3):** the ephemeral pipeline Job cannot be pull-scraped, so each
+  stage **pushes** its duration + success here before exiting; Prometheus scrapes the
+  gateway with `honor_labels: true`. In-memory (no persistence), reset once per run
+  by the pipeline to avoid stale series, internal-only. Operational metrics only —
+  model accuracy/params stay in MLflow ([ADR-030](../../docs/decisions/ADR-030-pipeline-operational-metrics.md)).
 - **Ephemeral storage:** the Prometheus TSDB is an `emptyDir` with 7d/1GB retention
   — no PVC, no long-term store (cost discipline, ADR-020/ADR-028 § 5).

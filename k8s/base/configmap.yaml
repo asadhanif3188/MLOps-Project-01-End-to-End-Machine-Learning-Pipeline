@@ -57,3 +57,18 @@ data:
   # Diabetes dataset (23,872 bytes; DVC md5 739f3c9177b13d1c15aa060046cfb023 — see
   # data/raw/data.csv.dvc and docs/dataset.md).
   DATASET_SHA256: "ee5b0c92d5ad461e86151c544b3b76bd6269c6052c5eb628c4b0618a08cffc89"
+  # Prometheus Pushgateway address for the pipeline's OPERATIONAL metrics (Sprint 8,
+  # PR 3 — ADR-030). The ephemeral Job's stages push per-stage duration + success to
+  # this gateway before exiting, so Prometheus can scrape them after the pod is gone
+  # (a batch job cannot be pull-scraped directly — ADR-028 § 3). Read by
+  # src/pipeline_metrics.py; both the fetch-dataset init container and the pipeline
+  # container get it via this ConfigMap. It points at the Pushgateway Service in the
+  # SEPARATE monitoring namespace (k8s/monitoring/base/pushgateway.yaml); the
+  # cross-namespace FQDN resolves from mlops. This is OPERATIONAL metrics only —
+  # model accuracy/params stay in MLflow (the ownership boundary, ADR-030). If the
+  # gateway is unset or unreachable the pipeline still runs: emission is best-effort.
+  # NOTE: this base value assumes the monitoring stack is deployed. If it is not
+  # (e.g. a bare mlops-only cluster), an overlay may blank it (PUSHGATEWAY_URL: "")
+  # to disable emission cleanly; the pushes then no-op instead of retrying a missing
+  # host each stage.
+  PUSHGATEWAY_URL: "http://pushgateway.monitoring.svc.cluster.local:9091"

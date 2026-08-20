@@ -1,0 +1,158 @@
+# Prometheus Pushgateway — the metrics sink for the EPHEMERAL pipeline Job
+# (Sprint 8, PR 3; ADR-030). Prometheus is a PULL system, but the pipeline is a
+# `batch/v1` Job whose pod exits seconds after it finishes and whose `dvc repro`
+# stages are each their own short-lived process — there is nothing to scrape
+# between (or often within) runs. The Pushgateway is the Prometheus-sanctioned
+# bridge: the pipeline PUSHES its per-stage operational metrics here before exiting
+# (src/pipeline_metrics.py), and Prometheus scrapes THIS long-running gateway
+# instead of the dead pod. It carries OPERATIONAL signals only — per-stage duration
+# and success/failure; model accuracy/params stay in MLflow (the ownership
+# boundary, ADR-030).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# STORAGE / LIFECYCLE — in-memory by design (ADR-030 § "Pushgateway lifecycle").
+# No `--persistence.file` is set, so pushed series live only in memory and are lost
+# if this pod restarts. That is acceptable and matches the project's ephemeral,
+# cost-controlled posture (ADR-020): the pipeline RE-PUSHES on its next run, and the
+# once-per-run reset the pipeline performs (reset_pipeline_metrics, called by the
+# fetch-dataset init container) keeps the gateway from accumulating stale series
+# across runs — the sticky-metric hazard ADR-028 § 3 warned about is controlled by
+# the producer, not left to the gateway. A PVC-backed persistence file is the
+# documented option if surviving a gateway restart ever matters; not needed here.
+#
+# EXPOSURE — internal-only (ClusterIP; § Service below). The Pushgateway accepts
+# UNAUTHENTICATED pushes and deletes from anything that can reach it, so it must
+# never be exposed publicly (same rule as Prometheus/MLflow, ADR-026). On a shared
+# cluster a NetworkPolicy restricting who may POST here would be the right added
+# control; it is deferred with the rest of the stack's NetworkPolicy work (ADR-029
+# § Consequences) on this single-operator validation cluster.
+#
+# LEAST PRIVILEGE — the Pushgateway does NOT call the Kubernetes API (it only
+# receives pushes and serves /metrics), so its ServiceAccount mounts no token, and
+# it is otherwise as hardened as the fully-`restricted` components: non-root uid
+# 65534, drop ALL capabilities, no privilege escalation, seccomp RuntimeDefault,
+# read-only root filesystem (in-memory storage writes nothing to disk).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pushgateway
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-gateway
+    app.kubernetes.io/managed-by: kustomize
+# The Pushgateway never talks to the Kubernetes API, so it needs no token — mount
+# off, matching the fleet-wide default and keeping an unused, exfiltratable token
+# out of the pod (least privilege).
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-gateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Single replica. A second replica would NOT be highly available: each keeps its
+  # own in-memory push state, so a push landing on replica A is invisible to a
+  # scrape of replica B. HA Pushgateway (shared persistence / a single leader) is
+  # production capacity this ephemeral cluster does not need (ADR-020); one replica
+  # is the deliberate, correct choice for a push sink whose state is per-instance.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pushgateway
+        app.kubernetes.io/part-of: mlops-pipeline
+        app.kubernetes.io/component: metrics-gateway
+    spec:
+      serviceAccountName: pushgateway
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The Pushgateway image runs as nobody (65534); state it numerically so
+        # runAsNonRoot admits without name resolution.
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pushgateway
+          # Pinned, non-latest. Prometheus community image (same registry namespace
+          # as prometheus/node-exporter).
+          image: quay.io/prometheus/pushgateway:v1.9.0
+          args:
+            - --web.listen-address=:9091
+          ports:
+            - name: http
+              containerPort: 9091
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # In-memory storage (no --persistence.file) writes nothing to disk, so
+            # the root filesystem is locked read-only.
+            readOnlyRootFilesystem: true
+          # Conservative resources: the gateway holds a handful of small series (one
+          # group per pipeline stage) and serves infrequent scrapes. Requests/limits
+          # are mandatory (the monitoring contract); tightened from MEASURED usage in
+          # the runtime-evidence PR — this PR deploys nothing, so nothing is measured
+          # yet.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+# Service — the internal push/scrape endpoint
+# (`http://pushgateway.monitoring.svc.cluster.local:9091`). The pipeline (in the
+# `mlops` namespace) pushes here cross-namespace via this FQDN; Prometheus (in
+# `monitoring`) scrapes it via the `pushgateway` scrape job (prometheus-config.yaml,
+# with honor_labels so the pushed job/stage labels are preserved). ClusterIP:
+# internal-only, never a NodePort/LoadBalancer — see the exposure note in the header.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pushgateway
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: metrics-gateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pushgateway
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http

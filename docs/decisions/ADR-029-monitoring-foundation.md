@@ -78,11 +78,18 @@ consistent with how the rest of the fleet is maintained.
 the kubelet's built-in **cAdvisor** (Layer 1 per-container usage). Four scrape
 jobs, nothing more.
 
-**Deferred to later Sprint 8 PRs, deliberately:** Grafana (PR 3);
+**Deferred to later Sprint 8 PRs, deliberately:** Grafana;
 blackbox-exporter + postgres-exporter for Layer 3/4 depth (PR 4); alert rules and
 Alertmanager (PR 5); runtime evidence + operations runbook proof (PR 6). No
-pipeline custom metrics and no Pushgateway (ADR-028 § 3 keeps ML semantics in
-MLflow and per-stage timing deferred).
+pipeline custom metrics and no Pushgateway *in this PR* (ADR-028 § 3 keeps ML
+semantics in MLflow).
+
+> **Update ([ADR-030](ADR-030-pipeline-operational-metrics.md), Sprint 8 PR 3).**
+> The sprint resequenced the plan: **PR 3 delivered the pipeline's operational
+> metrics** via a scoped Pushgateway (per-stage duration/success — a **5th** scrape
+> job), and **Grafana dashboards moved to a later PR**. The "four scrape jobs" and
+> "Grafana (PR 3)" references in this ADR describe the PR-2 state and remain
+> accurate as of PR 2; see ADR-030 for the current picture.
 
 ### 3. Ephemeral storage — `emptyDir` TSDB, short retention, no long-term store
 

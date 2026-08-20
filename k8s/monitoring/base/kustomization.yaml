@@ -21,6 +21,7 @@ resources:
   - namespace.yaml
   - kube-state-metrics.yaml
   - node-exporter.yaml
+  - pushgateway.yaml
   - prometheus-config.yaml
   - prometheus.yaml
 

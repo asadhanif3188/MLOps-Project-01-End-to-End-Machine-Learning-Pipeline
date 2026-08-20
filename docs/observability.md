@@ -96,13 +96,19 @@ information, not an alert.
 | Did it retry (burn `backoffLimit`)? | `kube_job_status_failed` > 0 with an eventual success | KSM | Attempts panel | *(info — transient-fault path, ADR-011)* |
 | Was it OOMKilled? | `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}` | KSM | Termination-reason panel | **PipelineJobOOMKilled** |
 | Did it hit the deadline? | Job `DeadlineExceeded` condition / `kube_job_status_active` stuck | KSM | Stall indicator | **PipelineJobDeadlineExceeded** |
-| **Which stage took the longest?** | *(per-stage duration — NOT available from KSM)* | *Pushgateway or log-derived — **deferred**, § 4* | *(future)* | — |
+| **Which stage took the longest?** | `mlops_pipeline_stage_duration_seconds{stage}` | **Pushgateway** (pipeline push, PR 3) | Per-stage duration bars | *(info)* |
+| **Which stage failed?** | `mlops_pipeline_stage_success{stage} == 0` | **Pushgateway** (pipeline push, PR 3) | Stage status tiles | *(feeds `PipelineJobFailed`)* |
+| How long did the dataset fetch take? | `mlops_pipeline_stage_duration_seconds{stage="fetch_dataset"}` | **Pushgateway** (pipeline push, PR 3) | Fetch-duration trend | *(info)* |
 | Model accuracy / best params for a run | `accuracy`, `best_*` params | **MLflow** (not Prometheus) — [MLflow Platform](mlflow-platform.md) | MLflow UI | — |
 
-**Limitations.** KSM gives **run-level** outcome and duration but **not per-stage**
-granularity; ML-*semantic* metrics live in **MLflow**, not Prometheus (see the
-ownership split in [§ 5](#5-ownership--who-owns-which-signal)). Why KSM works at
-all for an exited pod is [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable).
+**Limitations.** KSM gives **run-level** outcome and duration; **per-stage** duration
+and per-stage failure attribution now come from the **Pushgateway** the pipeline
+pushes to before exiting (PR 3, [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md);
+see [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable)).
+ML-*semantic* metrics still live in **MLflow**, not Prometheus — the pipeline's
+metric emitter has no code path to accuracy/params (the ownership split,
+[§ 5](#5-ownership--who-owns-which-signal)). Why KSM works at all for an exited pod
+is [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable).
 
 ### Layer 3 — MLflow tracking server
 
@@ -165,7 +171,7 @@ so every Layer 2 operational question except per-stage timing is answered with
 | Approach | What it gives | Pros | Cons | Verdict |
 |---|---|---|---|---|
 | **kube-state-metrics** (Job/Pod objects) | success/fail, start & completion time → **run duration**, retries, OOMKilled, deadline, phase | No app change; API-server-backed & robust; **persists after the pod exits**; already needed for Layers 1/3/4 | **Run-level only** (no per-stage); depends on the finished Job object outliving one scrape | **Primary — adopted** |
-| **Pushgateway** | per-**stage** duration; any custom job metric | The Prometheus-sanctioned way to get metrics *out of* a batch job; stage granularity | **Sticky/stale metrics** (persist until overwritten/deleted, no `up` semantics); a **single point of failure**; needs an **app push step**; **overlaps MLflow** for ML metrics | **Deferred** — reconsider for per-stage *operational* duration only |
+| **Pushgateway** | per-**stage** duration + success; any custom job metric | The Prometheus-sanctioned way to get metrics *out of* a batch job; stage granularity KSM cannot give | **Sticky/stale metrics** (persist until overwritten/deleted, no `up` semantics); a **single point of failure**; needs an **app push step**; would **overlap MLflow** if misused for ML metrics | **Adopted — scoped (PR 3, [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md))**: operational per-stage duration/success only; stickiness controlled by a per-run reset; ownership boundary keeps ML metrics in MLflow |
 | **Custom exporter / state metric** | anything (query the K8s API or MLflow) | Fully flexible | Duplicates KSM (Job state) **and** MLflow (run metrics); build-and-maintain cost | **Rejected as unnecessary** |
 | **MLflow as the metric store** | accuracy, params, per-run artifacts, run timing | Already running; built for **run-indexed** experiment data | Not an operational/alerting system; not Prometheus-queryable | **Keep for ML semantics** (not operational health) |
 | **Long-running scrape sidecar / keep-alive** | a live `/metrics` during & after the run | — | **Keeps the pod alive → the Job never `Completes`**, breaking the run-to-completion model **and** the KSM success signal | **Rejected outright** |
@@ -197,14 +203,23 @@ this reliable — both are design obligations, not afterthoughts:
 > to move to `generateName` / delete-before-recreate — with this trade-off explicit,
 > not silently.
 
-**Deferred, and only if justified — Pushgateway for per-stage duration.** The one
-genuinely operational signal KSM cannot give is *"which stage took the longest?"*.
-If that is later deemed worth its cost, the mechanism is a **scoped Pushgateway**
-(the pipeline pushes per-stage timings before exit) **or** a **log-derived metric**
-(the stages already emit structured logs, [logging.md](logging.md)). It is **not**
-adopted now: it needs an application change (out of scope for an architecture-only
-PR) and carries the sticky-metric hazards above. It will be evaluated as its own PR
-against this table — **not adopted blindly.**
+**Adopted, scoped — Pushgateway for per-stage operational metrics (PR 3).** The one
+genuinely operational signal KSM cannot give is *"which stage took the longest?"*
+(and its sibling, *"which stage failed?"*). PR 3 adopts a **scoped Pushgateway** for
+exactly that: the pipeline pushes `mlops_pipeline_stage_duration_seconds{stage}` and
+`mlops_pipeline_stage_success{stage}` before each stage's process exits, and
+Prometheus scrapes the always-up gateway (a 5th scrape job with `honor_labels`). The
+sticky-metric hazard above is neutralised **at the producer**: one Pushgateway group
+per stage (PUT-replaced), and a **per-run reset** (the `fetch-dataset` init container
+DELETEs every stage group at the start of a run) so a shorter/failed run never leaves
+a previous run's later-stage series behind. Cardinality is bounded (`stage` from a
+fixed set — no run id / path / filename), emission is best-effort (a gateway outage
+never fails the run) and disabled unless `PUSHGATEWAY_URL` is set. The **ownership
+boundary is preserved**: only operational signals are pushed — accuracy/params stay
+in MLflow. Full rationale, including why the brief's `*_total` counters are modelled
+as last-run gauges, is in
+[ADR-030](decisions/ADR-030-pipeline-operational-metrics.md). The structured logs
+([logging.md](logging.md)) remain the root-cause layer.
 
 ---
 
@@ -213,7 +228,10 @@ against this table — **not adopted blindly.**
 A clean split, ratified in ADR-028 § 3, prevents duplicated and confusing data:
 
 - **Prometheus / kube-state-metrics own operational health** — did it run, did it
-  succeed, how long, was it killed, is it up, is it full. Everything alertable.
+  succeed, how long, was it killed, is it up, is it full. Everything alertable. The
+  pipeline's own **per-stage** operational metrics (duration, success — pushed via
+  the Pushgateway, PR 3 / [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md))
+  live on this side of the line too: they describe *execution*, never model quality.
 - **MLflow owns ML semantics** — model accuracy, hyper-parameters, per-run
   artifacts and lineage ([MLflow Platform](mlflow-platform.md)). Run-indexed
   experiment data, **not** duplicated into Prometheus.
@@ -263,7 +281,7 @@ claimed** without long-term data.
 | **Distributed tracing** (Jaeger/Tempo/OTel traces) | Deferred | The pipeline is four sequential stages in one process — no distributed request path to trace; per-stage/run timing already in MLflow + KSM. Revisit if model *serving* appears (roadmap v6). |
 | **Centralized log aggregation** (Loki/ELK/CloudWatch Logs) | Deferred | Structured logs already exist and are `kubectl`-reachable ([logging.md](logging.md)); metrics answer "healthy/succeeded?" first, logs answer "why?". Aggregation is a separately-justified follow-on with its own storage cost. |
 | **MLflow request-level RED metrics** | Deferred | MLflow has no native `/metrics`; needs an app-side exporter. Availability (blackbox `/health`) + resource (cAdvisor) cover the operational question now. |
-| **Per-stage pipeline duration** | Deferred | Needs Pushgateway or a log-derived metric (app change) — see [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable). |
+| **Per-stage pipeline duration + failure attribution** | ✅ Delivered (PR 3) | Pushgateway push from the pipeline (`mlops_pipeline_stage_*`), bounded cardinality, per-run reset — [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), [§ 4](#4-the-batch-job-problem-keeping-an-ephemeral-jobs-metrics-queryable). |
 | **Long-term / remote metric store** (Thanos/Cortex/Mimir/AMP) | Out of scope | Short local retention (7–15 d) suits an ephemeral validation cluster; long-term capacity is a production concern (ADR-020). |
 | **Alertmanager routing to real channels** (email/Slack/PagerDuty) | Deferred to PR 5, minimal | Alert *rules* are defined against § 6; wiring external notifiers is an operator step, not an architecture claim. |
 
@@ -299,10 +317,18 @@ work stays static/dry-run in CI per ADR-012 until the runtime-evidence PR).
 | PR | Scope | Acceptance criteria |
 |----|-------|---------------------|
 | **PR 2 — Metrics core** ✅ *(manifests; not deployed)* | Prometheus + kube-state-metrics + node-exporter in a hardened `monitoring` namespace; cAdvisor scrape; least-privilege scrape RBAC | **Delivered:** [`k8s/monitoring/`](../k8s/monitoring/) renders Layer 1 signals **and** the Layer 2 batch-Job signals (via KSM); Job `ttlSecondsAfterFinished` set to honour the [queryability contract](#the-queryability-contract-a-design-requirement-for-the-runtime-prs); extended `k8s/validate.py` monitoring pass green over `k8s/monitoring`; `kustomize build` + `kubeconform` (CI) green. Minimal hand-written Kustomize (no Helm), ephemeral `emptyDir` TSDB, read-only RBAC, one documented node-exporter Pod Security exception — [ADR-029](decisions/ADR-029-monitoring-foundation.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (no live cluster; runtime proof is PR 6). |
-| **PR 3 — Dashboards** | Grafana (internal-only ClusterIP) with four-layer dashboards provisioned as code | Dashboards render every documented signal for Layers 1–4; no public exposure (matches ADR-026 UI posture) |
+| **PR 3 — Pipeline operational metrics** ✅ *(manifests + instrumentation; not deployed)* | Per-stage duration + success/failure pushed by the pipeline to a scoped **Pushgateway**; 5th Prometheus scrape job | **Delivered:** `src/pipeline_metrics.py` (best-effort, bounded-cardinality, per-run reset) wired into `stage_runner` + the `fetch-dataset` init container; [`k8s/monitoring/base/pushgateway.yaml`](../k8s/monitoring/base/pushgateway.yaml) (hardened, internal-only) + `honor_labels` scrape; `PUSHGATEWAY_URL` in the base ConfigMap; unit tests for emission/timing/failure/reset; extended `k8s/validate.py`. Operational-vs-MLflow boundary preserved. [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md), [Monitoring Operations](monitoring-operations.md). **No deploy claim** (runtime proof is PR 6). |
 | **PR 4 — MLflow & PostgreSQL depth** | blackbox-exporter (`/health`) + postgres-exporter with a dedicated **read-only** monitoring role (out-of-band Secret) | Layer 3 availability/memory + Layer 4 up/**PVC-fill**/connections signals present; new DB role is least-privilege; secret hygiene checks pass |
 | **PR 5 — Alerting** | Prometheus alert rules encoding **exactly** the [§ 6](#6-operational-objectives-slo-style-not-production-slos) objectives | The defined alert set exists and no others (no arbitrary alerts); rules unit-testable (e.g. `promtool test rules`) |
 | **PR 6 — Runtime evidence & operations** | Provision → run pipeline → prove signals → tear down; observability operations runbook | The [runtime-evidence expectations](#runtime-evidence-what-later-sprint-8-prs-must-prove) are all met and recorded in a redacted proof doc matching the Sprint 6/7 conventions; environment destroyed & verified clean (ADR-020) |
+
+> **Resequencing note.** ADR-028 originally pencilled **PR 3 = Grafana dashboards**.
+> The sprint reordered the work: **PR 3 delivers the pipeline's operational metrics**
+> (the per-stage Pushgateway signal ADR-028 § 3 had deferred — now justified in
+> [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)), and **Grafana
+> dashboards move to a later PR**. The dashboards then have *more* to render (the
+> per-stage series in addition to KSM/node-exporter/cAdvisor), so the reorder is
+> additive, not a scope cut. PR 4–6 acceptance criteria are unchanged.
 
 ---
 
@@ -313,12 +339,18 @@ live cluster and recorded with the [Sprint 7 evidence](proof/sprint-07-runtime-e
 conventions (redacted, honest about failures, torn down and verified clean):
 
 1. **All targets Up.** Prometheus `up == 1` for node-exporter, kube-state-metrics,
-   cAdvisor, blackbox-exporter, and postgres-exporter.
+   cAdvisor, **pushgateway**, blackbox-exporter, and postgres-exporter.
 2. **The ephemeral Job is observable *after* it exits.** After the pipeline pod is
    `Succeeded` **and gone**, the dashboard still shows
    `kube_job_status_succeeded == 1`, the run's **start/completion timestamps**, and
    the **computed run duration** — proving the [queryability contract](#the-queryability-contract-a-design-requirement-for-the-runtime-prs)
    holds (the finished Job outlived a scrape).
+2b. **Per-stage metrics are present and correct (PR 3, [ADR-030](decisions/ADR-030-pipeline-operational-metrics.md)).**
+   After a run, `mlops_pipeline_stage_duration_seconds{stage}` exists for all five
+   stages with `mlops_pipeline_stage_success == 1`; on an induced mid-pipeline
+   failure only the stages that ran are present, with the failing stage's
+   `success == 0` and later stages **absent** (proving the per-run reset works, not
+   leftover stale series).
 3. **A failure is surfaced and alerts.** An induced failure — e.g. the ADR-011
    memory-limit OOM (run at 64 Mi) — shows
    `last_terminated_reason="OOMKilled"` / `kube_job_status_failed` and **fires**
