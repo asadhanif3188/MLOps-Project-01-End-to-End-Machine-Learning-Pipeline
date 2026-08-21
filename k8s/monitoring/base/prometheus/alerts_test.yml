@@ -54,10 +54,15 @@ tests:
         alertname: PipelineJobFailed
         exp_alerts: []
 
-  # -- PipelineJobOOMKilled: retained finished pod's last terminated reason -----
+  # -- PipelineJobOOMKilled: finished pod's CURRENT terminated reason -----------
+  # Uses kube_pod_container_status_terminated_reason (current state), NOT the
+  # *last_* variant: the pipeline Job runs restartPolicy=Never, so a container that
+  # OOMs terminates once with no in-place restart and kube-state-metrics emits no
+  # last_terminated_reason series — keying on last_* made the alert unfireable
+  # (verified live on EKS 2026-08-21; see docs/proof/sprint-08-live-eks-evidence.md).
   - interval: 1m
     input_series:
-      - series: 'kube_pod_container_status_last_terminated_reason{namespace="mlops",pod="mlops-pipeline-abcde",reason="OOMKilled"}'
+      - series: 'kube_pod_container_status_terminated_reason{namespace="mlops",pod="mlops-pipeline-abcde",reason="OOMKilled"}'
         values: "1x5"
     alert_rule_test:
       - eval_time: 3m
