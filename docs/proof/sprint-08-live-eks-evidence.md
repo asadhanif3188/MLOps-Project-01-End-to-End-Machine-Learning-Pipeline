@@ -180,13 +180,19 @@ item 4 and by the unit tests.)
 
 ## Screenshots
 
-Under [`docs/screenshots/`](../screenshots/):
-`grafana-platform-health-baseline.png`, `grafana-pipeline-ops-baseline.png`,
-`grafana-mlflow-health-baseline-green.png`, `mlflow-runs-baseline.png`,
-`grafana-mlflow-health-outage-red.png` (RED availability gauge, PostgreSQL panels green
-during the outage), `prometheus-mlflowdown-firing.png`, and platform-health captures with
-failing pods. Raw PromQL / REST / `kubectl` captures are the primary evidence; screenshots
-are the visual complement.
+Under [`docs/screenshots/`](../screenshots/). Raw PromQL / REST / `kubectl` captures are
+the primary evidence; these are the visual complement.
+
+| File | What it shows |
+|---|---|
+| `grafana-platform-health-baseline.png` | EKS/Platform Health — 2 nodes Ready, 0 failures (green baseline) |
+| `grafana-pipeline-ops-baseline.png` | MLOps Pipeline Operations — per-stage durations, success=1 |
+| `grafana-mlflow-health-baseline-green.png` | MLflow Platform Health — availability gauge GREEN (before outage) |
+| `mlflow-runs-baseline.png` | MLflow UI — baseline runs + registered model (persistence baseline) |
+| `grafana-mlflow-health-outage-red.png` | MLflow availability gauge **RED** during the outage, **PostgreSQL panels GREEN** (DB survived) |
+| `prometheus-mlflowdown-firing.png` | Prometheus — `MLflowDown` Firing |
+| `prometheus-screen.png` | Prometheus rules — **all 8 alert rules loaded**, `PipelineJobFailed` **Firing**, `KubePodCrashLooping` Pending |
+| `grafana-platform-health-baseline-with-fail-pods.png` | EKS/Platform Health during the campaign — **Pods CrashLoopBackOff 1, Failed Jobs 1, Pods not Running 3** (dashboards reflect real failures — PR 5 runtime proof) |
 
 ## 8. Teardown
 
@@ -225,3 +231,14 @@ EIP. The three customer-managed **KMS keys** move to a 7-day `PendingDeletion` w
   ~15 min (3× the 300 s start-gate); both alerts are proven firing (§6/§7) and the
   correlation signature (blocked pipeline during `MLflowDown`) is captured — the single-Job
   15-min soak was skipped for cost, not faked.
+- **Digest verify scope:** `verify-deployed-digest.sh` verified the **pipeline** image on
+  the running workload (all 3 containers, §4). The **MLflow-server** image digest was
+  captured and ECR-cross-checked at push and the deploy was rendered pinned to it
+  (`MLFLOW_IMAGE_DIGEST=…`), but the *runtime* digest check was not separately re-run
+  against the `mlflow` pod — a small scope note, not a gap in the pin itself.
+- **PR 12 Scenario B (exit-42 crash-loop Job):** the Job `backoffLimit`→`Failed` semantics
+  (deterministic failure → 3 pods → terminal Failed, no infinite loop) were exercised on
+  EKS by the **OOM Job** and the **dataset-failure real Job** (both `BackoffLimitExceeded`,
+  3 pods); the exact exit-42 variant was not separately re-run. `KubePodCrashLooping` (a
+  pod-level `CrashLoopBackOff` alert, which a `restartPolicy:Never` Job cannot produce) was
+  proven with a dedicated `restartPolicy:Always` pod held >15 min.
