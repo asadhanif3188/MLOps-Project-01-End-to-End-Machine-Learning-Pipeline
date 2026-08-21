@@ -79,17 +79,25 @@ under policy) are the guard. **Confirm pods stay Ready before trusting enforceme
       unlabelled→MLflow blocked, unlabelled→Postgres blocked).
 - [ ] **6. Capture** the `RESULT:` line and the allowed/denied/canary summary.
 
-## Record results here (fill in on execution)
+## Results — EXECUTED ON EKS 2026-08-21 (PASS)
 
-| Dimension | Result |
+**Canonical runtime record:** [sprint-08-live-eks-evidence.md §5](sprint-08-live-eks-evidence.md#5-pr-7--networkpolicy-runtime).
+
+| Dimension | Result (EKS 2026-08-21) |
 |---|---|
-| **Date / cluster / CNI** | _pending_ (e.g. EKS VPC CNI `enableNetworkPolicy`, or kind+Calico) |
-| **Pods Ready under policy** | _pending_ (the probe-assumption gate) |
-| **Enforcement canary** | _pending_ (must be BLOCKED) |
-| **Allowed paths** | _pending_ (6/6 expected) |
-| **Denied paths** | _pending_ (3/3 expected) |
-| **`run.sh` RESULT** | _pending_ (PASS expected on an enforcing cluster) |
-| **Teardown** | _pending_ |
+| **Date / cluster / CNI** | EKS v1.35, VPC CNI `enableNetworkPolicy=true` (`aws-node` 2/2, nodeagent enforcing) |
+| **Pods Ready under policy** | all mlops + monitoring pods **Ready** under the policy set |
+| **Enforcement canary** | **BLOCKED** (`[ok] canary blocked` — the CNI enforces) |
+| **Allowed paths** | **6/6 PASS** (pipeline→MLflow, pipeline→Pushgateway, mlflow→Postgres, exporter→Postgres, Prometheus→exporter, blackbox→MLflow) |
+| **Denied paths** | **3/3 PASS** (pipeline→Postgres, unlabelled→MLflow, unlabelled→Postgres) |
+| **`run.sh` RESULT** | **PASS** (9 passed, 0 failed, 0 inconclusive) |
+| **Teardown** | destroyed + verified clean same session (canonical §8) |
+
+> **Two findings surfaced here** and are fixed (canonical §3): (1) enforced NetworkPolicy
+> blocked EKS Pod Identity (`169.254.170.23:80`) → `allow-pod-identity-egress`; (2) the
+> harness judged on curl's exit code (unreliable on EKS — curl exit 23 on a *successful*
+> request) → now judges on `%{time_connect}`. The 6/6 allowed result is only trustworthy
+> **after** fix (2).
 
 > Redact account IDs / operator IPs / any secret material, per the Sprint 7 evidence
 > convention. Paste the harness output (canary + allowed + denied lines) below the

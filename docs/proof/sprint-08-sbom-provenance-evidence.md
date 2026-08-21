@@ -145,13 +145,15 @@ through the existing renderer.
 
 ## 5. Honesty boundary
 
-- The SBOM + image ID above are for the **locally-built** image at commit `a6f11d1`;
-  they are equivalent-by-construction to the pushed release image (same Dockerfile, same
-  commit) but not **bit-identical-by-proof** until builds are digest-pinned/reproducible
+- The SBOM + image ID in §§ 1–4 are for the **locally-built** image at commit `a6f11d1`
+  (this PR's original static evidence); they are equivalent-by-construction to a pushed
+  release image and not **bit-identical-by-proof** until builds are reproducible
   ([ADR-005](../decisions/ADR-005-containerization-strategy.md)) — stated, not hidden.
-- No image was pushed and no EKS cluster was created for this PR, so the **registry
-  manifest digest** and the **live runtime-digest PASS** are § 4b operator steps, not
-  results claimed here.
+- **The § 4b operator steps were later EXECUTED on real EKS (2026-08-21):** the image was
+  pushed (immutable digest `sha256:3a27c6de…`, ECR cross-checked, git `72fad8a → 1.6.0 →
+  digest`), deployed **pinned by digest**, and `verify-deployed-digest.sh` returned **PASS
+  (3/3 containers)**. Canonical record:
+  [sprint-08-live-eks-evidence.md §4](sprint-08-live-eks-evidence.md#4-pr-9--sbom--immutable-provenance-live-digest).
 - **cosign signing is opt-in and was not executed** (cosign not installed in this
   environment); the decision to keep it optional is recorded in
   [ADR-036 § "Cosign evaluation"](../decisions/ADR-036-sbom-and-image-provenance.md#cosign-evaluation).

@@ -107,17 +107,23 @@ evaluate | Evaluate stage completed; model accuracy: 0.7078
 
 ## 6. Remaining reliability limitations
 
-- **Mid-run retry proven at unit layer only** (see § 4 note) — a live timed-blip
-  injection is a future enhancement to the MLflow harness.
+- **Mid-run retry — now proven live on EKS (2026-08-21)**, not just at the unit layer: a
+  timed ~90 s MLflow blip injected during the train stage was absorbed (the tracking call
+  retried and succeeded once MLflow returned; train-stage duration extended to 117 s vs
+  ~3 s compute), and the completed training was **not discarded** — Job **exit 0**.
+  Canonical: [sprint-08-live-eks-evidence.md](sprint-08-live-eks-evidence.md#pr-13--bounded-retry-rides-out-a-transient-blip).
 - **A transient failure may leave ≤ 1 orphan MLflow run** before a successful retry
   (accepted trade; ADR-037). For `log_training_run`, an ambiguous-write race can
   occasionally leave a **duplicate registered model version** (the earlier one tied to
   a FAILED run), not just an orphan experiment run — relevant to any consumer that
   selects "latest registered version". See ADR-037 § Consequences.
 - **A persistent outage now fails ~65s slower** (bounded; « `activeDeadlineSeconds=1800`).
-- **OOM alert cross-runtime discrepancy (E6)** — confirm `OOMKilled` reason and
-  `PipelineJobOOMKilled` firing on EKS (deferred with PRs 7/9/10/11 to the batched
-  next-cluster session).
+- **OOM alert cross-runtime discrepancy (E6) — ✅ confirmed on EKS (2026-08-21).** The
+  real reason is `OOMKilled` (exit 137), not Docker Desktop's `Error`. The batched
+  next-cluster session also **found and fixed** a related defect: `PipelineJobOOMKilled`
+  keyed on `kube_pod_container_status_last_terminated_reason`, which is empty for a
+  `restartPolicy:Never` Job, so it could never fire — fixed to `..._terminated_reason`,
+  after which the alert **fired** (canonical §3, Finding 4).
 - **Durable-model fallback / explicit tracking-policy ADR (E7)** — deferred to a
   future sprint.
 
