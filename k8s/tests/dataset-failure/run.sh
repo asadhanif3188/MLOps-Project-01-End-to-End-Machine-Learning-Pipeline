@@ -221,9 +221,15 @@ run_failure_scenario() {
     fi
 
     # The pipeline container must NEVER have started — training does not begin.
+    # jsonpath a SCALAR sub-field, not the whole `.state` map: `kubectl -o jsonpath`
+    # renders a map with Go's `%v` (`map[waiting:map[reason:PodInitializing]]`), which
+    # carries no quotes, so grepping it for '"running"' can never match and the check
+    # would be dead code (always PASS). `startedAt` is present on both the running and
+    # terminated states and on neither of a waiting (never-started) container, so a
+    # non-empty result here means the pipeline container actually started.
     local pstate
-    pstate="$(kubectl -n "$NS" get pod "$pod" -o jsonpath="{.status.containerStatuses[?(@.name=='$PIPELINE')].state}" 2>/dev/null)"
-    if printf '%s' "$pstate" | grep -Eq '"running"|"terminated"'; then
+    pstate="$(kubectl -n "$NS" get pod "$pod" -o jsonpath="{.status.containerStatuses[?(@.name=='$PIPELINE')].state.running.startedAt}{.status.containerStatuses[?(@.name=='$PIPELINE')].state.terminated.startedAt}" 2>/dev/null)"
+    if [ -n "$pstate" ]; then
       bad "scenario ${label}: pipeline container STARTED despite the dataset failure" \
         "reliability regression — training must not begin"
     else
