@@ -116,7 +116,10 @@ k8s/
 │       ├── networkpolicy.yaml # AWS S3 egress: 443 internet-only (the documented limitation, S8 PR7)
 │       └── kustomization.yaml # repoints the image to Amazon ECR; applies the patch
 ├── tests/
-│   └── netpol/               # runtime NetworkPolicy verification (allowed/denied + canary) — S8 PR7
+│   ├── netpol/               # runtime NetworkPolicy verification (allowed/denied + canary) — S8 PR7
+│   ├── dataset-failure/      # failure-path validation: unavailable dataset & checksum mismatch — S8 PR10
+│   ├── mlflow-failure/       # failure-path validation: MLflow outage detection & recovery — S8 PR11
+│   └── resource-failure/     # failure-path validation: OOM kill & crash-loop retry — S8 PR12
 └── validate.py              # static validation (security + required + runtime + netpol) — PR 6/8
 ```
 
@@ -132,6 +135,21 @@ k8s/
 > `enableNetworkPolicy=true` (`terraform/eks.tf`); the default Docker Desktop CNI
 > does **not** enforce it. `k8s/tests/netpol/run.sh` verifies the live paths on an
 > enforcing cluster; `k8s/validate.py` asserts the policy set statically in CI.
+
+> **Failure-path validation (Sprint 8, PR 10–12).** Three test harnesses inject
+> controlled failures into the pipeline — running against a **real cluster** with
+> **throwaway Job instances** — to prove the platform detects and recovers:
+>
+> - **PR 10 (dataset-failure):** unavailable dataset & checksum mismatch trigger
+>   init-container failures before training starts; Job fails fast with backoffLimit.
+> - **PR 11 (mlflow-failure):** MLflow server outage is detected; pipeline waits and
+>   retries per backoffLimit; recovery succeeds when MLflow returns.
+> - **PR 12 (resource-failure):** OOM kill (64Mi vs. 512Mi limit) and crash-loop
+>   retry behavior show recovery works after resource exhaustion and deterministic
+>   failures. Each harness captures metrics, pod events, and alert firing (e.g.,
+>   `PipelineJobOOMKilled`, `KubePodCrashLooping`). Run them with:
+>   `k8s/tests/{dataset,mlflow,resource}-failure/run.sh`. Full details and evidence
+>   in each directory's README and the proof docs (`docs/proof/sprint-08-*-evidence.md`).
 
 Why Kustomize (and not raw `kubectl apply -f`): a single base is specialized per
 environment through overlays with no duplicated YAML. Today the local overlay
