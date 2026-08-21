@@ -23,8 +23,10 @@ For each scenario the harness asserts:
 
 1. the `fetch-dataset` init container **terminates non-zero**;
 2. its logs carry the **expected, distinct** error (the root-cause layer, ADR-030);
-3. the `pipeline` container **never starts** — *training does not begin*;
-4. the Job does **not** Complete.
+3. the `pipeline` container **never starts** — *training does not begin*, which is
+   why the Job cannot Complete (implied by check 3, not measured separately — a
+   backoff-retrying throwaway Job is trivially "not yet Complete" mid-run; the
+   run-level Failed condition is proven on the **real** Job in the alert step).
 
 **Scenario B is a deterministic failure and must fail fast.** A checksum mismatch is
 not transient — re-downloading yields the same bytes and the same mismatch — so it is

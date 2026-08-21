@@ -31,8 +31,10 @@
 #   * the fetch-dataset init container terminates with a NON-ZERO exit code;
 #   * its logs carry the EXPECTED, distinct error ("Failed to download …" for A;
 #     "integrity check failed …" for B) — the root-cause layer (ADR-030);
-#   * the pipeline container NEVER starts (training does not begin);
-#   * the Job does not Complete.
+#   * the pipeline container NEVER starts (training does not begin) — which is why
+#     the Job cannot Complete (implied by this check, not measured separately: a
+#     backoff-retrying throwaway Job is trivially "not yet Complete" mid-run; the
+#     meaningful run-level Failed condition is the alert step on the REAL Job below).
 # Metrics/alerts/Grafana are captured by the operator per the proof-doc checklist
 # (they are cluster-wide, not per-throwaway-Job): the Pushgateway series
 # mlops_pipeline_stage_success{stage="fetch_dataset"}=0 with every later stage
@@ -63,6 +65,11 @@ PIPELINE="pipeline"
 # How long to wait for the init container to reach a terminal state. A failed S3
 # GET / checksum check is seconds; allow generous slack for image pull.
 WAIT="${DATASET_FAIL_WAIT:-180}"
+# Per-invocation id, mixed into every throwaway Job name so a quick rerun (fix →
+# resubmit) can NEVER collide with a not-yet-garbage-collected pod from a prior run
+# and read its stale evidence. $$ (PID) + $RANDOM is unique enough for a single
+# operator's live-cluster session; it is also lowercased into an RFC1123-valid name.
+RUN_ID="${DATASET_FAIL_RUN_ID:-$$-$RANDOM}"
 
 pass=0
 fail=0
@@ -131,14 +138,14 @@ submit_with_override() {
   printf '%s' "$spec" | python -c '
 import json, sys
 j = json.load(sys.stdin)
-env_name, env_value = sys.argv[1], sys.argv[2]
+init_name, env_name, env_value = sys.argv[1], sys.argv[2], sys.argv[3]
 for c in j["spec"]["template"]["spec"].get("initContainers", []):
-    if c["name"] == "fetch-dataset":
+    if c["name"] == init_name:
         env = c.setdefault("env", [])
         env[:] = [e for e in env if e.get("name") != env_name]
         env.append({"name": env_name, "value": env_value})
 json.dump(j, sys.stdout)
-' "$env_name" "$env_value" | kubectl apply -f - >/dev/null
+' "$INIT" "$env_name" "$env_value" | kubectl apply -f - >/dev/null
 }
 
 # Wait until the init container of a Job's pod reaches a terminated state, or WAIT
@@ -146,8 +153,12 @@ json.dump(j, sys.stdout)
 wait_for_init_terminated() {
   local jobname="$1" deadline=$((SECONDS + WAIT)) pod=""
   while [ "$SECONDS" -lt "$deadline" ]; do
+    # Newest pod for THIS uniquely-named Job (retries create a new pod each attempt;
+    # the latest carries the current attempt's terminal state). --sort-by makes the
+    # pick deterministic rather than relying on unspecified list order.
     pod="$(kubectl -n "$NS" get pods -l job-name="$jobname" \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+      --sort-by=.metadata.creationTimestamp \
+      -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null)"
     if [ -n "$pod" ]; then
       local state
       state="$(kubectl -n "$NS" get pod "$pod" -o jsonpath="{.status.initContainerStatuses[?(@.name=='$INIT')].state.terminated.exitCode}" 2>/dev/null)"
@@ -170,7 +181,10 @@ cleanup_job() {
 # One failure scenario. Args: label env-name bad-value expected-log-substring
 run_failure_scenario() {
   local label="$1" env_name="$2" bad_value="$3" want_log="$4"
-  local newname="${JOB}-datafail-${label}"
+  # RFC1123-valid, run-unique Job name (lowercase; no collision on a quick rerun).
+  local llabel
+  llabel="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')"
+  local newname="${JOB}-datafail-${llabel}-${RUN_ID}"
   log ""
   log "──────────────────────────────────────────────────────────────────────"
   log "Scenario ${label}: override ${env_name} on the ${INIT} init container"
@@ -178,6 +192,10 @@ run_failure_scenario() {
   cleanup_job "$newname"
   local spec
   spec="$(render_job "$newname")"
+  if [ -z "$spec" ]; then
+    bad "scenario ${label}: could not render the deployed Job (kubectl/JSON error)"
+    return
+  fi
   submit_with_override "$spec" "$env_name" "$bad_value" "$newname" || {
     bad "scenario ${label}: could not submit throwaway Job"
     return
@@ -205,7 +223,7 @@ run_failure_scenario() {
     # The pipeline container must NEVER have started — training does not begin.
     local pstate
     pstate="$(kubectl -n "$NS" get pod "$pod" -o jsonpath="{.status.containerStatuses[?(@.name=='$PIPELINE')].state}" 2>/dev/null)"
-    if printf '%s' "$pstate" | grep -q '"running"\|"terminated"'; then
+    if printf '%s' "$pstate" | grep -Eq '"running"|"terminated"'; then
       bad "scenario ${label}: pipeline container STARTED despite the dataset failure" \
         "reliability regression — training must not begin"
     else
