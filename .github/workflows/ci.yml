@@ -2,7 +2,9 @@
 #
 # Quality gates that run on every push to `main` and every pull request. CI is
 # validation ONLY: it lints, tests, builds the container image to prove it
-# assembles and runs, STATICALLY validates the Kubernetes manifests (YAML syntax,
+# assembles and runs, scans it for vulnerabilities and emits a CycloneDX SBOM +
+# git→image provenance record (Sprint 8, PRs 8-9), STATICALLY validates the
+# Kubernetes manifests (YAML syntax,
 # upstream schema, Kustomize rendering, and the workload's security contract), and
 # unit-tests the Prometheus alert rules with promtool (Sprint 8, PR 6). It does NOT
 # deploy, does NOT push images to any registry, and does
@@ -366,6 +368,79 @@ jobs:
         with:
           name: trivy-image-reports
           path: trivy-reports/
+          retention-days: 30
+
+      # Stage 15 — Provenance-label assertion (Sprint 8, PR 9 — ADR-036). Proves,
+      # credential-free and deterministically, the FIRST link of the supply-chain
+      # (git commit → image): the built image must embed the exact commit SHA and
+      # build version passed as build-args, in the OCI `revision`/`version` labels
+      # the Dockerfile declares (org.opencontainers.image.*). This is the in-CI
+      # guard that the release chain's git→image binding actually works — a
+      # Dockerfile change that dropped or mis-wired the labels fails HERE, before an
+      # operator ever relies on them to publish. No registry, no AWS: it inspects
+      # the locally-built image only.
+      - name: Verify image provenance labels (git commit → image)
+        run: |
+          set -euo pipefail
+          rev="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ml-pipeline:ci)"
+          ver="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' ml-pipeline:ci)"
+          echo "image revision=${rev} version=${ver}"
+          test "${rev}" = "${GITHUB_SHA}" \
+            || { echo "::error::image revision label '${rev}' != commit '${GITHUB_SHA}' — the git→image provenance binding is broken (check the Dockerfile OCI labels / build-args)."; exit 1; }
+          test "${ver}" = "ci-${GITHUB_RUN_NUMBER}" \
+            || { echo "::error::image version label '${ver}' != expected 'ci-${GITHUB_RUN_NUMBER}'."; exit 1; }
+
+      # Stage 16 — SBOM generation (Sprint 8, PR 9 — ADR-036). Generate a CycloneDX
+      # Software Bill of Materials for BOTH built images with the SAME pinned,
+      # checksum-verified Trivy binary installed above (no new tool, no new
+      # supply-chain surface). The SBOM is produced FROM the actual image just built
+      # and validated — not from a manifest or a re-resolve — so it inventories the
+      # exact OS + Python packages the image ships. Alongside each SBOM we record the
+      # image's config digest (`docker inspect .Id`) so the artifact ties the SBOM to
+      # a specific local image. NOTE (honest boundary): a `load:true` CI image has an
+      # image ID but no REGISTRY manifest digest — it is never pushed (this job is
+      # credential-free by design). The immutable `sha256:` registry digest that the
+      # deploy pins to is captured at operator PUSH time by scripts/release-image.sh
+      # (ADR-036 / docs/supply-chain-provenance.md); this per-PR SBOM proves the
+      # mechanism and gives every change a reviewable component inventory.
+      - name: Generate SBOM (CycloneDX) for the built images
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          for pair in "mlops-pipeline ml-pipeline:ci" "mlflow-server mlflow-server:ci"; do
+            set -- $pair; name="$1"; img="$2"
+            echo "::group::CycloneDX SBOM — ${img}"
+            trivy image --format cyclonedx --scanners license \
+              --skip-version-check --output "sbom/${name}.cdx.json" "${img}"
+            docker inspect --format '{{ .Id }}' "${img}" > "sbom/${name}.image-id.txt"
+            # Component count is a cheap sanity check: an empty SBOM is a failure, not
+            # a "clean" result. jq is preinstalled on ubuntu-latest runners.
+            n="$(jq '[.components[]?] | length' "sbom/${name}.cdx.json")"
+            echo "SBOM components: ${n}"
+            test "${n}" -gt 0 \
+              || { echo "::error::SBOM for ${img} has zero components — generation failed."; exit 1; }
+            echo "::endgroup::"
+          done
+          # Provenance record for the git→image links CI CAN attest without a push:
+          # commit + build version + the local image IDs. The registry digest column
+          # is filled by the operator release step (release-image.sh).
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "build_version=ci-${GITHUB_RUN_NUMBER}"
+            echo "mlops_pipeline_image_id=$(cat sbom/mlops-pipeline.image-id.txt)"
+            echo "mlflow_server_image_id=$(cat sbom/mlflow-server.image-id.txt)"
+          } > sbom/provenance.txt
+
+      # Stage 17 — Publish the SBOMs + provenance record as a build artifact
+      # (`always()`), retained like the scan reports. This is the per-PR evidence
+      # file the repository stores instead of committing generated SBOM JSON into git
+      # (it is large, regenerated every build, and would be binary-review noise).
+      - name: Upload SBOM + provenance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-provenance
+          path: sbom/
           retention-days: 30
 
   # ---------------------------------------------------------------------------

@@ -120,7 +120,9 @@ professionally engineered project and is safe to change with confidence.
   [ADR-008](decisions/ADR-008-fixture-reproducibility.md)). The production raw
   dataset stays remote-only, so the production run itself is still not executed in
   CI — a documented limitation, not a gap.
-- 🚧 Basic security/supply-chain scanning (image scan, SBOM, signing).
+- ✅ Basic security/supply-chain scanning — image vulnerability scan (PR 8) + CycloneDX
+  SBOM and git→tag→digest provenance (PR 9) delivered; cosign signing is opt-in, an
+  enforced signing gate remains deferred.
 - 🚧 Publish the container image on release
   ([Containerization Strategy](containerization.md), [ADR-005](decisions/ADR-005-containerization-strategy.md)).
 - 🚧 Branch protection requiring green checks before merge.
@@ -347,10 +349,22 @@ infrastructure defined as code.
   [`.trivyignore.yaml`](../.trivyignore.yaml); a table + JSON report is published as a
   build artifact. It **complements** ECR `scan_on_push`
   ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)), the registry-side layer.
-  This delivers the **scanning** slice of the v3 supply-chain item; **SBOM** and **image
-  signing** (cosign) remain deferred
+  This delivers the **scanning** slice of the v3 supply-chain item
   ([ADR-035](decisions/ADR-035-container-image-scanning.md),
   [`docs/container-image-scanning.md`](container-image-scanning.md)).
+- ✅ **SBOM + immutable image provenance** (Sprint 8, PR 9): the `docker` CI job now
+  emits a **CycloneDX SBOM** (Trivy) for both images and **asserts the git→image
+  binding** (the image's `org.opencontainers.image.revision` label must equal the commit
+  SHA); the SBOM + a provenance record ship as the `sbom-and-provenance` artifact (never
+  committed). The operator release ([`scripts/release-image.sh`](../scripts/release-image.sh))
+  captures the immutable ECR **sha256 digest** (cross-checked against `aws ecr
+  describe-images`) and records the full **git commit → image tag → digest** chain; the
+  deploy can be **pinned by digest** (opt-in in the renderer) and
+  [`scripts/verify-deployed-digest.sh`](../scripts/verify-deployed-digest.sh) confirms the
+  **running** workload uses it. **Image signing** (cosign) ships as an **opt-in** keyless
+  step; an *enforced* signing gate stays deferred
+  ([ADR-036](decisions/ADR-036-sbom-and-image-provenance.md),
+  [`docs/supply-chain-provenance.md`](supply-chain-provenance.md)).
 - ⬜ **Migrate the DVC data remote off DagsHub** — Sprint 7 removed DagsHub from the
   **experiment-tracking** path (tracking now runs on the in-cluster MLflow platform,
   [ADR-026](decisions/ADR-026-in-cluster-mlflow-platform.md)), but the DVC **data/model

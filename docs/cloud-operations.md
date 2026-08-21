@@ -211,6 +211,21 @@ repository enforces **immutable tags**, so that version can never be repointed. 
 MLflow server image is built and pushed to its own ECR repository the same way — see
 [MLflow Platform](mlflow-platform.md).)
 
+> **Prefer `release-image.sh` — it captures the provenance chain.** The two commands
+> above are the minimal build+push. To also record the **git commit → image tag →
+> sha256 digest** chain and emit a **CycloneDX SBOM**, run
+> [`scripts/release-image.sh`](../scripts/release-image.sh) instead — it builds with the
+> provenance labels, pushes, captures the immutable digest (cross-checked against `aws
+> ecr describe-images`), writes a `*.provenance.json` + SBOM to its `--out` directory,
+> and optionally cosign-signs with `--sign`:
+>
+> ```bash
+> scripts/release-image.sh --tag 1.6.0 --out ./release-evidence
+> ```
+>
+> Then deploy pinned to that exact digest and verify the runtime workload — see
+> [SBOM & Image Provenance](supply-chain-provenance.md) (Sprint 8, PR 9 — ADR-036).
+
 The AWS overlay stays **account-neutral in git**: the committed image, dataset, and
 MLflow-artifact values are all `000000000000` placeholders. Rather than editing —
 and later reverting — those tracked files, render a concrete manifest from the live
