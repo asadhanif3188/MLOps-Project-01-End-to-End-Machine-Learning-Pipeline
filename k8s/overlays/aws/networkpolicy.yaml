@@ -125,3 +125,46 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+---
+# Pipeline + MLflow server -> EKS Pod Identity agent (169.254.170.23:80).
+#
+# REQUIRED under enforced NetworkPolicy. Both workloads draw their AWS credentials
+# from EKS Pod Identity: the pipeline's fetch-dataset init container reads the S3
+# dataset, and the MLflow server writes artifacts to S3. The AWS SDK obtains those
+# credentials from the node-local Pod Identity agent at http://169.254.170.23:80
+# BEFORE it can make any S3 call. The S3-egress policies above (correctly) `except`
+# the whole 169.254.0.0/16 link-local range from their 0.0.0.0/0:443 allowance, so
+# WITHOUT this dedicated rule the default-deny blocks the credential fetch and every
+# AWS call fails with a connect timeout to the agent.
+#
+# Verified live on EKS (2026-08-21): with the VPC CNI network-policy agent enforcing,
+# fetch-dataset failed with `CredentialRetrievalError: Connect timeout on endpoint
+# URL "http://169.254.170.23/v1/credentials"` until this policy was added; the earlier
+# static "Pod Identity is preserved" assumption (validate.py §8) did not hold once a
+# CNI actually enforced the policy set. Least-privilege: exactly one link-local /32
+# host on TCP/80, for exactly the two Pod-Identity-using workloads. (The EC2 IMDS at
+# 169.254.169.254 is deliberately NOT opened — these pods use Pod Identity, not IMDS.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-identity-egress
+  namespace: mlops
+  labels:
+    app.kubernetes.io/part-of: mlops-pipeline
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["mlops-pipeline", "mlflow-server"]
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 169.254.170.23/32
+      ports:
+        - protocol: TCP
+          port: 80

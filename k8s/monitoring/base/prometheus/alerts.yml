@@ -73,8 +73,16 @@ groups:
       - alert: PipelineJobOOMKilled
         # The pipeline's memory-safety signal is a KILL EVENT, not a sustained
         # headroom gauge (§ 6 note: a < 1 min Job cannot sustain "> 90% for N min").
-        # Reads the retained finished pod's last terminated reason.
-        expr: max(kube_pod_container_status_last_terminated_reason{namespace="mlops",pod=~"mlops-pipeline-.*",reason="OOMKilled"}) == 1
+        # Reads the retained finished pod's CURRENT terminated reason
+        # (kube_pod_container_status_terminated_reason). NOT the *last_* variant:
+        # kube-state-metrics derives last_terminated_reason from a container's
+        # lastState (its PREVIOUS, post-restart termination), but the pipeline Job
+        # runs restartPolicy=Never — each container terminates exactly once with no
+        # in-place restart, so lastState is empty and the last_* metric emits no
+        # series. Verified live on EKS 2026-08-21: an OOMKilled pipeline pod shows
+        # terminated_reason{reason="OOMKilled"}=1 while last_terminated_reason is
+        # absent, so keying on last_* made this alert unfireable for this workload.
+        expr: max(kube_pod_container_status_terminated_reason{namespace="mlops",pod=~"mlops-pipeline-.*",reason="OOMKilled"}) == 1
         for: 2m
         labels:
           severity: critical

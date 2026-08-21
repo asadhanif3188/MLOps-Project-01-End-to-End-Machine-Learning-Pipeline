@@ -99,11 +99,23 @@ start_probe() {
 
 # Run one connection attempt from a probe pod. Returns 0 on connect, non-zero on
 # blocked/timeout. `spec` is a curl URL (http://host:port/path or telnet://host:port).
+#
+# Success is judged on whether the TCP connection was ESTABLISHED (curl's
+# %{time_connect} > 0), NOT on curl's process exit code. In some hardened
+# environments (curl in a restricted, drop-ALL container invoked via `kubectl exec`
+# on EKS/containerd) curl completes the request but exits non-zero on the response
+# write phase (e.g. exit 23 "client returned ERROR on write"), even though the
+# connection plainly succeeded (the HTTP status is 200). Relying on the exit code
+# there reports every ALLOWED path as blocked — a false FAIL. time_connect is set
+# once the TCP handshake completes, so it is 0 for a policy-blocked path (SYN
+# dropped/refused → no connect) and > 0 for an allowed one, for both http:// and
+# telnet:// probes.
 probe() {
-  local pod="$1" ns="$2" url="$3"
-  kubectl -n "$ns" exec "$pod" -- \
-    curl -sS --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" -o /dev/null "$url" \
-    >/dev/null 2>&1
+  local pod="$1" ns="$2" url="$3" tc
+  tc="$(kubectl -n "$ns" exec "$pod" -- \
+    curl -s -o /dev/null --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
+    -w '%{time_connect}' "$url" 2>/dev/null)"
+  awk -v t="$tc" 'BEGIN { exit !((t + 0) > 0) }'
 }
 
 # Assert an ALLOWED path: the connection MUST succeed.
