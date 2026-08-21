@@ -109,6 +109,8 @@ def retry_call[T](
 
     # Unreachable unless the loop broke on the final attempt, in which case
     # last_exc is the exhausting failure. Re-raise it so the caller sees the real,
-    # persistent error (never a synthetic "gave up" message).
-    assert last_exc is not None  # invariant: the loop only breaks holding an exc
+    # persistent error (never a synthetic "gave up" message). A raised guard, not an
+    # `assert`: it must survive `python -O` (project convention — see src/split.py).
+    if last_exc is None:  # pragma: no cover — the loop only breaks holding an exc
+        raise RuntimeError("retry_call exhausted attempts without capturing an error")
     raise last_exc
