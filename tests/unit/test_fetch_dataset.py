@@ -143,6 +143,26 @@ def test_fetch_dataset_downloads_and_verifies(tmp_path, monkeypatch) -> None:
     assert client.calls == [("bucket", "pima/v1/data.csv", str(dest))]
 
 
+def test_fetch_dataset_logs_retrieval_before_integrity(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    # The init container's logs must show the object was RETRIEVED before the
+    # integrity gate runs, so a checksum mismatch is distinguishable from an
+    # unreachable/missing object from the logs alone (Sprint 8 PR 10 observability).
+    dest = tmp_path / "data.csv"
+    monkeypatch.setenv("DATASET_S3_URI", "s3://bucket/k.csv")
+    monkeypatch.setenv("DATASET_DEST", str(dest))
+    monkeypatch.setenv("DATASET_SHA256", _CONTENT_SHA256)
+
+    with caplog.at_level("INFO", logger="fetch_dataset"):
+        fetch_dataset.fetch_dataset(client=_FakeS3Client())
+
+    messages = [r.getMessage() for r in caplog.records]
+    retrieved = next(i for i, m in enumerate(messages) if "Dataset retrieved" in m)
+    verified = next(i for i, m in enumerate(messages) if "checksum verified" in m)
+    assert retrieved < verified
+
+
 def test_fetch_dataset_missing_uri_raises_configerror(monkeypatch) -> None:
     monkeypatch.delenv("DATASET_S3_URI", raising=False)
     with pytest.raises(ConfigError):

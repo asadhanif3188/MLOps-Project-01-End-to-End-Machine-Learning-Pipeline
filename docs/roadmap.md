@@ -331,9 +331,13 @@ infrastructure defined as code.
   ([ADR-034](decisions/ADR-034-network-policies.md)). **Manifests + instrumentation +
   dashboards + alert rules + network policies only — not deployed/runtime-proven yet**
   (no live cluster; live firing, the failure-injection campaign, and the live
-  allowed/denied-path capture are the runtime-evidence work — the network-policy
-  capture is tracked as a checklist in
-  [`docs/proof/sprint-08-network-policy-runtime-evidence.md`](proof/sprint-08-network-policy-runtime-evidence.md));
+  allowed/denied-path capture are the runtime-evidence work — tracked as checklists to
+  run in ONE batched next-cluster session:
+  [network-policy](proof/sprint-08-network-policy-runtime-evidence.md) (PR 7),
+  [SBOM/provenance digest](proof/sprint-08-sbom-provenance-evidence.md) (PR 9), and the
+  [dataset availability + integrity failure paths](proof/sprint-08-dataset-failure-tests-evidence.md)
+  (PR 10 — unavailable object and checksum mismatch both fail fast, before training,
+  driven by [`k8s/tests/dataset-failure/run.sh`](../k8s/tests/dataset-failure/run.sh)));
   Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.

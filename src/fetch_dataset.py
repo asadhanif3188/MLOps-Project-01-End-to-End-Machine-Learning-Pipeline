@@ -234,6 +234,21 @@ def fetch_dataset(*, client: object | None = None) -> str:
         client = build_s3_client(endpoint_url)
     download_object(client, bucket, key, dest)
 
+    # Log the successful RETRIEVAL before the integrity gate runs, so the init
+    # container's logs cleanly separate "object retrieved" from "integrity
+    # verified". On a checksum mismatch this line is the operational proof that the
+    # download itself succeeded and that it was the integrity gate — not retrieval —
+    # that rejected the object; without it, a mismatch and an unreachable/missing
+    # object are only distinguishable by the *absence* of a later log line. This is
+    # additive observability only: it changes no retrieval or failure behaviour (the
+    # instrumentation the Sprint 8 PR 10 checksum-mismatch scenario needs to prove
+    # retrieve-then-reject ordering from the logs alone).
+    logger.info(
+        "Dataset retrieved: %s (%d bytes); verifying integrity",
+        dest,
+        os.path.getsize(dest),
+    )
+
     if expected_sha256:
         verify_checksum(dest, expected_sha256)
     else:

@@ -9,14 +9,16 @@
 > so nothing at runtime changes until then (the default local Docker Desktop CNI does
 > not enforce NetworkPolicy).
 
-> **⏳ Capture this TOGETHER with the Sprint 8 PR 9 runtime-digest evidence.** There is
-> a second pending live-EKS capture —
+> **⏳ Capture this TOGETHER with the other two pending Sprint 8 live-EKS captures:**
 > [sprint-08-sbom-provenance-evidence.md § 4b](sprint-08-sbom-provenance-evidence.md#4b-operator-checklist-run-on-the-next-enforcing-cluster-session)
-> (push → immutable digest → `verify-deployed-digest.sh` PASS). Standing up EKS is the
-> billable/expensive part (`provision → prove → destroy`, ADR-020); the checks are
-> minutes. So on the **next enforcing-cluster session, do BOTH in one run** to amortise
-> the cluster cost — deploy the workload once, then run this harness *and* the PR 9
-> digest verification against the same live cluster before teardown.
+> (PR 9 — push → immutable digest → `verify-deployed-digest.sh` PASS) and
+> [sprint-08-dataset-failure-tests-evidence.md](sprint-08-dataset-failure-tests-evidence.md)
+> (PR 10 — dataset unavailable + checksum-mismatch failure paths). Standing up EKS is
+> the billable/expensive part (`provision → prove → destroy`, ADR-020); the checks are
+> minutes each. So on the **next enforcing-cluster session, do all THREE in one run** to
+> amortise the cluster cost — deploy the workload once, then run this harness, the PR 9
+> digest verification, *and* the PR 10 dataset-failure harness against the same live
+> cluster before teardown.
 
 **Design of record:** [ADR-034](../decisions/ADR-034-network-policies.md) ·
 **Matrix + policies:** [docs/network-policies.md](../network-policies.md) ·
