@@ -109,6 +109,15 @@ through the existing renderer.
 
 ### 4b. Operator checklist (run on the next enforcing-cluster session)
 
+> **STATUS: EXECUTED 2026-08-21** on real EKS. `release-image.sh` pushed the pipeline
+> image and captured `git 72fad8a → tag 1.6.0 → sha256:3a27c6de…58f0498c` (ECR
+> cross-checked; CycloneDX SBOM ~322 components). Deployed **pinned by digest**;
+> `verify-deployed-digest.sh` → **PASS: all 3 containers** run the expected digest.
+> The MLflow image was released the same way (`sha256:e49ead8f…329fc286`). cosign
+> signing remains opt-in (not installed). Consolidated record:
+> [sprint-08-live-eks-evidence.md §4](sprint-08-live-eks-evidence.md#4-pr-9--sbom--immutable-provenance-live-digest).
+> The checklist below is retained for reference.
+
 > **⏳ Capture this TOGETHER with the other pending Sprint 8 live-EKS captures:**
 > [sprint-08-network-policy-runtime-evidence.md](sprint-08-network-policy-runtime-evidence.md)
 > (PR 7 — NetworkPolicy allowed/denied paths),

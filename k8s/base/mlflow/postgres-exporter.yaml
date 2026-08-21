@@ -102,7 +102,11 @@ spec:
             - --web.listen-address=:9187
             # Only the default cluster-level collectors; do not fan out per database.
             # Keeps the exporter to up/connections/size — not a full DB monitor.
-            - --auto-discover-databases=false
+            # NOTE: postgres-exporter v0.15.0's flag parser rejects the `=false` form
+            # of this boolean ("unexpected false") — it must be the negated flag.
+            # Verified live on EKS 2026-08-21: `--auto-discover-databases=false`
+            # crash-looped the container; `--no-auto-discover-databases` starts clean.
+            - --no-auto-discover-databases
           env:
             # The NON-SECRET connection target (host:port/dbname + options). The
             # split DATA_SOURCE_URI form keeps the password OUT of any DSN string;

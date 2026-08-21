@@ -1,6 +1,19 @@
-# Sprint 8 PR 7 — NetworkPolicy Runtime Evidence (PENDING)
+# Sprint 8 PR 7 — NetworkPolicy Runtime Evidence
 
-> **STATUS: NOT YET EXECUTED.** The least-privilege NetworkPolicy set
+> **STATUS: EXECUTED 2026-08-21** on real EKS (`enableNetworkPolicy=true`). RESULT
+> **PASS** — canary **BLOCKED**, **6/6 allowed**, **3/3 denied**. See the consolidated
+> record: [sprint-08-live-eks-evidence.md §5](sprint-08-live-eks-evidence.md#5-pr-7--networkpolicy-runtime).
+> Two findings surfaced here: (1) enforced NetworkPolicy **blocked EKS Pod Identity**
+> (`169.254.170.23:80`) — fixed with `allow-pod-identity-egress`; (2) the harness judged
+> success on curl's exit code, which is **unreliable on EKS** (curl exit 23 on a
+> successful request) — fixed to judge on `%{time_connect}`
+> ([findings §3](sprint-08-live-eks-evidence.md#3-findings--4-real-defects-the-live-run-surfaced-all-fixed)).
+
+---
+
+**Original pre-execution checklist (retained for reference):**
+
+> The least-privilege NetworkPolicy set
 > ([ADR-034](../decisions/ADR-034-network-policies.md)) is merged with a **static**
 > contract passing in CI (`k8s/validate.py` §8/M12), but the **live** allowed/denied
 > paths have not been exercised on an enforcing cluster. This file is the

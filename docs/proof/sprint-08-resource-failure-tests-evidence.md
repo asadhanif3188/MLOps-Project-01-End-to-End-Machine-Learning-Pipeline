@@ -1,8 +1,21 @@
 # Sprint 8 PR 12: Resource Failure Tests Evidence
 
-**Objective:** Validate operational response to OOM and crash-loop failures (local Kubernetes).
+**Objective:** Validate operational response to OOM and crash-loop failures.
 
-**Status:** ✅ **COMPLETE** — All tests passed on 2026-08-21
+> **STATUS: EXECUTED ON REAL EKS 2026-08-21** (in addition to the local Docker Desktop
+> run below). On EKS the pipeline container reported the real **`OOMKilled`** reason
+> (exit **137**) — closing finding #3 / ADR-037 **E6** (Docker Desktop only ever
+> reported `Error`). With Prometheus deployed, **`KubePodCrashLooping` FIRED** (a
+> representative `restartPolicy: Always` pod held >15 min) and **`PipelineJobOOMKilled`
+> FIRED** — but only after fixing a real defect: the alert keyed on
+> `kube_pod_container_status_last_terminated_reason`, which is **empty for a
+> `restartPolicy: Never` Job** (no `lastState`), so it could never fire; fixed to
+> `kube_pod_container_status_terminated_reason`
+> ([findings §3](sprint-08-live-eks-evidence.md#3-findings--4-real-defects-the-live-run-surfaced-all-fixed)).
+> Recovery: a healthy Job completed exit 0. Consolidated record:
+> [sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts).
+
+**Status (local):** ✅ **COMPLETE** — Docker Desktop tests passed on 2026-08-21
 
 **Test Environment:**
 - Cluster: Docker Desktop (https://127.0.0.1:50351)

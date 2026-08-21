@@ -1,6 +1,18 @@
-# Sprint 8 PR 11 — MLflow Outage Detection & Recovery Evidence (PENDING)
+# Sprint 8 PR 11 — MLflow Outage Detection & Recovery Evidence
 
-> **STATUS: NOT YET EXECUTED.** The MLflow outage-detection / recovery paths are
+> **STATUS: EXECUTED 2026-08-21** on real EKS. All 8 items captured — outage →
+> `probe_success` 1→0 → **`MLflowDown` FIRING @ 5m** (14:00:06Z) → `wait-for-mlflow`
+> gate blocks (**no wasted compute**) → restore → **`MLflowDown` RESOLVED** (14:04:04Z)
+> → **persistence proven** (`pg_up=1` throughout; runs 2→5→10; PostgreSQL + S3 intact).
+> Candidate #1 (bounded retry) is implemented in PR 13 and **now proven live** (a
+> transient ~90 s blip is absorbed, training not discarded). Consolidated record:
+> [sprint-08-live-eks-evidence.md §7](sprint-08-live-eks-evidence.md#7-pr-11--mlflow-outage-detection--recovery-8-items).
+
+---
+
+**Original pre-execution checklist (retained for reference):**
+
+> The MLflow outage-detection / recovery paths are
 > covered by a **runtime harness**
 > ([`k8s/tests/mlflow-failure/run.sh`](../../k8s/tests/mlflow-failure/run.sh)) that
 > creates a safe, reversible outage on a real cluster, but it has **not yet been run

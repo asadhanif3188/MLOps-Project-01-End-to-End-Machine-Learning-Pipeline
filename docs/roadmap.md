@@ -328,21 +328,24 @@ infrastructure defined as code.
   than faked: S3's dynamic public IPs cannot be pinned in a standard NetworkPolicy, so
   egress is bounded to internet-only:443 and the "which bucket/actions" precision is
   delegated to IAM (Pod Identity) + a recommended VPC S3 endpoint; **no service mesh**
-  ([ADR-034](decisions/ADR-034-network-policies.md)). **Manifests + instrumentation +
-  dashboards + alert rules + network policies only — not deployed/runtime-proven yet**
-  (no live cluster; live firing, the failure-injection campaign, and the live
-  allowed/denied-path capture are the runtime-evidence work — tracked as checklists to
-  run in ONE batched next-cluster session:
-  [network-policy](proof/sprint-08-network-policy-runtime-evidence.md) (PR 7),
-  [SBOM/provenance digest](proof/sprint-08-sbom-provenance-evidence.md) (PR 9), the
-  [dataset availability + integrity failure paths](proof/sprint-08-dataset-failure-tests-evidence.md)
-  (PR 10 — unavailable object and checksum mismatch both fail fast, before training,
-  driven by [`k8s/tests/dataset-failure/run.sh`](../k8s/tests/dataset-failure/run.sh)), and
+  ([ADR-034](decisions/ADR-034-network-policies.md)). **The whole monitoring +
+  network-policy stack is now runtime-proven on real EKS** (2026-08-21) in ONE batched
+  `provision → prove → destroy` session — [Sprint 8 Live-EKS
+  Evidence](proof/sprint-08-live-eks-evidence.md): 8/8 scrape targets UP, all **four
+  alerts fired live** (`PipelineJobFailed`, `PipelineJobOOMKilled`, `KubePodCrashLooping`,
+  `MLflowDown`), the NetworkPolicy allowed/denied paths verified under an enforcing CNI
+  ([PR 7](proof/sprint-08-network-policy-runtime-evidence.md)), the image deployed and
+  verified **by immutable digest** ([PR 9](proof/sprint-08-sbom-provenance-evidence.md)),
+  the [dataset failure paths](proof/sprint-08-dataset-failure-tests-evidence.md) (PR 10 —
+  missing object + checksum mismatch both fail fast before training) and the
   [MLflow outage detection & recovery](proof/sprint-08-mlflow-failure-tests-evidence.md)
-  (PR 11 — a reversible scale-to-zero outage is detected via `MLflowDown`, the pipeline
-  fails at the `wait-for-mlflow` gate with no wasted compute, and MLflow is restored with
-  PostgreSQL/S3 data intact, driven by [`k8s/tests/mlflow-failure/run.sh`](../k8s/tests/mlflow-failure/run.sh)));
-  Alertmanager notifier routing remains deferred.
+  (PR 11 — `MLflowDown` fires, the `wait-for-mlflow` gate stops the run with no wasted
+  compute, MLflow is restored with PostgreSQL/S3 data intact). The live run also
+  **surfaced and fixed four real defects** static validation had missed (Pod Identity
+  blocked by enforced NetworkPolicy; a postgres-exporter arg incompatible with its image;
+  a netpol-harness curl-exit-code fragility; and the `PipelineJobOOMKilled` alert keyed on
+  a metric empty for `restartPolicy:Never` Jobs). Alertmanager notifier routing remains
+  deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
 - ✅ **Reliability hardening from failure-test evidence** (Sprint 8, PR 13): the one

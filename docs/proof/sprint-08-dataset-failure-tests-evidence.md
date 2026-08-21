@@ -1,6 +1,17 @@
-# Sprint 8 PR 10 — Dataset Failure-Path Runtime Evidence (PENDING)
+# Sprint 8 PR 10 — Dataset Failure-Path Runtime Evidence
 
-> **STATUS: NOT YET EXECUTED.** The dataset availability & integrity failure paths
+> **STATUS: EXECUTED 2026-08-21** on real EKS. RESULT **PASS** — Scenario A (missing
+> object → **404 HeadObject**) and Scenario B (**checksum mismatch** vs the real
+> `ee5b0c92…` digest) both fail **before training**, `fetch-dataset` exit 1, pipeline
+> never starts. A real-Job override reached Failed (BackoffLimitExceeded) → **`PipelineJobFailed`
+> FIRING** (13:26:13Z). Consolidated record:
+> [sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts).
+
+---
+
+**Original pre-execution checklist (retained for reference):**
+
+> The dataset availability & integrity failure paths
 > are covered by **unit** tests ([`tests/unit/test_fetch_dataset.py`](../../tests/unit/test_fetch_dataset.py))
 > and a **runtime harness** ([`k8s/tests/dataset-failure/run.sh`](../../k8s/tests/dataset-failure/run.sh)),
 > but the controlled failures have not yet been exercised on a **live EKS cluster**.
