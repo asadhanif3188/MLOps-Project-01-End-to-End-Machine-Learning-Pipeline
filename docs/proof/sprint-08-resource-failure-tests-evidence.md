@@ -148,10 +148,9 @@ kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=600s
 
 **Expected:** Job Completes successfully with normal 512Mi memory limit
 
-**Result:**
-```
-[PENDING]
-```
+**Result:** ✅ **EXECUTED ON EKS 2026-08-21** — recovery verified: with normal
+limits/config a healthy Job **Completed exit 0** (baseline + PR 13 runs). Canonical:
+[sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts).
 
 ---
 
@@ -287,7 +286,9 @@ Simulated pipeline failure
 
 **Test Note:** Our test runs for ~40 seconds (3 retries with backoff), well below the 15m threshold. The alert was not expected to fire in this short run.
 
-**Validation for EKS:** When this test runs on EKS (future sprint), if any pod sustains 15m of crash-looping, the `KubePodCrashLooping` alert will fire and be captured in the evidence.
+**Validation for EKS:** ✅ Confirmed on EKS 2026-08-21 — a pod sustaining >15 min of
+crash-looping (a dedicated `restartPolicy:Always` pod; a `restartPolicy:Never` Job cannot
+produce `CrashLoopBackOff`) made `KubePodCrashLooping` **fire** (canonical §6).
 
 ---
 
@@ -358,10 +359,9 @@ kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=600s
 
 **Expected:** Job Completes successfully with normal config (no broken parameter)
 
-**Result:**
-```
-[PENDING]
-```
+**Result:** ✅ **EXECUTED ON EKS 2026-08-21** — recovery verified: with normal
+limits/config a healthy Job **Completed exit 0** (baseline + PR 13 runs). Canonical:
+[sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts).
 
 ---
 
@@ -455,19 +455,22 @@ kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=600s
 - Alert rules exist: `PipelineJobOOMKilled` (ADR-011 § memory-safety) and `KubePodCrashLooping` (15m+ persistence)
 - Pod events captured correctly by kubelet
 - Job status conditions set correctly
-- Alert firing will be validated on EKS with Prometheus deployed
+- Alert firing **validated on EKS** with Prometheus deployed (2026-08-21)
 
-**Recommendation:** Re-run tests on EKS to capture alert firing evidence
+**Recommendation:** ✅ Done — re-run on EKS captured the alert firing (see below).
 
 ---
 
 ### Next Steps
 
-1. **EKS Validation (deferred to future sprint):**
-   - Re-run this harness against EKS cluster
-   - Capture Prometheus metrics and alert firing
-   - Verify `kube_pod_container_status_last_terminated_reason` behavior under real OOMKilled
-   - Confirm `KubePodCrashLooping` alert fires if 15m+ persistence achieved
+1. **EKS Validation — ✅ COMPLETED 2026-08-21** (canonical: [sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts)):
+   - Harness re-run against EKS ✅
+   - Prometheus metrics + alert firing captured ✅
+   - `kube_pod_container_status_last_terminated_reason` behaviour verified — **found EMPTY
+     for a `restartPolicy:Never` Job** (no `lastState`), so `PipelineJobOOMKilled` could
+     never fire; **fixed** to `..._terminated_reason` (current state), which reports
+     `OOMKilled=1` (canonical §3, Finding 4). Alert then **fired** (14:19:49Z).
+   - `KubePodCrashLooping` **fired** (a `restartPolicy:Always` pod held >15 min) ✅
 
 2. **Hardening Candidates (out of scope for this PR):**
    - Consider per-stage memory usage profiling for future data growth
@@ -594,5 +597,7 @@ kubectl -n mlops delete job mlops-pipeline-crash-test
 **PR:** 12
 
 **Certification:**
-All five test assertions passed successfully. Local Kubernetes validation complete.
-Ready for second-eye review and eventual EKS execution for production-scale evidence.
+All five test assertions passed on local Kubernetes. **EKS execution completed
+2026-08-21** — real `OOMKilled` (exit 137), `KubePodCrashLooping` and (after the Finding 4
+fix) `PipelineJobOOMKilled` fired, and recovery verified. Canonical runtime record:
+[sprint-08-live-eks-evidence.md](sprint-08-live-eks-evidence.md).

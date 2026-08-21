@@ -116,20 +116,22 @@ the **same deployed workload**:
       clears.
 - [ ] **9. Teardown** (EKS) per [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md).
 
-## Record results here (fill in on execution)
+## Results — EXECUTED ON EKS 2026-08-21 (PASS)
 
-Structured as the eight items the PR asks to return.
+**Canonical runtime record:** [sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts)
+(full campaign context, environment, and teardown there). The eight items the PR asks to
+return, as observed live:
 
-| # | Item | Result |
+| # | Item | Result (EKS 2026-08-21) |
 |---|---|---|
-| 1 | **Exact failure method** | _pending_ (A: `DATASET_S3_URI` → non-existent key; B: `DATASET_SHA256` → `0…0`) |
-| 2 | **Failure results** | _pending_ (init-container exit code + Job status, both scenarios) |
-| 3 | **Metrics / alerts** | _pending_ (`stage_success{fetch_dataset}=0`, later stages absent; `PipelineJobFailed` firing) |
-| 4 | **Diagnosis** | _pending_ (runbook walk: logs → failing stage → root cause) |
-| 5 | **Recovery** | _pending_ (config/override restored; nothing to roll back for throwaway runs) |
-| 6 | **Final healthy run** | _pending_ (Job Complete; all five stages `success=1`; alert cleared) |
-| 7 | **Evidence files** | _pending_ (harness output, `kubectl` captures, Grafana screenshots — paste below) |
-| 8 | **Reliability issue discovered** | _pending_ (none expected; record any) |
+| 1 | **Exact failure method** | A: `DATASET_S3_URI` → non-existent key; B: `DATASET_SHA256` → wrong digest — via `k8s/tests/dataset-failure/run.sh` |
+| 2 | **Failure results** | Both `fetch-dataset` **exit 1**; **pipeline container never started**. A: `404 HeadObject Not Found`. B: `integrity check failed … expected <bad>, got ee5b0c92…`. Real-Job override → `Failed` (BackoffLimitExceeded, 3 pods) |
+| 3 | **Metrics / alerts** | `mlops_pipeline_stage_success{fetch_dataset}=0`, later stages absent; **`PipelineJobFailed` FIRING** (critical, 13:26:13Z) |
+| 4 | **Diagnosis** | logs carry the distinct per-mode message → failing stage `fetch_dataset` → root cause; runbook [alerting.md#pipelinejobfailed](../alerting.md#pipelinejobfailed) |
+| 5 | **Recovery** | throwaway runs need no rollback; a subsequent **healthy Job Completed exit 0** (baseline / PR 13 runs) |
+| 6 | **Final healthy run** | Job `Complete`, all stages `success=1`, `PipelineJobFailed` resolved after the failed Job was cleared |
+| 7 | **Evidence files** | harness output + `kubectl`/PromQL captures summarized in the canonical §6; screenshots under [`docs/screenshots/`](../screenshots/) |
+| 8 | **Reliability issue discovered** | none in this boundary; the campaign separately found 4 platform defects (canonical §3) |
 
 > Redact account IDs / bucket names / operator IPs / any secret material, per the
 > Sprint 7 evidence convention. Paste the harness output and `kubectl`/PromQL captures
@@ -160,9 +162,11 @@ observability. No broader reliability changes were made here; those belong to PR
 
 ## Honesty boundary
 
-- **Nothing on a live cluster has been executed for this PR.** Every "Result" cell
-  above is `pending`. The unit tests (offline, with an injected client) and the
-  harness's static/syntax correctness are the only things verified in CI to date.
-- The `PipelineJobFailed` **alert firing** requires the real Job to exhaust
-  `backoffLimit`; it is step 5, not something claimed here.
-- Teardown cost/lifecycle follows [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md).
+- **Executed live on real EKS (2026-08-21)** — the results table above is observed, not
+  pending. Offline unit tests (injected client) + the CI static/syntax checks remain the
+  fast gate; the runtime behaviour is proven on-cluster and recorded canonically in
+  [sprint-08-live-eks-evidence.md §6](sprint-08-live-eks-evidence.md#6-pr-10--12--failure-paths--alerts).
+- The `PipelineJobFailed` **alert firing** was captured on a real Job that exhausted
+  `backoffLimit` (not merely asserted).
+- Teardown cost/lifecycle followed [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md);
+  the environment was destroyed and verified clean the same session.

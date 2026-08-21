@@ -113,16 +113,19 @@ leave MLflow down.
 
 Structured as the eight items the PR asks to return.
 
-| # | Item | Result |
+**Canonical runtime record:** [sprint-08-live-eks-evidence.md §7](sprint-08-live-eks-evidence.md#7-pr-11--mlflow-outage-detection--recovery-8-items).
+Observed live (outage started 13:54:22Z):
+
+| # | Item | Result (EKS 2026-08-21) |
 |---|---|---|
-| 1 | **Outage method** | _pending_ — `kubectl scale deploy/mlflow --replicas=0` (stateless server only; PostgreSQL/S3 untouched; auto-restored by an EXIT trap) |
-| 2 | **Detection** | _pending_ — `probe_success{job="blackbox-mlflow-health"}` `1 → 0`; Service Endpoints drain to empty |
-| 3 | **Alert behaviour** | _pending_ — `MLflowDown` Pending → Firing at its 5m `for:` (warning); Resolves on restore |
-| 4 | **Pipeline behaviour** | _pending_ — `fetch-dataset` **succeeds**; `wait-for-mlflow` gate **fails** (`MLflow not ready after …`); `pipeline` **never starts** → **no wasted computation**; the Job fails at the gate |
-| 5 | **Diagnosis** | _pending_ — `MLflowDown` (+ `PipelineJobFailed` on a real Job) → runbook → `deploy/mlflow` at 0 replicas |
-| 6 | **Recovery** | _pending_ — scale back → Ready + Endpoints return; alert Resolves; a new run Completes |
-| 7 | **Persistence verification** | _pending_ — `mlflow-postgres` Ready throughout; previous runs still visible; S3 artifacts persist |
-| 8 | **Candidate reliability improvements** | see § 8 below (mid-run tracking-failure handling; **not** implemented here) |
+| 1 | **Outage method** | `kubectl scale deploy/mlflow --replicas=0` (stateless server only; PostgreSQL/S3 untouched) |
+| 2 | **Detection** | `probe_success{job="blackbox-mlflow-health"}` **1 → 0** (13:55:50Z); Service **Endpoints drained empty** |
+| 3 | **Alert behaviour** | `MLflowDown` Pending → **FIRING at 14:00:06Z** (5m `for:`, warning) → **RESOLVED** on restore (14:04:04Z) |
+| 4 | **Pipeline behaviour** | `fetch-dataset` **exit 0**; `wait-for-mlflow` **blocks/times out** (`urlopen error timed out`); `pipeline` container **never started** → **no wasted computation** |
+| 5 | **Diagnosis** | `MLflowDown` firing while the pipeline is blocked at the gate; `PipelineJobFailed` proven firing separately (§6 canonical) → runbook → `deploy/mlflow` at 0 replicas |
+| 6 | **Recovery** | scale → 1 (14:03:22Z) → `probe_success` **0→1** (14:03:47Z), Endpoints return; alert **Resolves**; a fresh run **Completes** |
+| 7 | **Persistence verification** | `pg_up=1` **throughout**; runs **2 → 5 → 10** (previous runs survived); PostgreSQL + S3 intact |
+| 8 | **Candidate reliability improvements** | § 8 candidate #1 (bounded retry) implemented in PR 13 and **now proven live** — a transient ~90 s blip is absorbed (canonical "PR 13" section) |
 
 > Redact account IDs / bucket names / operator IPs / any secret material, per the
 > Sprint 7 evidence convention. Paste the harness output and `kubectl`/PromQL captures
@@ -218,13 +221,14 @@ end-to-end — **no instrumentation change was required or made**:
 
 ## Honesty boundary
 
-- **Nothing on a live cluster has been executed for this PR.** Every "Result" cell is
-  `pending`. The harness's static/syntax correctness and this analysis are the only
-  things verified to date.
-- The **`MLflowDown` firing** (5m `for:`) and the **`PipelineJobFailed` correlation**
-  (real Job exhausting `backoffLimit`) require the live cluster; they are steps 3 and 5,
-  not claims made here.
-- The **mid-run** wasted-compute case is derived from the `src/tracking.py` code path,
-  not from an injected live failure (it is timing-dependent). It is presented as
-  analysis and a PR 13 candidate, not as an observed run result.
-- Teardown cost/lifecycle follows [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md).
+- **Executed live on real EKS (2026-08-21)** — the results table is observed, not pending;
+  canonical record [sprint-08-live-eks-evidence.md §7](sprint-08-live-eks-evidence.md#7-pr-11--mlflow-outage-detection--recovery-8-items).
+- **`MLflowDown` firing** (5m `for:`) was captured at 14:00:06Z and Resolved on restore.
+  The **`PipelineJobFailed` correlation** on the *same* Job (a ~15-min soak) was skipped for
+  cost — `PipelineJobFailed` is proven firing independently (PR 10 / canonical §6), and the
+  captured signature here is `MLflowDown` firing while the pipeline is blocked at the gate.
+- The **mid-run** retry case is **no longer analysis-only**: PR 13's bounded retry was
+  proven live — a transient ~90 s mid-run blip was absorbed and the completed training was
+  not discarded (Job exit 0). See the canonical "PR 13" section.
+- Teardown cost/lifecycle followed [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md);
+  destroyed and verified clean the same session.
