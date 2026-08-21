@@ -36,7 +36,9 @@
 # (.github/workflows/ci.yml, the prometheus-rules job). k8s/validate.py M11 asserts
 # this file is packaged into the prometheus-alerts ConfigMap and wired via
 # rule_files. NOT YET deployed / not yet fired on a live cluster beyond the
-# promtool unit test — the full failure-injection campaign is PR 7 (ADR-028
+# promtool unit test — the dataset failure-injection campaign that fires
+# PipelineJobFailed is Sprint 8 PR 10 (docs/proof/sprint-08-dataset-failure-tests-
+# evidence.md), part of the batched next-cluster runtime-evidence session (ADR-028
 # runtime-evidence gate).
 groups:
   # ---------------------------------------------------------------------------

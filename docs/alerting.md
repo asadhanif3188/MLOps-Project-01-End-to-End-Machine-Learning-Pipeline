@@ -105,6 +105,22 @@ Each subsection is the target of that alert's `runbook_url` annotation.
   3. Correlate with `PipelineJobOOMKilled` (memory) and `MLflowDown` / `PostgresDown`
      (dependencies) — a failed run is often a *symptom* of one of those.
   4. Fix the cause, delete the failed Job, re-submit.
+- **Dataset retrieval failures (`fetch_dataset`).** When step 2 points at the
+  `fetch_dataset` init stage (`stage_success{stage="fetch_dataset"}=0`, every later
+  stage absent), the `fetch-dataset` init-container logs distinguish the two modes:
+  - `Failed to download s3://…` → the object is **unavailable** (missing key, denied
+    access, unreachable endpoint, or no credentials). Verify `DATASET_S3_URI` points at
+    an existing object, the Pod Identity role grants read, and the endpoint is
+    reachable. Transient? the Job's `backoffLimit` already retried it.
+  - `Dataset integrity check failed: expected …, got …` → the object was **retrieved**
+    but its SHA-256 does not match the pinned `DATASET_SHA256`
+    ([ADR-027](decisions/ADR-027-s3-dataset-runtime-retrieval.md)). This is
+    **deterministic** — retrying cannot fix it. Either the object in S3 was
+    swapped/corrupted (restore the correct bytes) or the pin is stale (update
+    `DATASET_SHA256` deliberately, with the new dataset's provenance). Do **not** add
+    retries for a checksum mismatch — a fail-fast integrity gate is the intended
+    behaviour. Runtime evidence for both modes:
+    [docs/proof/sprint-08-dataset-failure-tests-evidence.md](proof/sprint-08-dataset-failure-tests-evidence.md).
 
 ### PipelineJobOOMKilled
 
