@@ -71,10 +71,12 @@ PROBE_JOB="${PROBE_JOB:-blackbox-mlflow-health}"
 FETCH_INIT="fetch-dataset"
 GATE_INIT="wait-for-mlflow"
 PIPELINE="pipeline"
-# How long to wait for state transitions. The wait-for-mlflow gate polls /health for
-# ~300s before it exits non-zero, so the pipeline-during-outage step needs a wait
-# comfortably above 300s + image-pull slack.
-OUTAGE_WAIT="${MLFLOW_OUTAGE_WAIT:-420}"
+# How long to wait for the wait-for-mlflow gate to fail. That gate polls /health 60×
+# with a 3s connect timeout + 5s sleep, so it exits non-zero after ~300s if each probe
+# is refused fast, but up to ~480s if the connections instead hang to their timeout
+# (a Service with zero Endpoints can behave either way depending on kube-proxy/CNI).
+# Default comfortably above the 480s worst case + image-pull slack; operator-overridable.
+OUTAGE_WAIT="${MLFLOW_OUTAGE_WAIT:-540}"
 # Shorter wait for the scale-to-zero / scale-up transitions (endpoints drain/appear).
 SCALE_WAIT="${MLFLOW_SCALE_WAIT:-120}"
 # Per-invocation id → RFC1123-valid, collision-free throwaway Job name on a rerun.
@@ -121,7 +123,13 @@ restore_mlflow() {
     SCALED_DOWN=0
   fi
 }
-trap restore_mlflow EXIT INT TERM
+# EXIT covers every normal/`exit` path. INT/TERM additionally ABORT: a trapped signal
+# does not stop the script on its own, so without an explicit exit the harness would
+# restore MLflow and then keep running the remaining steps against a now-healthy server
+# and emit misleading results. The exit re-fires EXIT, but restore_mlflow is idempotent
+# (SCALED_DOWN is cleared after the first restore), so the second call is a no-op.
+trap restore_mlflow EXIT
+trap 'restore_mlflow; exit 130' INT TERM
 
 # ─────────────────────────────────────────────────────────────────────────────
 command -v kubectl >/dev/null 2>&1 || {
@@ -161,9 +169,18 @@ pg_ready() {
 log "══════════════════════════════════════════════════════════════════════"
 log "1. BASELINE (healthy MLflow platform)"
 
+# Record the ORIGINAL desired replica count so restore targets exactly that, never a
+# hardcoded default. A failed/blank read must NOT be silently coerced to 1 (that could
+# under-restore a deployment legitimately running >1) — treat it as a precondition
+# failure. This runs BEFORE any mutation, so exiting here leaves the cluster untouched.
 ORIG_REPLICAS="$(kubectl -n "$NS" get deploy "$MLFLOW_DEPLOY" \
   -o jsonpath='{.spec.replicas}' 2>/dev/null)"
-[ -n "$ORIG_REPLICAS" ] && [ "$ORIG_REPLICAS" -ge 1 ] 2>/dev/null || ORIG_REPLICAS=1
+if ! { [ -n "$ORIG_REPLICAS" ] && [ "$ORIG_REPLICAS" -ge 1 ] 2>/dev/null; }; then
+  bad "could not read a valid replica count for ${MLFLOW_DEPLOY} (got '${ORIG_REPLICAS}')" \
+    "refusing to run without a known restore target"
+  log "RESULT: FAIL (precondition). Nothing was changed."
+  exit 2
+fi
 
 mlflow_ready="$(kubectl -n "$NS" get deploy "$MLFLOW_DEPLOY" \
   -o jsonpath='{.status.readyReplicas}' 2>/dev/null)"
@@ -212,11 +229,20 @@ if ! kubectl -n "$NS" scale deploy "$MLFLOW_DEPLOY" --replicas=0 >/dev/null 2>&1
   exit 1
 fi
 
-# Wait for the Service Endpoints to drain — the observable outage signal.
+# Wait for the Service Endpoints to drain — the observable outage signal. A transient
+# `kubectl get` error also yields empty stdout, which would look identical to "drained";
+# to avoid a false-positive we require the read to SUCCEED (rc 0) AND return no IPs, and
+# additionally confirm the Deployment reports zero ready replicas (the authoritative
+# scale signal), so a single flaky API call on the first poll cannot declare the outage.
 drained=0
 deadline=$((SECONDS + SCALE_WAIT))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if [ -z "$(svc_endpoint_ips "$SVC")" ]; then
+  eps="$(kubectl -n "$NS" get endpoints "$SVC" \
+    -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)"
+  eps_rc=$?
+  ready="$(kubectl -n "$NS" get deploy "$MLFLOW_DEPLOY" \
+    -o jsonpath='{.status.readyReplicas}' 2>/dev/null)"
+  if [ "$eps_rc" -eq 0 ] && [ -z "$eps" ] && [ -z "${ready:-}" ]; then
     drained=1
     break
   fi
@@ -253,7 +279,7 @@ if [ "${SKIP_PIPELINE:-0}" != "1" ]; then
   log ""
   log "══════════════════════════════════════════════════════════════════════"
   log "4. PIPELINE DURING OUTAGE — submitting a throwaway Job (real ones untouched)"
-  log "   (the wait-for-mlflow gate polls /health ~300s before failing; be patient)"
+  log "   (the wait-for-mlflow gate polls /health for up to ~480s before failing; wait)"
 
   kubectl -n "$NS" delete job "$THROWAWAY" --ignore-not-found --wait=false \
     >/dev/null 2>&1 || true
@@ -278,9 +304,12 @@ out = {
     "metadata": {"name": name, "namespace": j["metadata"]["namespace"],
                  "labels": {"mlflow-failure-test": "true"}},
     "spec": {k: j["spec"][k] for k in j["spec"]
-             if k in ("backoffLimit", "activeDeadlineSeconds", "ttlSecondsAfterFinished",
-                      "template")},
+             if k in ("activeDeadlineSeconds", "ttlSecondsAfterFinished", "template")},
 }
+# backoffLimit 0: this throwaway only needs ONE attempt to observe the gate fail. Not
+# retrying keeps the pod set to a single, unambiguous pod (no newest-pod race with a
+# retry pod) and avoids paying the ~480s gate wait more than once.
+out["spec"]["backoffLimit"] = 0
 json.dump(out, sys.stdout)
 ' "$THROWAWAY")"
 
@@ -336,9 +365,16 @@ json.dump(out, sys.stdout)
       fi
 
       # 4c. The pipeline container must NEVER have started — no wasted computation.
+      # jsonpath a SCALAR sub-field, not the whole `.state` map: `kubectl -o jsonpath`
+      # renders a map with Go's `%v` (`map[waiting:map[reason:PodInitializing]]`), which
+      # has no quotes, so grepping it for '"running"' can never match and the check would
+      # be dead (always PASS). `startedAt` exists on both running and terminated states
+      # and on neither of a waiting (never-started) container, so a non-empty result here
+      # means the pipeline container actually started.
       pstate="$(kubectl -n "$NS" get pod "$pod" \
-        -o jsonpath="{.status.containerStatuses[?(@.name=='$PIPELINE')].state}" 2>/dev/null)"
-      if printf '%s' "$pstate" | grep -Eq '"running"|"terminated"'; then
+        -o jsonpath="{.status.containerStatuses[?(@.name=='$PIPELINE')].state.running.startedAt}{.status.containerStatuses[?(@.name=='$PIPELINE')].state.terminated.startedAt}" \
+        2>/dev/null)"
+      if [ -n "$pstate" ]; then
         bad "${PIPELINE} container STARTED despite the MLflow outage" \
           "unexpected — the gate should block it before any computation"
       else
@@ -369,15 +405,30 @@ fi
 log ""
 log "══════════════════════════════════════════════════════════════════════"
 log "5. RESTORE MLflow (scale back to ${ORIG_REPLICAS})"
-kubectl -n "$NS" scale deploy "$MLFLOW_DEPLOY" --replicas="$ORIG_REPLICAS" \
-  >/dev/null 2>&1 || true
-if kubectl -n "$NS" rollout status deploy "$MLFLOW_DEPLOY" \
+# Disarm the trap ONLY on POSITIVE proof the scale-up took effect. `rollout status`
+# alone is not proof: it returns success instantly for a Deployment sitting at 0/0
+# (updated==available==spec==0), so if the scale command was rejected (quota, webhook,
+# RBAC, API blip — all swallowed by `|| true`) it would falsely report "rolled out"
+# while MLflow is still down, AND clear SCALED_DOWN — disarming the safety net. So we
+# require: the scale command itself succeeded, rollout status is green, AND the live
+# spec.replicas actually equals ORIG_REPLICAS (≥1). Only then is it safe to tell the
+# trap there is nothing left to restore.
+scaled_ok=0
+if kubectl -n "$NS" scale deploy "$MLFLOW_DEPLOY" --replicas="$ORIG_REPLICAS" \
+  >/dev/null 2>&1 && kubectl -n "$NS" rollout status deploy "$MLFLOW_DEPLOY" \
   --timeout="${SCALE_WAIT}s" >/dev/null 2>&1; then
-  SCALED_DOWN=0  # restored in-flow; the trap now has nothing to do.
-  ok "MLflow Deployment rolled back out (Ready)"
+  cur_spec="$(kubectl -n "$NS" get deploy "$MLFLOW_DEPLOY" \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null)"
+  if [ "$cur_spec" = "$ORIG_REPLICAS" ] && [ "${cur_spec:-0}" -ge 1 ] 2>/dev/null; then
+    scaled_ok=1
+  fi
+fi
+if [ "$scaled_ok" -eq 1 ]; then
+  SCALED_DOWN=0  # positively restored in-flow; the trap now has nothing to do.
+  ok "MLflow Deployment rolled back out to ${ORIG_REPLICAS} (Ready)"
 else
-  bad "MLflow did not become Ready within ${SCALE_WAIT}s after restore" \
-    "the EXIT trap will retry"
+  bad "MLflow did not verifiably return to ${ORIG_REPLICAS} replica(s) after restore" \
+    "leaving SCALED_DOWN=1 so the EXIT trap retries the scale-up"
 fi
 
 # Wait for Endpoints to reappear.
