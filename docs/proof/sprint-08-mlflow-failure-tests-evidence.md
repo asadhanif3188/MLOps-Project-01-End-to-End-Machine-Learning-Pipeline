@@ -148,21 +148,31 @@ Two independent guards make an MLflow outage fail *cleanly* rather than silently
 | **MLflow down MID-RUN** | `train`'s tracking call → `TrackingError` → whole Job fails; **the completed preprocess/split/train compute is wasted** (the model is persisted *by* the MLflow log) | **Defensible, but improvable** — see § 8 |
 
 The **start-time** behaviour is good as-is and should not change. The **mid-run**
-behaviour is the only real gap: a *transient* MLflow blip (e.g. a ~30–60s rolling
-restart) mid-run currently fails the whole Job and discards work, even though the
+behaviour was the only real gap: a *transient* MLflow blip (e.g. a ~30-60s rolling
+restart) mid-run previously failed the whole Job and discarded work, even though the
 Job's own `backoffLimit=2` comment already frames such blips as the thing retries
-exist to absorb.
+exist to absorb. **PR 13 closed this gap** with a bounded, work-preserving in-run
+retry (§ 8 candidate #1; [ADR-037](../decisions/ADR-037-pipeline-reliability-hardening.md)):
+a transient blip is now ridden out in place, while a *persistent* outage still fails
+fast and loud.
 
-## § 8 — Candidate reliability improvements (for PR 13, NOT implemented here)
+## § 8 — Candidate reliability improvements
 
-Recorded for PR 13; each is deliberately **out of scope** for this observation-only PR:
+Recorded here by PR 11 (observation-only); **candidate #1 was implemented in PR 13**
+([ADR-037](../decisions/ADR-037-pipeline-reliability-hardening.md)). #2 and #3 remain
+recorded for a future sprint.
 
-1. **Bounded retry around the in-run tracking calls** (not "retry forever"): a small,
-   capped exponential back-off around `log_training_run` / `log_evaluation` in
-   `src/tracking.py`, sized to ride out a rolling restart (a few attempts over
-   ~60–90s), then fail as today. Keeps the fail-fast guarantee while absorbing a
+1. **✅ IMPLEMENTED in PR 13 — Bounded retry around the in-run tracking calls** (not
+   "retry forever"): a small, capped exponential back-off around `log_training_run` /
+   `log_evaluation` in [`src/tracking.py`](../../src/tracking.py), via the dependency-free
+   [`src/retry.py`](../../src/retry.py) primitive. Sized to ride out a rolling restart
+   (5 attempts, back-off 5s→10s→20s→30s ≈ 65s), then fail exactly as today
+   (`MlflowException` → `TrackingError`). Keeps the fail-fast guarantee while absorbing a
    transient blip — directly addresses the wasted-compute case. **Explicitly bounded**,
-   per the task's "do not implement retry forever."
+   per the task's "do not implement retry forever." Unit-tested in
+   [`tests/unit/test_retry.py`](../../tests/unit/test_retry.py); healthy run + start-gate
+   regression re-verified on local Docker Desktop Kubernetes 2026-08-21. Design of
+   record: [ADR-037](../decisions/ADR-037-pipeline-reliability-hardening.md).
 2. **Durable model fallback / decouple persistence from tracking:** on a tracking
    failure, persist the fitted model + metrics to a durable location (the S3 artifact
    store or a PVC) and emit a warning, so a tracking outage never *loses the model*.

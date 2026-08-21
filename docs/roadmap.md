@@ -345,6 +345,18 @@ infrastructure defined as code.
   Alertmanager notifier routing remains deferred.
   Centralized **log aggregation** and **tracing** are deliberately deferred;
   today's diagnosis is `kubectl` + structured logs.
+- ✅ **Reliability hardening from failure-test evidence** (Sprint 8, PR 13): the one
+  evidence-justified runtime change from the PR 10–12 failure campaign — a **bounded,
+  work-preserving retry** around the in-run MLflow tracking calls
+  ([`src/tracking.py`](../src/tracking.py) via the dependency-free
+  [`src/retry.py`](../src/retry.py); 5 attempts ≈ 65s), so a *transient* mid-run MLflow
+  blip no longer discards completed training, while a *persistent* outage still fails
+  fast (`TrackingError`). Explicitly bounded (no infinite retries), and every other
+  candidate (resource-limit bumps, probes, checksum retries, OOM-alert loosening) was
+  **deliberately declined with evidence**. Design of record:
+  [ADR-037](decisions/ADR-037-pipeline-reliability-hardening.md); verified by
+  [`tests/unit/test_retry.py`](../tests/unit/test_retry.py) plus a local healthy run +
+  start-gate regression (2026-08-21).
 - ✅ **Container-image vulnerability scanning** (Sprint 8, PR 8): the `docker` CI job
   now scans **both** shipped images — the `mlops-pipeline` runtime image and the
   `mlflow-server` image layered on it — with **Trivy** over their OS + Python packages,

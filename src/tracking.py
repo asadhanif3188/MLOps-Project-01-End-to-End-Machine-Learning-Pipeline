@@ -25,6 +25,10 @@ from mlflow.exceptions import MlflowException
 from mlflow.models import infer_signature
 
 from exceptions import TrackingError
+from logging_config import get_logger
+from retry import retry_call
+
+logger = get_logger("tracking")
 
 # Reused for both stages' failure messages: the actionable next steps are the
 # same whichever call fails. The tracking server is the project's in-cluster
@@ -35,6 +39,25 @@ _TRACKING_HINT = (
     "Check that MLFLOW_TRACKING_URI points at a reachable MLflow tracking server "
     "and that the server is healthy."
 )
+
+# Bounded retry policy for a *mid-run* MLflow blip (Sprint 8 PR 13; design of
+# record ADR-037; evidence in docs/proof/sprint-08-mlflow-failure-tests-evidence.md
+# § 8 candidate #1). A tracking call inside the `train`/`evaluate` stage that hits
+# a transient outage — the canonical case being a ~30-60s rolling restart of the
+# stateless in-cluster MLflow Deployment — would otherwise fail the whole Job and
+# DISCARD the completed preprocess/split/train compute. These attempts ride out
+# that blip: 5 attempts with back-off 5s, 10s, 20s, 30s (clamped) ≈ 65s of waiting,
+# comfortably longer than a rolling restart yet a tiny fraction of the Job's 1800s
+# activeDeadlineSeconds outer stall-guard.
+#
+# This is DELIBERATELY bounded, not "retry forever": after the 5th attempt the
+# underlying MlflowException is re-raised and converted to TrackingError exactly as
+# before, so a *persistent* outage still fails the run fast and loud (the fail-fast
+# start-of-run `wait-for-mlflow` gate is unchanged). The Job's backoffLimit=2 is a
+# coarser, whole-run retry on top of this fine-grained, work-preserving one.
+_TRACKING_ATTEMPTS = 5
+_TRACKING_BASE_DELAY_SECONDS = 5.0
+_TRACKING_MAX_DELAY_SECONDS = 30.0
 
 
 def build_signature(model_input: Any, model_output: Any) -> Any:
@@ -67,14 +90,27 @@ def log_evaluation(
             exist (resolved by :func:`mlflow_config.resolve_experiment_name`).
 
     Raises:
-        TrackingError: If MLflow rejects the connection or a logging call.
+        TrackingError: If MLflow rejects the connection or a logging call and the
+            failure persists across the bounded retry policy.
     """
-    try:
+
+    def _log() -> None:
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
         with mlflow.start_run():
             for name, value in metrics.items():
                 mlflow.log_metric(name, value)
+
+    try:
+        retry_call(
+            _log,
+            attempts=_TRACKING_ATTEMPTS,
+            base_delay=_TRACKING_BASE_DELAY_SECONDS,
+            max_delay=_TRACKING_MAX_DELAY_SECONDS,
+            retry_on=(MlflowException,),
+            logger=logger,
+            description="MLflow evaluation logging",
+        )
     except MlflowException as exc:
         raise TrackingError(
             f"MLflow tracking failed against {tracking_uri!r}: {exc}. {_TRACKING_HINT}"
@@ -112,9 +148,11 @@ def log_training_run(
         registered_model_name: Registry name used when the store is remote.
 
     Raises:
-        TrackingError: If MLflow rejects the connection or a logging call.
+        TrackingError: If MLflow rejects the connection or a logging call and the
+            failure persists across the bounded retry policy.
     """
-    try:
+
+    def _log() -> None:
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment(experiment_name)
         with mlflow.start_run():
@@ -136,6 +174,22 @@ def log_training_run(
                 )
             else:
                 mlflow.sklearn.log_model(model, "model", signature=signature)
+
+    # Each retry runs `_log` from the top, opening a FRESH MLflow run — a retried
+    # attempt never resumes a half-written run. A transient failure can therefore
+    # leave at most one incomplete run behind before a later attempt succeeds; that
+    # bounded, self-healing duplication is an accepted trade for not discarding the
+    # (far more expensive) model training on a momentary tracking blip. See ADR-037.
+    try:
+        retry_call(
+            _log,
+            attempts=_TRACKING_ATTEMPTS,
+            base_delay=_TRACKING_BASE_DELAY_SECONDS,
+            max_delay=_TRACKING_MAX_DELAY_SECONDS,
+            retry_on=(MlflowException,),
+            logger=logger,
+            description="MLflow training-run logging",
+        )
     except MlflowException as exc:
         raise TrackingError(
             f"MLflow tracking failed against {tracking_uri!r}: {exc}. {_TRACKING_HINT}"
