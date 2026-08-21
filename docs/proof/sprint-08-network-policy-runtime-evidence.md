@@ -9,6 +9,15 @@
 > so nothing at runtime changes until then (the default local Docker Desktop CNI does
 > not enforce NetworkPolicy).
 
+> **⏳ Capture this TOGETHER with the Sprint 8 PR 9 runtime-digest evidence.** There is
+> a second pending live-EKS capture —
+> [sprint-08-sbom-provenance-evidence.md § 4b](sprint-08-sbom-provenance-evidence.md#4b-operator-checklist-run-on-the-next-enforcing-cluster-session)
+> (push → immutable digest → `verify-deployed-digest.sh` PASS). Standing up EKS is the
+> billable/expensive part (`provision → prove → destroy`, ADR-020); the checks are
+> minutes. So on the **next enforcing-cluster session, do BOTH in one run** to amortise
+> the cluster cost — deploy the workload once, then run this harness *and* the PR 9
+> digest verification against the same live cluster before teardown.
+
 **Design of record:** [ADR-034](../decisions/ADR-034-network-policies.md) ·
 **Matrix + policies:** [docs/network-policies.md](../network-policies.md) ·
 **Harness:** [`k8s/tests/netpol/run.sh`](../../k8s/tests/netpol/run.sh)

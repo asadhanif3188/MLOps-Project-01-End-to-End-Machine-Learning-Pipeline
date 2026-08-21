@@ -109,6 +109,13 @@ through the existing renderer.
 
 ### 4b. Operator checklist (run on the next enforcing-cluster session)
 
+> **⏳ Capture this TOGETHER with the Sprint 8 PR 7 NetworkPolicy runtime evidence** —
+> [sprint-08-network-policy-runtime-evidence.md](sprint-08-network-policy-runtime-evidence.md),
+> also `PENDING` on the next enforcing cluster. Standing up EKS is the billable part
+> (`provision → prove → destroy`, ADR-020); both captures need only the same deployed
+> workload, so **do both in one session** — deploy once, run the netpol harness *and*
+> the digest verification below against the same live cluster, then tear down.
+
 - [ ] `scripts/release-image.sh --tag 1.6.0 --out ./release-evidence` — build+push to
       the Terraform-managed ECR repo; capture the immutable `sha256` digest (cross-checked
       against `aws ecr describe-images`) + emit `*.provenance.json` + the CycloneDX SBOM.
