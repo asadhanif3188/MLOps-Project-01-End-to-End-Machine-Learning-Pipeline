@@ -109,16 +109,18 @@ through the existing renderer.
 
 ### 4b. Operator checklist (run on the next enforcing-cluster session)
 
-> **⏳ Capture this TOGETHER with the other two pending Sprint 8 live-EKS captures:**
+> **⏳ Capture this TOGETHER with the other pending Sprint 8 live-EKS captures:**
 > [sprint-08-network-policy-runtime-evidence.md](sprint-08-network-policy-runtime-evidence.md)
-> (PR 7 — NetworkPolicy allowed/denied paths) and
+> (PR 7 — NetworkPolicy allowed/denied paths),
 > [sprint-08-dataset-failure-tests-evidence.md](sprint-08-dataset-failure-tests-evidence.md)
-> (PR 10 — dataset unavailable + checksum-mismatch failure paths), both also `PENDING`
+> (PR 10 — dataset unavailable + checksum-mismatch failure paths), and
+> [sprint-08-mlflow-failure-tests-evidence.md](sprint-08-mlflow-failure-tests-evidence.md)
+> (PR 11 — MLflow outage detection & recovery), all also `PENDING`
 > on the next enforcing cluster. Standing up EKS is the billable part
-> (`provision → prove → destroy`, ADR-020); all three need only the same deployed
-> workload, so **do all three in one session** — deploy once, run the netpol harness,
-> the digest verification below, *and* the dataset-failure harness against the same live
-> cluster, then tear down.
+> (`provision → prove → destroy`, ADR-020); all four need only the same deployed
+> workload, so **do all four in one session** — deploy once, run the netpol harness,
+> the digest verification below, the dataset-failure harness, *and* the MLflow-outage
+> harness against the same live cluster, then tear down.
 
 - [ ] `scripts/release-image.sh --tag 1.6.0 --out ./release-evidence` — build+push to
       the Terraform-managed ECR repo; capture the immutable `sha256` digest (cross-checked

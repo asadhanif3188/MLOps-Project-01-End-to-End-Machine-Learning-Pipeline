@@ -143,6 +143,16 @@ Each subsection is the target of that alert's `runbook_url` annotation.
 - **Do:** `kubectl -n mlops get deploy/mlflow` and `kubectl -n mlops logs deploy/mlflow`.
   Common causes: pod OOM/restart, image pull, or the DB being down (check
   `PostgresDown` first — MLflow depends on it).
+- **Effect on pipeline runs (verified by Sprint 8 PR 11 —
+  [proof](proof/sprint-08-mlflow-failure-tests-evidence.md)):** a run that **starts**
+  while MLflow is down blocks at the `wait-for-mlflow` init gate (`MLflow not ready
+  after …`) and fails **before any computation** — no wasted work. A run **already in
+  progress** fails in the `train` stage (`src/tracking.py` raises `TrackingError`),
+  which *does* discard the completed compute. Either way the Job's terminal failure
+  raises `PipelineJobFailed`, so **`MLflowDown` + `PipelineJobFailed` firing together**
+  is the signature of "the pipeline is blocked because MLflow is down" — restore MLflow
+  (scale `deploy/mlflow` back up), then re-drive the run. (A bounded mid-run retry is a
+  recorded PR 13 candidate; runs are **not** retried forever.)
 
 ### MLflowMemoryHigh
 

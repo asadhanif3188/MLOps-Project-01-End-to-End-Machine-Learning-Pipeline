@@ -8,18 +8,19 @@
 > enforcing cluster exists. Deferring is safe: no reliability behaviour changed in
 > this PR (the only code change is an additive log line — see § 8).
 
-> **⏳ Capture this TOGETHER with the Sprint 8 PR 7 + PR 9 runtime evidence.** All
-> three are `PENDING` on the next live cluster:
-> - [sprint-08-network-policy-runtime-evidence.md](sprint-08-network-policy-runtime-evidence.md) — allowed/denied network paths;
-> - [sprint-08-sbom-provenance-evidence.md § 4b](sprint-08-sbom-provenance-evidence.md#4b-operator-checklist-run-on-the-next-enforcing-cluster-session) — push → immutable digest → verify;
-> - **this doc** — dataset unavailable + checksum mismatch failure paths.
+> **⏳ Capture this TOGETHER with the Sprint 8 PR 7 + PR 9 + PR 11 runtime evidence.**
+> All four are `PENDING` on the next live cluster:
+> - [sprint-08-network-policy-runtime-evidence.md](sprint-08-network-policy-runtime-evidence.md) — allowed/denied network paths (PR 7);
+> - [sprint-08-sbom-provenance-evidence.md § 4b](sprint-08-sbom-provenance-evidence.md#4b-operator-checklist-run-on-the-next-enforcing-cluster-session) — push → immutable digest → verify (PR 9);
+> - **this doc** — dataset unavailable + checksum mismatch failure paths (PR 10);
+> - [sprint-08-mlflow-failure-tests-evidence.md](sprint-08-mlflow-failure-tests-evidence.md) — MLflow outage detection & recovery (PR 11).
 >
 > Standing up EKS is the billable part (`provision → prove → destroy`,
-> [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md)); all three need only
+> [ADR-020](../decisions/ADR-020-cloud-lifecycle-cost-control.md)); all four need only
 > the same deployed workload and cost minutes each. So on the **next cluster session,
-> do all three in one run** to amortise the cluster cost — deploy the workload once,
-> then run this harness *and* the netpol harness *and* the digest verification against
-> the same live cluster before teardown.
+> do all four in one run** to amortise the cluster cost — deploy the workload once,
+> then run this harness *and* the netpol harness *and* the digest verification *and*
+> the MLflow-outage harness against the same live cluster before teardown.
 
 **Design of record:** [ADR-027](../decisions/ADR-027-s3-dataset-runtime-retrieval.md)
 (runtime S3 retrieval + integrity pin) · [ADR-030](../decisions/ADR-030-pipeline-operational-metrics.md)

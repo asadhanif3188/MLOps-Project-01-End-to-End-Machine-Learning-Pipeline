@@ -9,16 +9,18 @@
 > so nothing at runtime changes until then (the default local Docker Desktop CNI does
 > not enforce NetworkPolicy).
 
-> **⏳ Capture this TOGETHER with the other two pending Sprint 8 live-EKS captures:**
+> **⏳ Capture this TOGETHER with the other pending Sprint 8 live-EKS captures:**
 > [sprint-08-sbom-provenance-evidence.md § 4b](sprint-08-sbom-provenance-evidence.md#4b-operator-checklist-run-on-the-next-enforcing-cluster-session)
-> (PR 9 — push → immutable digest → `verify-deployed-digest.sh` PASS) and
+> (PR 9 — push → immutable digest → `verify-deployed-digest.sh` PASS),
 > [sprint-08-dataset-failure-tests-evidence.md](sprint-08-dataset-failure-tests-evidence.md)
-> (PR 10 — dataset unavailable + checksum-mismatch failure paths). Standing up EKS is
+> (PR 10 — dataset unavailable + checksum-mismatch failure paths), and
+> [sprint-08-mlflow-failure-tests-evidence.md](sprint-08-mlflow-failure-tests-evidence.md)
+> (PR 11 — MLflow outage detection & recovery). Standing up EKS is
 > the billable/expensive part (`provision → prove → destroy`, ADR-020); the checks are
-> minutes each. So on the **next enforcing-cluster session, do all THREE in one run** to
+> minutes each. So on the **next enforcing-cluster session, do all FOUR in one run** to
 > amortise the cluster cost — deploy the workload once, then run this harness, the PR 9
-> digest verification, *and* the PR 10 dataset-failure harness against the same live
-> cluster before teardown.
+> digest verification, the PR 10 dataset-failure harness, *and* the PR 11 MLflow-outage
+> harness against the same live cluster before teardown.
 
 **Design of record:** [ADR-034](../decisions/ADR-034-network-policies.md) ·
 **Matrix + policies:** [docs/network-policies.md](../network-policies.md) ·
