@@ -101,8 +101,16 @@ jobs:
       # developer runs locally via `make test`. This suite includes the
       # `contract`-marked tests (tests/contract/) that assert dvc.yaml <-> params.yaml
       # consistency, artifact ownership, and the declared lineage — the failing
-      # gates for a broken stage contract or inconsistent configuration. They parse
-      # files only: no data, no network, no credentials.
+      # gates for a broken stage contract or inconsistent configuration. It also
+      # includes the Sprint 8 PR 15 observability/operations/supply-chain contracts
+      # (test_observability_contract / test_operations_contract /
+      # test_supply_chain_contract / test_security_regression_contract): the alert
+      # set <-> docs <-> pipeline-metric bindings, the runbook set + alert->runbook
+      # links, this workflow's own image-scan/SBOM/provenance steps + gate presence,
+      # and the no-static-AWS-credentials scan. They parse files only: no data, no
+      # network, no credentials — the deterministic, standard-CI half of the Sprint 8
+      # regression guard (the cluster/AWS-dependent half is runtime-only evidence,
+      # docs/proof/sprint-08-live-eks-evidence.md).
       - name: Pytest
         run: pytest
 
