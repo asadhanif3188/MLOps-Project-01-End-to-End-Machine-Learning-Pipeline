@@ -9,8 +9,10 @@ This document explains how the pieces fit together.
 
 > **Scope note.** This document reflects the repository as it exists today. Where
 > a component is planned but not yet implemented, it is marked with an explicit
-> `TODO`. Diagrams referenced here live under [`diagrams/`](diagrams/) and are
-> placeholders until produced in a later sprint.
+> `TODO`. The reviewer-facing diagram package lives under
+> [`diagrams/`](diagrams/) (the final platform architecture is embedded in § 2); a
+> few subfolders (`pipeline-flow/`, `cicd-flow/`, `deployment-architecture/`) remain
+> reserved placeholders, marked as such below.
 
 ---
 
@@ -61,12 +63,62 @@ classification of the `Outcome` column.
 
 ## 2. Component Diagram
 
-<!-- TODO: Add the rendered component diagram under
-     diagrams/system-architecture/ and embed it here once produced. -->
+The final platform architecture — commit to observed run on AWS EKS, with the CI /
+operator / Terraform / runtime ownership boundaries drawn explicitly (source and
+caption: [`diagrams/system-architecture/`](diagrams/system-architecture/); the full
+reviewer-facing visual package is under [`diagrams/`](diagrams/)):
 
-> 📌 **Diagram placeholder:** [`diagrams/system-architecture/`](diagrams/system-architecture/)
+```mermaid
+flowchart TB
+    subgraph gh["GitHub — CI (validate only, credential-free)"]
+        ci["GitHub Actions<br/><i>lint · test · DVC integrity · image build · SBOM</i><br/><b>never pushes · never deploys</b>"]
+    end
 
-The major components and their relationships:
+    subgraph op["Operator — from own AWS account"]
+        build["docker build<br/><i>multi-stage · non-root runtime</i>"]
+        tf["terraform apply<br/><i>~65 managed resources</i>"]
+        kap["kubectl apply -k overlays/aws"]
+    end
+
+    subgraph aws["AWS — Terraform-managed infrastructure"]
+        ecr["ECR<br/><i>immutable tags · scan-on-push</i>"]
+        kms["KMS CMKs ×3<br/><i>EKS secrets · dataset · artifacts</i>"]
+        s3d[("S3 — dataset bucket<br/><i>SSE-KMS · versioned · private</i>")]
+        s3a[("S3 — MLflow artifacts<br/><i>SSE-KMS · versioned · private</i>")]
+
+        subgraph eks["EKS cluster · K8s 1.35 · 2× t3.large · 2 AZs"]
+            subgraph mlops["namespace: mlops"]
+                job["Job: mlops-pipeline<br/><i>batch/v1 · preprocess→split→train→evaluate</i>"]
+                mlflow["MLflow server<br/><i>Deployment · --serve-artifacts</i>"]
+                pg[("PostgreSQL<br/><i>StatefulSet · 1Gi PVC</i>")]
+            end
+            subgraph mon["namespace: monitoring"]
+                prom["Prometheus<br/><i>8 alert rules</i>"]
+                graf["Grafana<br/><i>3 dashboards · 4 signal layers</i>"]
+            end
+        end
+    end
+
+    ci -. "gates every PR" .-> build
+    build --> ecr
+    tf --> aws
+    kap --> job
+
+    ecr -- "image pull (node role)" --> job
+    s3d -- "dataset · Pod Identity · read-only" --> job
+    job -- "params / metrics / artifacts" --> mlflow
+    mlflow -- "run metadata" --> pg
+    mlflow -- "artifact bytes (SSE-KMS)" --> s3a
+    prom -- "scrape operational metrics" --> mlops
+    graf -- PromQL --> prom
+
+    classDef boundary fill:#eef,stroke:#557,stroke-width:1px;
+    classDef store fill:#eefaf0,stroke:#2e7d5b;
+    class gh,op,aws,eks,mlops,mon boundary;
+    class s3d,s3a,pg store;
+```
+
+The stage-level data relationships within the pipeline itself:
 
 ```text
         params.yaml ───────────────────────────────────────────┐ (parameters)
@@ -389,7 +441,7 @@ tracking platform.
          │   Access: explicit EKS access entries (authentication_mode=API, no creator-admin)
          │   Secrets: KMS-envelope-encrypted (customer-managed CMK)
          │   Workload identity: EKS Pod Identity (VPC-CNI, EBS-CSI, MLflow-S3, dataset-reader)
-         └─ 1 managed node group (t3.medium, AL2023, private subnets)
+         └─ 1 managed node group (2× t3.large for Sprint 8 monitoring; t3.medium default, AL2023, private subnets)
 ```
 
 - **What it provisions.** ~65 managed resources — a VPC with public/private subnets
