@@ -31,11 +31,11 @@ where data and experiment state live durably, how you know the system is healthy
 what happens when it breaks.
 
 The starting point was a working local MLOps pipeline (DVC + MLflow) — a good learning
-artifact, but the wrong proof for a platform-engineering portfolio. The engineering
-problem I set out to solve was the gap between *"it runs on my machine"* and *"it runs
-— observably and recoverably — on infrastructure I provisioned and can prove I cleaned
-up."* The ML model (a RandomForest classifier) is held deliberately small so the
-platform is the subject, not the classifier.
+artifact, but the wrong proof for a platform-engineering portfolio. The problem I set
+out to solve was the gap between *"it runs on my machine"* and *"it runs — observably
+and recoverably — on infrastructure I provisioned and can prove I cleaned up."* The ML
+model (a RandomForest classifier) is held deliberately small so the platform is the
+subject.
 
 ## Architecture
 
@@ -132,12 +132,11 @@ repository runbooks:
 | OOMKilled | `terminated_reason="OOMKilled"`, exit 137 | restore memory limit; pod completes |
 
 The most valuable evidence is the set of **four real defects that static validation
-could not catch** — all passed CI and only appeared under live enforcement. The
-sharpest: an enforced NetworkPolicy silently **blocked EKS Pod Identity** (two
-independently-correct controls that were jointly wrong), and an OOM alert that keyed on
-a metric a `restartPolicy: Never` Job never emits — meaning it was **unfireable for
-this workload** until a real OOM disproved it. Both were root-caused, fixed, and
-re-validated.
+could not catch** — all passed CI and surfaced only under live enforcement. The
+sharpest two: an enforced NetworkPolicy silently **blocked EKS Pod Identity** (two
+independently-correct controls that were jointly wrong), and an OOM alert keyed on a
+metric a `restartPolicy: Never` Job never emits — **unfireable for this workload**
+until a real OOM disproved it. Both were root-caused, fixed, and re-validated.
 
 ## Security / Reliability
 
