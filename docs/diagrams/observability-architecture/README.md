@@ -4,11 +4,13 @@ Source for the Sprint 8 observability architecture. Discussed in
 [docs/observability.md](../../observability.md); the design of record is
 [ADR-028](../../decisions/ADR-028-observability-architecture.md).
 
-> **Status.** 🎯 **Target architecture — nothing here is deployed yet.** This is
-> the picture the Sprint 8 runtime PRs (2–6) build toward; PR 1 defines it. Every
-> monitoring component below is *planned*, not present in the repository at the
-> time of writing. The one edge that solves the ephemeral-Job problem — **KSM
-> reads the persistent `Job` object, not the exited pod** — is drawn deliberately.
+> **Status.** ✅ **Validated on live EKS (Sprint 8, v1.7.0).** This diagram defined
+> the target at PR 1; the Sprint 8 runtime PRs then built and exercised it on real
+> EKS (11 Prometheus targets UP, three Grafana dashboards, eight alert rules —
+> [Sprint 8 evidence](../../proof/README.md)). The one edge that solves the
+> ephemeral-Job problem — **KSM reads the persistent `Job` object, not the exited
+> pod** — is drawn deliberately. A reviewer-facing **operational data-flow** view
+> (which signals reach Prometheus, and which deliberately do **not**) follows below.
 
 ## Target architecture
 
@@ -63,6 +65,59 @@ flowchart TB
     class prom,graf,ksm,nodeexp,black,pgexp,alerts planned;
     class jobobj obj;
 ```
+
+## Operational data flow (reviewer view)
+
+Which signals Prometheus actually collects — and the boundary that matters:
+**experiment metrics stay in MLflow/PostgreSQL and are NOT duplicated in
+Prometheus.** Prometheus carries only *operational* signals.
+
+```mermaid
+flowchart TB
+    subgraph sources["Operational signal sources"]
+        pgw["Pushgateway<br/><i>last-run per-stage mlops_pipeline_stage_success</i>"]
+        ksm["kube-state-metrics<br/><i>Job / Pod / Deploy / STS objects</i>"]
+        node["node-exporter + kubelet/cAdvisor<br/><i>node + container health</i>"]
+        black["blackbox-exporter<br/><i>MLflow /health probe</i>"]
+        pgexp["postgres-exporter<br/><i>pg_up · size · memory</i>"]
+    end
+
+    pipe["Pipeline Job<br/><i>batch/v1</i>"]
+    prom["Prometheus<br/><i>pull scrape · 8 alert rules</i>"]
+    graf["Grafana<br/><i>4-layer dashboards</i>"]
+    op["Operator<br/><i>runbooks/ → diagnose → remediate</i>"]
+    mldb[("MLflow + PostgreSQL<br/><i>EXPERIMENT metrics live here</i>")]
+
+    pipe -- "push (9091)" --> pgw
+    pipe -. "params / metrics / artifacts — NOT scraped" .-> mldb
+    pgw --> prom
+    ksm --> prom
+    node --> prom
+    black --> prom
+    pgexp --> prom
+    prom --> graf
+    prom -- "alert Firing" --> op
+    graf --> op
+    op -. "runbook recovery" .-> pipe
+
+    classDef boundary fill:#eef,stroke:#557,stroke-width:1px;
+    classDef store fill:#eefaf0,stroke:#2e7d5b;
+    class sources boundary;
+    class mldb store;
+```
+
+**What it proves / helps explain.**
+
+- **The operational vs. experiment boundary.** The pipeline's *operational* health
+  (did each stage succeed?) is pushed to the **Pushgateway** and scraped; the
+  pipeline's *experiment* results (parameters, accuracy, artifacts) go to
+  **MLflow → PostgreSQL** and are **not** mirrored into Prometheus. Two stores, one
+  purpose each.
+- Every operational signal is a **pull** scrape into Prometheus; Grafana reads it by
+  PromQL; alerts route an operator to a runbook and back to a verified recovery.
+
+**Limitations.** No Alertmanager routing (alerts show on Prometheus `/alerts`
+only); short local TSDB retention; internal-only access via `kubectl port-forward`.
 
 ## The four layers (what Prometheus/Grafana surface)
 

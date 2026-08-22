@@ -102,6 +102,59 @@ The system is a Terraform-owned AWS foundation hosting an EKS cluster that runs 
 ML pipeline as a finite Kubernetes Job, surrounded by an in-cluster data/tracking
 plane and an observability plane.
 
+```mermaid
+flowchart TB
+    subgraph gh["GitHub — CI (validate only, credential-free)"]
+        ci["GitHub Actions<br/><i>lint · test · DVC integrity · image build · SBOM</i><br/><b>never pushes · never deploys</b>"]
+    end
+
+    subgraph op["Operator — from own AWS account"]
+        build["docker build<br/><i>multi-stage · non-root runtime</i>"]
+        tf["terraform apply<br/><i>~65 managed resources</i>"]
+        kap["kubectl apply -k overlays/aws"]
+    end
+
+    subgraph aws["AWS — Terraform-managed infrastructure"]
+        ecr["ECR<br/><i>immutable tags · scan-on-push</i>"]
+        kms["KMS CMKs ×3<br/><i>EKS secrets · dataset · artifacts</i>"]
+        s3d[("S3 — dataset bucket<br/><i>SSE-KMS · versioned · private</i>")]
+        s3a[("S3 — MLflow artifacts<br/><i>SSE-KMS · versioned · private</i>")]
+
+        subgraph eks["EKS cluster · K8s 1.35 · 2× t3.large · 2 AZs"]
+            subgraph mlops["namespace: mlops"]
+                job["Job: mlops-pipeline<br/><i>batch/v1 · preprocess→split→train→evaluate</i>"]
+                mlflow["MLflow server<br/><i>Deployment · --serve-artifacts</i>"]
+                pg[("PostgreSQL<br/><i>StatefulSet · 1Gi PVC</i>")]
+            end
+            subgraph mon["namespace: monitoring"]
+                prom["Prometheus<br/><i>8 alert rules</i>"]
+                graf["Grafana<br/><i>4-layer dashboards</i>"]
+            end
+        end
+    end
+
+    ci -. "gates every PR" .-> build
+    build --> ecr
+    tf --> aws
+    kap --> job
+
+    ecr -- "image pull (node role)" --> job
+    s3d -- "dataset · Pod Identity · read-only" --> job
+    job -- "params / metrics / artifacts" --> mlflow
+    mlflow -- "run metadata" --> pg
+    mlflow -- "artifact bytes (SSE-KMS)" --> s3a
+    prom -- "scrape operational metrics" --> mlops
+    graf -- PromQL --> prom
+
+    classDef boundary fill:#eef,stroke:#557,stroke-width:1px;
+    classDef store fill:#eefaf0,stroke:#2e7d5b;
+    class gh,op,aws,eks,mlops,mon boundary;
+    class s3d,s3a,pg store;
+```
+
+<sub>Final Platform Architecture — source and caption in
+[docs/diagrams/system-architecture/](diagrams/system-architecture/).</sub>
+
 - **Infrastructure (Terraform).** VPC and networking, least-privilege IAM, a managed
   EKS cluster, ECR, KMS keys, and S3 buckets — provisioned as code so the entire
   environment is reproducible and destroyable
@@ -286,6 +339,27 @@ tribal knowledge, and each returned to a verified-clean state
 | MLflow outage | `probe_success=0` while `pg_up=1`; `MLflowDown` FIRING | Scale replicas to 1; runs preserved | [mlflow-unavailable](runbooks/mlflow-unavailable.md) |
 | OOMKilled | `...terminated_reason{reason="OOMKilled"}=1`, exit 137 | Restore 512Mi; pod Completes | [oomkilled](runbooks/oomkilled.md) |
 
+Each row above is one traversal of the same closed loop:
+
+```mermaid
+flowchart LR
+    inject["Controlled failure<br/><i>injected on live EKS</i>"] --> signal["Metric / signal<br/><i>KSM · exporters · Pushgateway</i>"]
+    signal --> alert["Prometheus alert<br/><i>Pending → Firing</i>"]
+    alert --> runbook["Runbook<br/><i>docs/runbooks/</i>"]
+    runbook --> diag["Diagnosis"]
+    diag --> fix["Remediation"]
+    fix --> verify["Healthy verification<br/><i>alert Resolved · Job exit 0</i>"]
+    verify -. "loop closed" .-> inject
+
+    classDef step fill:#eef,stroke:#557,stroke-width:1px;
+    classDef good fill:#eefaf0,stroke:#2e7d5b;
+    class inject,signal,alert,runbook,diag,fix step;
+    class verify good;
+```
+
+<sub>Failure / Recovery Loop — source and real-example annotations in
+[docs/diagrams/failure-recovery/](diagrams/failure-recovery/).</sub>
+
 Hardening followed the evidence: bounded retry, checksum integrity, and resource
 coupling were implemented because the failure tests justified them; other candidate
 fixes were declined with recorded reasons
@@ -451,6 +525,8 @@ evidence of:
   defects the live run surfaced, all fixed.
 - **[Architecture](architecture.md)** · **[ADR-001 … ADR-037](decisions/README.md)**
   — system design and decision records.
+- **[Architecture Visuals](diagrams/)** — the reviewer-facing diagram package
+  (platform, observability, security, failure/recovery, supply-chain, evolution).
 - **[Runbooks](runbooks/README.md)** · **[Roadmap](roadmap.md)** ·
   **[CHANGELOG](../CHANGELOG.md)** · **[repository README](../README.md)**.
 

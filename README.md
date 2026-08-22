@@ -70,6 +70,57 @@ The underlying ML pipeline concept (train/evaluate a classifier) comes from a
 course template; the platform, cloud, security, observability, and reliability
 engineering above is the work this repository demonstrates.
 
+```mermaid
+flowchart TB
+    subgraph gh["GitHub — CI (validate only, credential-free)"]
+        ci["GitHub Actions<br/><i>lint · test · DVC integrity · image build · SBOM</i><br/><b>never pushes · never deploys</b>"]
+    end
+
+    subgraph op["Operator — from own AWS account"]
+        build["docker build"]
+        tf["terraform apply<br/><i>~65 resources</i>"]
+        kap["kubectl apply -k overlays/aws"]
+    end
+
+    subgraph aws["AWS — Terraform-managed infrastructure"]
+        ecr["ECR<br/><i>immutable tags · scan-on-push</i>"]
+        s3d[("S3 — dataset<br/><i>SSE-KMS · private</i>")]
+        s3a[("S3 — MLflow artifacts<br/><i>SSE-KMS · private</i>")]
+
+        subgraph eks["EKS · K8s 1.35 · 2× t3.large · 2 AZs"]
+            subgraph mlops["namespace: mlops"]
+                job["Job: mlops-pipeline<br/><i>preprocess→split→train→evaluate</i>"]
+                mlflow["MLflow server"]
+                pg[("PostgreSQL")]
+            end
+            subgraph mon["namespace: monitoring"]
+                prom["Prometheus<br/><i>8 alert rules</i>"]
+                graf["Grafana"]
+            end
+        end
+    end
+
+    ci -. "gates every PR" .-> build
+    build --> ecr
+    tf --> aws
+    kap --> job
+    ecr -- "image pull" --> job
+    s3d -- "dataset · Pod Identity · read-only" --> job
+    job -- "params / metrics / artifacts" --> mlflow
+    mlflow -- "metadata" --> pg
+    mlflow -- "artifacts (SSE-KMS)" --> s3a
+    prom -- "scrape operational metrics" --> mlops
+    graf -- PromQL --> prom
+
+    classDef boundary fill:#eef,stroke:#557,stroke-width:1px;
+    classDef store fill:#eefaf0,stroke:#2e7d5b;
+    class gh,op,aws,eks,mlops,mon boundary;
+    class s3d,s3a,pg store;
+```
+
+<sub>Full architecture-visuals package (security, observability, failure/recovery,
+supply-chain, evolution): [docs/diagrams/](docs/diagrams/).</sub>
+
 ## 4 · What ran for real
 
 Captured on live Amazon EKS during the Sprint 8 release-candidate session
