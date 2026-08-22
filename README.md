@@ -1,10 +1,19 @@
-# MLOps Project 01 - End-to-End Machine Learning Pipeline 
+# MLOps Platform on AWS EKS
 
-[![CI](https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/actions/workflows/ci.yml)
+[![CI](https://github.com/asadhanif3188/mlops-platform-on-eks/actions/workflows/ci.yml/badge.svg)](https://github.com/asadhanif3188/mlops-platform-on-eks/actions/workflows/ci.yml)
 
-This project demonstrates how to build an end-to-end machine learning pipeline using DVC (Data Version Control) for data and model versioning, and MLflow for experiment tracking. 
+Cloud-native MLOps platform engineering on AWS EKS — a hands-on proof that spans
+Terraform-provisioned infrastructure, an in-cluster MLflow platform (server +
+PostgreSQL + S3), EKS Pod Identity workload identity, S3-backed data,
+Prometheus/Grafana observability, controlled failure-and-recovery testing,
+operational runbooks, and supply-chain controls (SBOM + provenance). It is a
+portfolio-scoped platform-engineering proof — not a production service.
 
-The pipeline focuses on training a Random Forest Classifier on the Pima Indians Diabetes Dataset, with clear stages for data preprocessing, model training, and evaluation.
+At its core is a reproducible ML pipeline — a Random Forest classifier on the
+Pima Indians Diabetes dataset — versioned with DVC and tracked on the in-cluster
+MLflow platform, with clear stages for data preprocessing, splitting, training,
+and evaluation. The surrounding platform is what turns that pipeline into a
+cloud-native MLOps demonstration.
 
 ## Tools/Technologies used for Project
 Following tools have been used to complete the project. 

@@ -47,7 +47,7 @@ variable "owner" {
 variable "repository_url" {
   description = "Source repository URL recorded in the \"Repository\" tag so provisioned resources trace back to the code that created them."
   type        = string
-  default     = "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline"
+  default     = "https://github.com/asadhanif3188/mlops-platform-on-eks"
 }
 
 variable "additional_tags" {

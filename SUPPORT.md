@@ -11,7 +11,7 @@ answered there, including the [architecture](docs/architecture.md),
 
 For general questions and usage help:
 
-- Use [GitHub Discussions](https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/discussions)
+- Use [GitHub Discussions](https://github.com/asadhanif3188/mlops-platform-on-eks/discussions)
   <!-- TODO: enable Discussions in repository settings, or replace this with the
   preferred channel. -->
 - Search existing issues and discussions before opening a new one — your question
