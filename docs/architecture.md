@@ -1,6 +1,6 @@
 # Architecture
 
-The **End-to-End Machine Learning Pipeline** is architected around
+The **MLOps Platform on AWS EKS** is architected around
 reproducibility: a Random Forest training workflow orchestrated with
 [DVC](https://dvc.org/) and instrumented with [MLflow](https://mlflow.org/),
 tracked on the project's **in-cluster MLflow platform** (self-hosted server +

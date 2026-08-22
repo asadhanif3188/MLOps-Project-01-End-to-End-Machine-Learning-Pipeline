@@ -68,7 +68,7 @@ groups:
             Inspect `kubectl -n mlops logs job/mlops-pipeline` and the per-stage
             `mlops_pipeline_stage_success` series to find the failing stage; the
             structured logs are the root-cause layer.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejobfailed"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#pipelinejobfailed"
 
       - alert: PipelineJobOOMKilled
         # The pipeline's memory-safety signal is a KILL EVENT, not a sustained
@@ -94,7 +94,7 @@ groups:
             its 512Mi memory limit and the kernel killed it (ADR-011). Reduce the
             stage's working set or raise the limit deliberately; do not silently
             grow it. Correlate with PipelineJobFailed and the stage logs.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejoboomkilled"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#pipelinejoboomkilled"
 
   # ---------------------------------------------------------------------------
   # Layer 3 — MLflow tracking server (availability + memory headroom).
@@ -119,7 +119,7 @@ groups:
             pipeline runs cannot log to MLflow while it is down. Experiment data
             is NOT lost — it lives in PostgreSQL — which is why this is a warning,
             not critical. Check `kubectl -n mlops get deploy/mlflow` and its logs.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowdown"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#mlflowdown"
 
       - alert: MLflowMemoryHigh
         # Working-set vs the 2Gi limit — the SAME expression the MLflow dashboard
@@ -144,7 +144,7 @@ groups:
             {{ $value | printf "%.0f" }}%. Approaching the ceiling risks an
             OOMKill of the tracking server. Investigate load; raise the limit only
             with a measured justification.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowmemoryhigh"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#mlflowmemoryhigh"
 
   # ---------------------------------------------------------------------------
   # Layer 4 — PostgreSQL metadata backend (availability, storage, memory).
@@ -167,7 +167,7 @@ groups:
             MLflow metadata database. This is the durable store the whole platform
             depends on: MLflow and the pipeline cannot persist runs while it holds.
             Check `kubectl -n mlops get statefulset/mlflow-postgres` and pod logs.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresdown"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgresdown"
 
       - alert: PostgresPVCAlmostFull
         # used/capacity from the kubelet volume stats — the SAME expression the
@@ -191,7 +191,7 @@ groups:
             85% full for 10m — currently {{ $value | printf "%.0f" }}%. A full
             volume stops the database accepting writes (data-loss / outage risk).
             Reclaim space or grow the volume deliberately.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgrespvcalmostfull"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgrespvcalmostfull"
 
       - alert: PostgresMemoryHigh
         # Working-set vs the 512Mi limit — the SAME expression the Postgres
@@ -211,7 +211,7 @@ groups:
             (ADR-026) for 15m — currently {{ $value | printf "%.0f" }}%.
             Approaching the ceiling risks an OOMKill of the single-writer metadata
             DB. Investigate load; raise the limit only with a measured justification.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresmemoryhigh"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgresmemoryhigh"
 
   # ---------------------------------------------------------------------------
   # Layer 1 — platform: persistent crash/restart instability across the two
@@ -240,4 +240,4 @@ groups:
             for 15m — the kubelet has repeatedly restarted it after crashes
             (persistent instability, not a one-off restart). Check the container
             logs and its last terminated reason.
-          runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#kubepodcrashlooping"
+          runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#kubepodcrashlooping"

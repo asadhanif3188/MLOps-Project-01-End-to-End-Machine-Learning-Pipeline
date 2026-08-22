@@ -1,6 +1,6 @@
 # Documentation
 
-Welcome to the documentation for the **End-to-End Machine Learning Pipeline**.
+Welcome to the documentation for the **MLOps Platform on AWS EKS**.
 This page is the entry point to all project documentation.
 
 For a general project introduction and quick start, see the
@@ -131,7 +131,9 @@ repository.
 | [Release Process](release-checklist.md) | Step-by-step checklist for cutting a release |
 | [Versioning](versioning.md) | Semantic Versioning policy with project examples |
 | [GitHub Workflow](github-workflow.md) | Branching, commits, PRs, labels, milestones, releases |
-| [Repository Metadata](repository-metadata.md) | Recommended description, topics, and presentation |
+| [Repository Metadata](repository-metadata.md) | The canonical repository identity (slug, title, positioning), recommended GitHub About description, and topics |
+| [Repository Naming Evaluation](sprint-09/repository-naming-evaluation.md) | Sprint 9 (PR 1): candidate-name matrix and the rationale for the final `mlops-platform-on-eks` identity |
+| [Repository Rename Checklist](sprint-09/repository-rename-checklist.md) | Sprint 9 (PR 1): the manual GitHub rename runbook and post-rename verification |
 
 ### Repository-Root Documents
 

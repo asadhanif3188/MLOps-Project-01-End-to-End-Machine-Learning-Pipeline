@@ -3,31 +3,54 @@
 This document recommends presentation and discoverability settings for the
 repository. **It documents recommendations only** — no GitHub settings should be
 changed as part of this document. Apply these manually in the repository
-settings when ready.
+settings when ready (see the
+[Repository Rename Checklist](sprint-09/repository-rename-checklist.md)).
 
 ---
 
-## Repository Description
+## Canonical Identity
 
-A concise description appears at the top of the repository and in search
-results. Recommended:
+The repository's final identity, selected in the
+[Repository Naming Evaluation](sprint-09/repository-naming-evaluation.md):
 
-> Production-Oriented MLOps Pipeline using DVC, MLflow and Python
+| Field | Value |
+|-------|-------|
+| **Canonical slug** | `mlops-platform-on-eks` |
+| **Human-readable title** | MLOps Platform on AWS EKS |
+| **Positioning (one line)** | Cloud-native MLOps platform engineering on AWS EKS — from Terraform-provisioned infrastructure to in-cluster MLflow, observability, and controlled failure/recovery testing. |
 
-If a slightly longer form is preferred where space allows:
+The original slug (`MLOps-Project-01-End-to-End-Machine-Learning-Pipeline`) is
+retired; GitHub preserves a permanent redirect from it after the rename.
 
-> Production-oriented MLOps pipeline for tabular classification using DVC for
-> data/pipeline versioning and self-hosted MLflow for experiment tracking.
+---
 
-Keep the primary description under ~120 characters so it isn't truncated.
+## Repository Description (GitHub "About")
+
+The About text appears at the top of the repository and in search results.
+Recommended:
+
+> Cloud-native MLOps platform engineering on AWS EKS: Terraform IaC, in-cluster
+> MLflow (PostgreSQL + S3), Pod Identity / IRSA workload identity, Prometheus &
+> Grafana observability, controlled failure/recovery testing, and supply-chain
+> controls. A portfolio-scoped platform-engineering proof — not a production
+> service.
+
+If a shorter form is needed where space is tight (under ~120 characters):
+
+> Cloud-native MLOps platform-engineering proof on AWS EKS (Terraform, EKS,
+> MLflow, observability).
+
+The positioning deliberately does **not** imply enterprise production scale, 24/7
+operations, formal SRE maturity, model serving at scale, or multi-region
+resilience — the repository does not prove those.
 
 ## GitHub Topics
 
-Topics improve discoverability. Recommended set:
+Topics improve discoverability. Recommended set (reflecting the platform scope):
 
-`mlops`, `machine-learning`, `dvc`, `mlflow`, `dagshub`, `scikit-learn`,
-`random-forest`, `data-versioning`, `experiment-tracking`, `ml-pipeline`,
-`reproducibility`, `python`, `data-science`, `model-training`
+`mlops`, `platform-engineering`, `aws`, `eks`, `kubernetes`, `terraform`,
+`mlflow`, `dvc`, `observability`, `prometheus`, `grafana`, `workload-identity`,
+`supply-chain-security`, `infrastructure-as-code`, `python`
 
 > Add only topics that remain accurate as the project evolves; remove any that
 > no longer apply.
@@ -60,19 +83,23 @@ A project website can host rendered documentation.
 
 If pinned to the owner's GitHub profile, this repository demonstrates:
 
+- **Cloud-native platform engineering** — Terraform-provisioned AWS/EKS
+  infrastructure, workload identity, in-cluster MLflow, and observability.
 - **MLOps and ML engineering** — reproducible pipelines, experiment tracking,
   data/model versioning.
+- **Operational rigor** — controlled failure/recovery testing, runbooks, and
+  supply-chain controls (SBOM + provenance).
 - **Software engineering maturity** — documentation, ADRs, governance, and
   contribution standards.
-- **Engineering communication** — clear architecture and decision records.
 
-This makes it a strong candidate for a pinned, flagship portfolio project once
-the roadmap's engineering-quality milestone is complete.
+This makes it a strong candidate for a pinned, flagship portfolio project.
 
 ---
 
 ## Related Documentation
 
+- [Repository Naming Evaluation](sprint-09/repository-naming-evaluation.md)
+- [Repository Rename Checklist](sprint-09/repository-rename-checklist.md)
 - [Documentation Index](README.md)
 - [Roadmap](roadmap.md)
 - [Engineering Philosophy](philosophy.md)

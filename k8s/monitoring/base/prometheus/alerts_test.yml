@@ -36,7 +36,7 @@ tests:
             exp_annotations:
               summary: "MLOps pipeline Job failed (last run did not Complete)"
               description: "The mlops-pipeline batch Job reached its terminal Failed condition (backoffLimit exhausted) — the most recent run did not Complete. Inspect `kubectl -n mlops logs job/mlops-pipeline` and the per-stage `mlops_pipeline_stage_success` series to find the failing stage; the structured logs are the root-cause layer."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejobfailed"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#pipelinejobfailed"
 
   # -- PipelineJobFailed: BATCH SEMANTICS negative. A run that retried (pod
   #    counter > 0) but then Succeeded must NOT fire — we key on the Failed
@@ -74,7 +74,7 @@ tests:
             exp_annotations:
               summary: "MLOps pipeline pod was OOMKilled"
               description: "A mlops-pipeline pod's last termination reason is OOMKilled — it hit its 512Mi memory limit and the kernel killed it (ADR-011). Reduce the stage's working set or raise the limit deliberately; do not silently grow it. Correlate with PipelineJobFailed and the stage logs."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#pipelinejoboomkilled"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#pipelinejoboomkilled"
 
   # -- MLflowDown: Pending -> Firing at 5m, then Resolved after recovery --------
   - interval: 1m
@@ -95,7 +95,7 @@ tests:
             exp_annotations:
               summary: "MLflow tracking server is unavailable (/health down 5m)"
               description: "The blackbox probe of MLflow's /health has returned 0 for 5m. New pipeline runs cannot log to MLflow while it is down. Experiment data is NOT lost — it lives in PostgreSQL — which is why this is a warning, not critical. Check `kubectl -n mlops get deploy/mlflow` and its logs."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowdown"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#mlflowdown"
       - eval_time: 13m # probe healthy since 7m -> Resolved
         alertname: MLflowDown
         exp_alerts: []
@@ -120,7 +120,7 @@ tests:
             exp_annotations:
               summary: "MLflow memory > 90% of its 2Gi limit for 15m"
               description: "MLflow working-set memory has held above 90% of its 2Gi limit (measured baseline ~1.7GiB / 85%, ADR-026) for 15m — currently 92%. Approaching the ceiling risks an OOMKill of the tracking server. Investigate load; raise the limit only with a measured justification."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#mlflowmemoryhigh"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#mlflowmemoryhigh"
 
   # -- PostgresDown: pg_up == 0 for 5m -----------------------------------------
   - interval: 1m
@@ -137,7 +137,7 @@ tests:
             exp_annotations:
               summary: "PostgreSQL metadata database is unreachable (pg_up 0 for 5m)"
               description: "postgres-exporter reports pg_up == 0 for 5m — it cannot connect to the MLflow metadata database. This is the durable store the whole platform depends on: MLflow and the pipeline cannot persist runs while it holds. Check `kubectl -n mlops get statefulset/mlflow-postgres` and pod logs."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresdown"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgresdown"
 
   # -- PostgresPVCAlmostFull: ~90% of the fixed 1Gi PVC for 10m -----------------
   - interval: 1m
@@ -159,7 +159,7 @@ tests:
             exp_annotations:
               summary: "PostgreSQL PVC over 85% full"
               description: "The Postgres data PVC (fixed 1Gi, no autogrow — ADR-026) has held above 85% full for 10m — currently 90%. A full volume stops the database accepting writes (data-loss / outage risk). Reclaim space or grow the volume deliberately."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgrespvcalmostfull"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgrespvcalmostfull"
 
   # -- PostgresMemoryHigh: ~97% of the 512Mi limit, sustained 15m ---------------
   - interval: 1m
@@ -178,7 +178,7 @@ tests:
             exp_annotations:
               summary: "PostgreSQL memory > 90% of its 512Mi limit for 15m"
               description: "PostgreSQL working-set memory has held above 90% of its 512Mi limit (ADR-026) for 15m — currently 97%. Approaching the ceiling risks an OOMKill of the single-writer metadata DB. Investigate load; raise the limit only with a measured justification."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#postgresmemoryhigh"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#postgresmemoryhigh"
 
   # -- KubePodCrashLooping: CrashLoopBackOff held 15m; series labels survive ----
   - interval: 1m
@@ -199,4 +199,4 @@ tests:
             exp_annotations:
               summary: "Pod mlops/mlflow-7c9f is crash-looping"
               description: "Container mlflow in pod mlops/mlflow-7c9f has been in CrashLoopBackOff for 15m — the kubelet has repeatedly restarted it after crashes (persistent instability, not a one-off restart). Check the container logs and its last terminated reason."
-              runbook_url: "https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/blob/main/docs/alerting.md#kubepodcrashlooping"
+              runbook_url: "https://github.com/asadhanif3188/mlops-platform-on-eks/blob/main/docs/alerting.md#kubepodcrashlooping"
