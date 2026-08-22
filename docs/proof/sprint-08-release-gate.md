@@ -400,16 +400,16 @@ No monitoring tool requested `privileged` or broad permissions. All justified ex
 - ✅ [docs/monitoring-operations.md](../monitoring-operations.md) — Prometheus operations, scrape config, retention
 - ✅ [ADR index](../decisions/README.md) — ADRs 028–037 added
 
-### 10.B — Documentation Reconciliation (Still Pending Pre-Tag)
+### 10.B — Documentation Reconciliation (Completed Post-Review)
 
-The following top-level documentation has **not** been updated during Sprint 8 and **should be** before tag:
+All top-level documentation has now been updated to reflect Sprint 8:
 
-- ⏳ [README.md](../../README.md) — Kubernetes section still shows `--build-arg BUILD_VERSION="1.6.0"`; does not mention Prometheus/Grafana/observability; EKS narrative stops at Sprint 7
-- ⏳ [docs/architecture.md](../architecture.md) — Does not integrate observability layer; no mention of Prometheus, alerts, or operational proof
-- ⏳ [SECURITY.md](../../SECURITY.md) — Does not document observability stack hardening or security posture of monitoring components
-- ⏳ [docs/kubernetes-security.md](../kubernetes-security.md) — Does not document observability stack security or the extended security contract
+- ✅ [README.md](../../README.md) — Updated Docker build version to 1.7.0; added "Observability & Operations (Sprint 8)" section documenting Prometheus/Grafana, controlled failure validation, runbooks, and supply-chain security
+- ✅ [docs/architecture.md](../architecture.md) — Added "Observability & monitoring" and "Supply-chain & security" rows to the key properties table; linked to observability docs and ADRs 028–036
+- ✅ [SECURITY.md](../../SECURITY.md) — Added two new security practice sections: observability stack hardening and least-privilege pod-to-pod networking (NetworkPolicy)
+- ✅ [docs/kubernetes-security.md](../kubernetes-security.md) — Added §7 documenting observability stack security hardening, justified exceptions with mitigations, and verification via both static contract (201/201 assertions) and live EKS validation
 
-**Pre-tag action required:** Update these four documents to reflect Sprint 8 before creating the v1.7.0 tag. (This is a documentation-only action; no code or implementation changes required.)
+**Status:** Documentation reconciliation complete. All four files updated and committed (commit bd01476).
 
 ### 10.C — Historical Evidence Preserved
 
@@ -568,15 +568,15 @@ The CHANGELOG requires a **new Sprint 8 section** summarizing:
 
 1. ✅ Create `docs/proof/sprint-08-release-gate.md` (this document) — **DONE**
 2. ✅ Update CHANGELOG.md with Sprint 8 section — **DONE**
-3. ✅ Commit release-gate document + changelog updates — **DONE**
-4. ⏳ **Update top-level documentation** (§10.B):
-   - Update README.md (version, observability status)
-   - Update docs/architecture.md (observability layer)
-   - Update SECURITY.md (observability stack security)
-   - Update docs/kubernetes-security.md (monitoring component hardening)
-5. ⏳ Commit documentation updates
-6. ⏳ Tag `v1.7.0` on main
-7. ⏳ Create GitHub release with CHANGELOG notes
+3. ✅ Apply second-eye review corrections — **DONE**
+4. ✅ Update top-level documentation (§10.B) — **DONE**
+   - ✅ Updated README.md (version 1.7.0, observability section)
+   - ✅ Updated docs/architecture.md (observability layer integrated)
+   - ✅ Updated SECURITY.md (observability stack security + NetworkPolicy)
+   - ✅ Updated docs/kubernetes-security.md (monitoring component hardening)
+5. ✅ Commit all changes (3 commits: gate audit, review corrections, documentation) — **DONE**
+6. ⏳ Tag `v1.7.0` on main (operator-driven step)
+7. ⏳ Create GitHub release with CHANGELOG notes (operator-driven step)
 
 ### Defensible Release Statement
 
