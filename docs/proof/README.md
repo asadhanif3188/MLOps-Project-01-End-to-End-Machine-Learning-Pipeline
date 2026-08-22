@@ -26,6 +26,12 @@ integrated records:
 | 2 | [PR 16 Release-Candidate Validation on Live EKS](sprint-08-pr16-release-validation-evidence.md) | The authoritative single `provision → prove → destroy` run of the complete merged system on real EKS (v1.35.6, 2× t3.large). Cost/resource observations §17, symmetric teardown. | Live EKS validated |
 | 3 | [Batched Live-EKS Evidence](sprint-08-live-eks-evidence.md) | The earlier exploratory campaign that closed each Sprint 8 runtime item in one cluster session, and honestly records the **4 real defects the live run surfaced** (§3). | Live EKS validated |
 
+> **Hiring for a role, not just verifying a claim?** The
+> [**Engineering Capability Matrix**](capability-matrix.md) translates this
+> evidence into 15 buyer-facing capabilities — problem addressed, what was
+> engineered, proof strength, why it matters, and limitations — with an explicit
+> AI Platform Engineering scope boundary.
+
 **How to read proof strength** (used throughout this index):
 
 | Label | Meaning |

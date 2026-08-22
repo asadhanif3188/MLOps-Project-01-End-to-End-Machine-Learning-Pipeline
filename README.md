@@ -297,6 +297,7 @@ tracked openly in the [Roadmap](docs/roadmap.md) and each sprint's release gate.
 ## 15 · Deeper reading
 
 - **[Evidence Index](docs/proof/README.md)** — every claim mapped to its canonical proof and proof strength
+- **[Engineering Capability Matrix](docs/proof/capability-matrix.md)** — what this repository proves the engineer can do, for hiring/client review
 - **[Architecture](docs/architecture.md)** — system design, components, data flow
 - **[Sprint 8 Release Gate](docs/proof/sprint-08-release-gate.md)** — the PASS audit, 23 proof dimensions
 - **[Live-EKS Validation Evidence](docs/proof/sprint-08-pr16-release-validation-evidence.md)** — the authoritative runtime record
