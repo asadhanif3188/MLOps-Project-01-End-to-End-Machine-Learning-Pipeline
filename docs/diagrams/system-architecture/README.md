@@ -42,7 +42,7 @@ flowchart TB
             end
             subgraph mon["namespace: monitoring"]
                 prom["Prometheus<br/><i>8 alert rules</i>"]
-                graf["Grafana<br/><i>4-layer dashboards</i>"]
+                graf["Grafana<br/><i>3 dashboards · 4 signal layers</i>"]
             end
         end
     end

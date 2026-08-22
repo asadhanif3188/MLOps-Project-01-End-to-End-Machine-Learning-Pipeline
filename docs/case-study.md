@@ -128,7 +128,7 @@ flowchart TB
             end
             subgraph mon["namespace: monitoring"]
                 prom["Prometheus<br/><i>8 alert rules</i>"]
-                graf["Grafana<br/><i>4-layer dashboards</i>"]
+                graf["Grafana<br/><i>3 dashboards · 4 signal layers</i>"]
             end
         end
     end
@@ -343,10 +343,10 @@ Each row above is one traversal of the same closed loop:
 
 ```mermaid
 flowchart LR
-    inject["Controlled failure<br/><i>injected on live EKS</i>"] --> signal["Metric / signal<br/><i>KSM · exporters · Pushgateway</i>"]
+    inject["Controlled failure<br/><i>injected on live EKS</i>"] --> signal["Metric / signal<br/><i>kube-state-metrics · exporters · Pushgateway</i>"]
     signal --> alert["Prometheus alert<br/><i>Pending → Firing</i>"]
     alert --> runbook["Runbook<br/><i>docs/runbooks/</i>"]
-    runbook --> diag["Diagnosis"]
+    runbook --> diag["Diagnosis<br/><i>logs · per-stage metric</i>"]
     diag --> fix["Remediation"]
     fix --> verify["Healthy verification<br/><i>alert Resolved · Job exit 0</i>"]
     verify -. "loop closed" .-> inject

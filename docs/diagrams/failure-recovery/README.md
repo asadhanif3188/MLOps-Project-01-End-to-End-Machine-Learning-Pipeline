@@ -38,7 +38,7 @@ flowchart LR
 
 | Injected failure | Signal | Alert | Runbook | Remediation → verification |
 |---|---|---|---|---|
-| **Dataset unavailable / integrity mismatch** | `stage_success{stage="fetch_dataset"}=0` (Pushgateway) | `PipelineJobFailed` | [dataset-retrieval](../../runbooks/dataset-retrieval-failure.md) · [dataset-integrity](../../runbooks/dataset-integrity-failure.md) | Restore bytes / update pinned `DATASET_SHA256` deliberately → re-run green. A checksum mismatch fails fast **by design** (no retry). |
+| **Dataset unavailable / integrity mismatch** | `mlops_pipeline_stage_success{stage="fetch_dataset"}=0` (Pushgateway) pinpoints the stage; the Job's terminal `kube_job_failed{condition="true"}` fires the alert | `PipelineJobFailed` | [dataset-retrieval](../../runbooks/dataset-retrieval-failure.md) · [dataset-integrity](../../runbooks/dataset-integrity-failure.md) | Restore bytes / update pinned `DATASET_SHA256` deliberately → re-run green. A checksum mismatch fails fast **by design** (no retry). |
 | **MLflow outage** | `probe_success=0` (blackbox `/health`) | `MLflowDown` (+ `PipelineJobFailed`) | [mlflow-unavailable](../../runbooks/mlflow-unavailable.md) | Scale `deploy/mlflow` back up → re-drive the run. Experiment history is **not lost** (it lives in PostgreSQL). |
 | **OOMKilled pipeline pod** | `kube_pod_container_status_terminated_reason=OOMKilled` (KSM) | `PipelineJobOOMKilled` | [oomkilled](../../runbooks/oomkilled.md) | Reduce working set **or** restore the measured 512Mi limit → pod returns to exit 0. |
 

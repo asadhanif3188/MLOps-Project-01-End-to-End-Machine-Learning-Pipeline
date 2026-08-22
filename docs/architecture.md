@@ -9,8 +9,10 @@ This document explains how the pieces fit together.
 
 > **Scope note.** This document reflects the repository as it exists today. Where
 > a component is planned but not yet implemented, it is marked with an explicit
-> `TODO`. Diagrams referenced here live under [`diagrams/`](diagrams/) and are
-> placeholders until produced in a later sprint.
+> `TODO`. The reviewer-facing diagram package lives under
+> [`diagrams/`](diagrams/) (the final platform architecture is embedded in § 2); a
+> few subfolders (`pipeline-flow/`, `cicd-flow/`, `deployment-architecture/`) remain
+> reserved placeholders, marked as such below.
 
 ---
 
@@ -92,7 +94,7 @@ flowchart TB
             end
             subgraph mon["namespace: monitoring"]
                 prom["Prometheus<br/><i>8 alert rules</i>"]
-                graf["Grafana<br/><i>4-layer dashboards</i>"]
+                graf["Grafana<br/><i>3 dashboards · 4 signal layers</i>"]
             end
         end
     end

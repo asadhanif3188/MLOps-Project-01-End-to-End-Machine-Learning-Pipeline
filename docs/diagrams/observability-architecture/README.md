@@ -25,7 +25,7 @@ flowchart TB
             ksm["kube-state-metrics<br/><i>API-object state</i>"]
             nodeexp["node-exporter<br/><i>DaemonSet · node health</i>"]
             black["blackbox-exporter<br/><i>probes MLflow /health</i>"]
-            alerts["Alert rules<br/><i>(PR 5)</i>"]
+            alerts["Alert rules<br/><i>(PR 6)</i>"]
         end
 
         subgraph mlops["Namespace: mlops"]
@@ -68,6 +68,10 @@ flowchart TB
 
 ## Operational data flow (reviewer view)
 
+**Title.** Observability Architecture — operational signal flow.
+**Purpose.** Show which signals Prometheus/Grafana actually surface, and the boundary
+a reviewer must not miss: operational metrics are scraped; experiment metrics are not.
+
 Which signals Prometheus actually collects — and the boundary that matters:
 **experiment metrics stay in MLflow/PostgreSQL and are NOT duplicated in
 Prometheus.** Prometheus carries only *operational* signals.
@@ -84,7 +88,7 @@ flowchart TB
 
     pipe["Pipeline Job<br/><i>batch/v1</i>"]
     prom["Prometheus<br/><i>pull scrape · 8 alert rules</i>"]
-    graf["Grafana<br/><i>4-layer dashboards</i>"]
+    graf["Grafana<br/><i>3 dashboards · 4 signal layers</i>"]
     op["Operator<br/><i>runbooks/ → diagnose → remediate</i>"]
     mldb[("MLflow + PostgreSQL<br/><i>EXPERIMENT metrics live here</i>")]
 
@@ -165,8 +169,9 @@ The pipeline **pod exits in under a minute** and has no Service to scrape
 watches the persistent `Job` API object, not the ephemeral process**, so
 `succeeded / failed / start_time / completion_time` remain scrapable after the pod
 is gone. The one Pod-object signal, **OOMKilled**
-(`kube_pod_container_status_last_terminated_reason`), stays scrapable too because the
-Job's finished pod is retained by owner-reference for as long as the Job — all
+(`kube_pod_container_status_terminated_reason` — the live-EKS run showed the `last_`
+variant is empty for a `restartPolicy: Never` Job, Sprint 8 Finding 4), stays scrapable
+too because the Job's finished pod is retained by owner-reference for as long as the Job — all
 provided the finished Job (and its pod) outlives one scrape
 (`ttlSecondsAfterFinished`). Full reasoning and the rejected alternatives
 (Pushgateway, custom exporter, keep-alive sidecar) are in
