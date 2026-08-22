@@ -6,7 +6,7 @@
 > [ADR-028](decisions/ADR-028-observability-architecture.md); the target picture is
 > the [observability architecture diagram](diagrams/observability-architecture/README.md).
 > No Prometheus, Grafana, exporter, or alert exists in the repository at the time
-> of writing — the [Sprint 8 delivery plan](#9-sprint-8-delivery-plan-prs-26) below
+> of writing — the [Sprint 8 delivery plan](#9-sprint-8-delivery-plan-prs-27) below
 > describes how each is added, and the [runtime-evidence expectations](#runtime-evidence-what-later-sprint-8-prs-must-prove)
 > describe what must be *proven* before any of it is claimed to work.
 

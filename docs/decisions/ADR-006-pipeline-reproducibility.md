@@ -178,7 +178,7 @@ the stage code, tests, and CI are delivered by the subsequent Sprint 4 PRs.
 - **Accepted current limitations (explicitly):** in-sample evaluation, unused
   `data/processed/data.csv`, inert `train.*` hyperparameters, no `dvc.lock`, and
   MLflow-coupled stages remain true *today*; they are tracked as deviations D1–D8 in
-  [pipeline-contract.md](../pipeline-contract.md#11-current-deviations-summary-current--target),
+  [pipeline-contract.md](../pipeline-contract.md#11-deviation-status-sprint-4),
   each assigned to a later PR.
 - **Determinism has a cost.** Fixing seeds and consuming the processed dataset may
   change the specific model and metric values relative to today's runs; this is
