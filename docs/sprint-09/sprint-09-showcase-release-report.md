@@ -33,9 +33,12 @@ report verifies that package against twelve gates and returns the launch decisio
 | 11 | This report | ✅ Delivered |
 | 12 | Definition of done | ✅ Met |
 
-**Overall: PASS.** No repository-side release blockers. Two routine pre-publish
-operational actions remain (execute the GitHub rename per the checklist; substitute
-`[REPO LINK]` placeholders in the private distribution assets) — neither is a repo
+**Overall: PASS.** No repository-side release blockers. The canonical rename is
+already applied (`origin` → `mlops-platform-on-eks.git`; README CI badge resolves
+to the same slug). The only routine pre-publish actions that remain are outside the
+repository — confirm the GitHub presentation settings (About text, topics,
+social-preview image, profile pin) per the checklist, and substitute the
+`[REPO LINK]` placeholders in the private distribution assets — neither is a repo
 defect.
 
 ---
@@ -60,9 +63,13 @@ historical proof, left untouched; (d) the CHANGELOG version-compare URLs, which
 **this PR reconciled** to the canonical slug to match the already-merged README
 badge.
 
-**Non-blocking:** the GitHub repository rename itself is a manual settings action,
-correctly documented in [repository-rename-checklist.md](repository-rename-checklist.md).
-GitHub preserves a permanent redirect from the old slug afterward.
+**Rename status:** the repository rename is **already applied** — `origin` resolves
+to `https://github.com/asadhanif3188/mlops-platform-on-eks.git`, the README CI badge
+uses the same slug, and prior PRs merged against it (GitHub also preserves a
+permanent redirect from the old slug). The remaining items in
+[repository-rename-checklist.md](repository-rename-checklist.md) are GitHub
+*presentation* settings (About text, topics, social-preview image, profile pin) —
+manual, outside the repository, and non-blocking.
 
 ---
 
@@ -213,8 +220,9 @@ security-hardened, observable) is used throughout.
 
 ## 10 · Broken-link & asset result — PASS
 
-A GitHub-accurate relative-link + anchor validator scanned **3,400 markdown links**
-across all tracked files. It surfaced **nine real breaks**, all in secondary/deep
+A GitHub-accurate relative-link + anchor validator scanned **3,408 markdown links**
+across all tracked files (3,400 before this report was added). It surfaced **nine
+real breaks**, all in secondary/deep
 documentation (never on the reviewer's README → proof → case-study path, which is
 why the cold review did not encounter them). **All nine were fixed** (link-path /
 anchor corrections only — no content or proof rewritten). Re-run: **0 broken file
@@ -238,7 +246,7 @@ cluster.
 
 ## 11 · Remaining limitations (non-blocking)
 
-1. **GitHub rename is a manual step** — execute [repository-rename-checklist.md](repository-rename-checklist.md) at launch; update the About text per [repository-metadata.md](../repository-metadata.md).
+1. **GitHub presentation settings** — the rename is already applied; the remaining manual, outside-repo items are the About text, topics, social-preview image, and profile pin per [repository-rename-checklist.md](repository-rename-checklist.md) / [repository-metadata.md](../repository-metadata.md).
 2. **Distribution-asset placeholders** — substitute `[REPO LINK]` / `(#)` targets before posting.
 3. **Inline "why it matters" framing** is one click deep (Capability Matrix / Case Study §16) rather than in the README body — a single forward-pointing line would close it.
 4. **Disclosed empty placeholder folders** (3 diagram, 7 screenshot) — optional cleanup; already disclosed as placeholders.
@@ -255,8 +263,9 @@ None is a release blocker.
 reviewer can, in 5–10 minutes, understand the problem, the final architecture, what
 the engineer personally built, what ran on real AWS/EKS, what failed, how recovery
 worked, where to verify each claim independently, and what is intentionally not
-claimed. Pre-publish checklist: (a) execute the rename; (b) set the About text and
-topics; (c) substitute distribution-asset placeholders; (d) pin the repo.
+claimed. Pre-publish checklist (rename already applied): (a) confirm the About text
+and topics; (b) set the social-preview image; (c) substitute distribution-asset
+placeholders; (d) pin the repo.
 
 ---
 
@@ -276,10 +285,11 @@ is now public — the next step is **publish → distribute → observe external
 
 1. **Final verdict:** PASS.
 2. **Cold-review score:** 88/100 (no dimension < 7; all 10 questions answerable).
-3. **Release / public-showcase blockers:** None (repository-side). Two routine
-   pre-publish operational actions remain — execute the GitHub rename per the
-   checklist, and substitute `[REPO LINK]`/`(#)` placeholders in the private
-   distribution assets.
+3. **Release / public-showcase blockers:** None (repository-side). The canonical
+   rename is already applied. The remaining pre-publish actions are outside the
+   repository — confirm the GitHub presentation settings (About text, topics,
+   social-preview image, profile pin) per the checklist, and substitute
+   `[REPO LINK]`/`(#)` placeholders in the private distribution assets.
 4. **Non-blocking findings:** inline "why it matters" one click deep; disclosed
    empty placeholder folders; README version-label drift; one unused
    capability-matrix label; root-directory sprint planning files. (Nine broken

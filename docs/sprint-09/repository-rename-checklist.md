@@ -12,6 +12,13 @@ its original slug to the final identity chosen in
 > owner. The steps below are the runbook for that operation and the follow-up
 > verification.
 
+> **Status (2026-08-22, Sprint 9 PR 12):** The rename is **applied** — the git
+> remote resolves to `asadhanif3188/mlops-platform-on-eks` and prior PRs merged
+> against it (GitHub also keeps the old-slug redirect). The unchecked items below
+> that remain relevant are the GitHub *presentation* settings (About, topics,
+> social-preview image, profile pin) and the external link updates, which stay
+> owner-driven.
+
 ## Sequencing note
 
 This PR updates repo-name-dependent URLs (CI badge, OCI image source label,
