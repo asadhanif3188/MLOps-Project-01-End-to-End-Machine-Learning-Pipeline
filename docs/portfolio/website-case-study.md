@@ -22,6 +22,47 @@ under runbook guidance, and tore it down clean in a single session.
 
 ---
 
+## How to place this on a website
+
+This file holds **three zoom levels** of the same project. Use the short forms in a
+projects section; link them to the full case study (the rest of this file) on its own
+page. Do **not** paste the full case study into a projects grid.
+
+### Tier 1 — Project card (for a projects grid / list)
+
+> **MLOps Platform on AWS EKS**
+> Cloud-native MLOps platform engineering, proven on live AWS.
+>
+> A course-style ML pipeline re-engineered into a Terraform-provisioned EKS platform —
+> then provisioned, failure-tested, recovered, and torn down clean on real Amazon EKS.
+>
+> `AWS EKS` · `Terraform` · `Kubernetes` · `MLflow` · `Prometheus / Grafana`
+>
+> **65 resources · 5/5 stages green · 3 failures recovered · verified teardown**
+>
+> [Case study →](#) · [GitHub →](https://github.com/asadhanif3188/mlops-platform-on-eks)
+
+### Tier 2 — Featured summary (for a highlighted project block)
+
+> **MLOps Platform on AWS EKS** — I took a course-style, local ML pipeline and
+> engineered the cloud platform around it: Terraform-provisioned AWS EKS, EKS Pod
+> Identity (no static keys), S3-backed data, an in-cluster MLflow stack on PostgreSQL,
+> and four-layer Prometheus/Grafana observability. The whole system was provisioned on
+> **real Amazon EKS** in one session — the pipeline ran to completion (exit 0, 5/5
+> stages), three critical failures were injected and recovered under runbook guidance,
+> and the environment was destroyed and verified clean. It is a portfolio-scoped
+> platform-engineering proof, backed by runtime evidence rather than assertions.
+>
+> [Read the case study →](#) · [View on GitHub →](https://github.com/asadhanif3188/mlops-platform-on-eks)
+
+> **Integration note.** Replace the `(#)` "Case study" targets with the URL of the
+> detail page once it exists. The Tier-1 metrics and chips are the safe, calibrated
+> headline set — keep them consistent with the [Results](#results) section below.
+
+---
+
+## Full case study (project detail page)
+
 ## Challenge
 
 A pipeline that reproduces on a laptop demonstrates reproducibility. It says nothing
