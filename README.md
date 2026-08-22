@@ -145,8 +145,8 @@ Detail: [Observability](docs/observability.md) · [Alerting](docs/alerting.md) �
 
 ## 9 · Evidence index
 
-Where to verify each headline claim. _(A dedicated, deeper evidence index is
-planned for a follow-up Sprint 9 PR; until then these are the canonical sources.)_
+Where to verify each headline claim. For the complete map — every capability,
+its proof, and how strong that proof is — see the **[Evidence Index](docs/proof/README.md)**.
 
 | Claim | Canonical evidence |
 |---|---|
@@ -238,6 +238,7 @@ tracked openly in the [Roadmap](docs/roadmap.md) and each sprint's release gate.
 
 ## 15 · Deeper reading
 
+- **[Evidence Index](docs/proof/README.md)** — every claim mapped to its canonical proof and proof strength
 - **[Architecture](docs/architecture.md)** — system design, components, data flow
 - **[Sprint 8 Release Gate](docs/proof/sprint-08-release-gate.md)** — the PASS audit, 23 proof dimensions
 - **[Live-EKS Validation Evidence](docs/proof/sprint-08-pr16-release-validation-evidence.md)** — the authoritative runtime record

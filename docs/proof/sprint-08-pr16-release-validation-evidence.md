@@ -1,5 +1,7 @@
 # Sprint 8 — PR 16 Release-Candidate Validation on Live EKS
 
+> ↩ Canonical entry point: **[Evidence Index](README.md)**
+
 > **STATUS: EXECUTED 2026-08-22.** This is the authoritative record of the final
 > integrated `provision → prove → destroy` EKS session that validated the **complete
 > merged PRs 1–15 system** as a release candidate. Unlike the earlier exploratory

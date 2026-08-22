@@ -1,5 +1,7 @@
 # Sprint 8 — Batched Live-EKS Runtime Evidence
 
+> ↩ Canonical entry point: **[Evidence Index](README.md)**
+
 > **STATUS: EXECUTED 2026-08-21.** This is the authoritative record of the single
 > batched `provision → prove → destroy` EKS session that closed every pending Sprint 8
 > runtime-evidence item at once (per each doc's "do all of these in one cluster

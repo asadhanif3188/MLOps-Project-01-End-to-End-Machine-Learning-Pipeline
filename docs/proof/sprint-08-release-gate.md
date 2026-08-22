@@ -1,5 +1,7 @@
 # Sprint 8 Release Gate — v1.7.0 Observability, Reliability & Production Operations
 
+> ↩ Canonical entry point: **[Evidence Index](README.md)**
+
 > **STATUS: GATE REPORT** — 2026-08-22
 >
 > This is the authoritative Sprint 8 release-gate audit and decision document.
