@@ -88,7 +88,12 @@ so an alert and its dashboard panel can never disagree.
 
 ## 3. Runbook — per alert
 
-Each subsection is the target of that alert's `runbook_url` annotation.
+Each subsection is the target of that alert's `runbook_url` annotation — the concise
+"what pages, why, what to do". For the **full failure-diagnosis + recovery procedure**
+(symptoms → detection → initial checks → diagnosis → likely causes → remediation →
+**explicit recovery verification** → escalation), each alert also links to a deeper
+**failure-mode runbook** under [docs/runbooks/](runbooks/README.md), built from the
+Sprint 8 live-EKS evidence. The mapping is in [§ 4](#4-runbook-mapping).
 
 ### PipelineJobFailed
 
@@ -209,16 +214,19 @@ Each subsection is the target of that alert's `runbook_url` annotation.
 
 ## 4. Runbook mapping
 
-| Alert | Layer | Category (PR 6 brief) | § 6 / § 3 basis | Runbook |
-|---|---|---|---|---|
-| `PipelineJobFailed` | Pipeline | 1 — Pipeline Job failure | § 6 pipeline-success | [↑](#pipelinejobfailed) |
-| `PipelineJobOOMKilled` | Pipeline | 4 — OOM risk | § 3 Layer 2 | [↑](#pipelinejoboomkilled) |
-| `MLflowDown` | MLflow | 2 — MLflow unavailable / 5 — component unavailable | § 6 MLflow availability | [↑](#mlflowdown) |
-| `MLflowMemoryHigh` | MLflow | 4 — high memory | § 6 memory headroom | [↑](#mlflowmemoryhigh) |
-| `PostgresDown` | Postgres | 5 — critical component unavailable | § 3 Layer 4 | [↑](#postgresdown) |
-| `PostgresPVCAlmostFull` | Postgres | (storage) | § 6 storage headroom | [↑](#postgrespvcalmostfull) |
-| `PostgresMemoryHigh` | Postgres | 4 — high memory | § 6 memory headroom | [↑](#postgresmemoryhigh) |
-| `KubePodCrashLooping` | Platform | 3 — persistent restart/crash | § 3 Layer 1 | [↑](#kubepodcrashlooping) |
+| Alert | Layer | Category (PR 6 brief) | § 6 / § 3 basis | Runbook | Deep failure-mode runbook |
+|---|---|---|---|---|---|
+| `PipelineJobFailed` | Pipeline | 1 — Pipeline Job failure | § 6 pipeline-success | [↑](#pipelinejobfailed) | [Pipeline failure](runbooks/pipeline-failure.md) · [Dataset retrieval](runbooks/dataset-retrieval-failure.md) · [Dataset integrity](runbooks/dataset-integrity-failure.md) |
+| `PipelineJobOOMKilled` | Pipeline | 4 — OOM risk | § 3 Layer 2 | [↑](#pipelinejoboomkilled) | [OOMKilled](runbooks/oomkilled.md) |
+| `MLflowDown` | MLflow | 2 — MLflow unavailable / 5 — component unavailable | § 6 MLflow availability | [↑](#mlflowdown) | [MLflow unavailable](runbooks/mlflow-unavailable.md) |
+| `MLflowMemoryHigh` | MLflow | 4 — high memory | § 6 memory headroom | [↑](#mlflowmemoryhigh) | [OOMKilled](runbooks/oomkilled.md) |
+| `PostgresDown` | Postgres | 5 — critical component unavailable | § 3 Layer 4 | [↑](#postgresdown) | [PostgreSQL failure](runbooks/postgresql-failure.md) |
+| `PostgresPVCAlmostFull` | Postgres | (storage) | § 6 storage headroom | [↑](#postgrespvcalmostfull) | [PostgreSQL failure](runbooks/postgresql-failure.md) |
+| `PostgresMemoryHigh` | Postgres | 4 — high memory | § 6 memory headroom | [↑](#postgresmemoryhigh) | [PostgreSQL failure](runbooks/postgresql-failure.md) |
+| `KubePodCrashLooping` | Platform | 3 — persistent restart/crash | § 3 Layer 1 | [↑](#kubepodcrashlooping) | [Crash / restart](runbooks/crash-restart.md) |
+
+> **First response:** for a whole-platform "is it healthy?" triage that routes to the
+> runbook above, start at [Platform health](runbooks/platform-health.md).
 
 ---
 
