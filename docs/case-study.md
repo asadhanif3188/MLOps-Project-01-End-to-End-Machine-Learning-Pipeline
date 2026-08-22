@@ -258,9 +258,10 @@ alert stayed silent. → *Root cause:* the alert keyed on
 container's *previous* termination. A `restartPolicy: Never` Job terminates once and
 never restarts, so `lastState` is empty and KSM emits no series — the alert was
 **unfireable for this workload**. → *Fix:* key on the current-state metric
-`kube_pod_container_status_terminated_reason`. → *Revalidation:* alert FIRING at
-14:19:49Z; restoring the 512Mi limit returned the pod to exit 0
-([runbook](runbooks/oomkilled.md)). → *Lesson:* an untested alert is a hypothesis;
+`kube_pod_container_status_terminated_reason`. → *Revalidation:* with the metric
+corrected, `PipelineJobOOMKilled` fired on the exploratory live run (14:19:49Z), and
+on the PR 16 session restoring the 512Mi limit returned the pod to exit 0 under the
+[runbook](runbooks/oomkilled.md). → *Lesson:* an untested alert is a hypothesis;
 this one was false until a real OOM disproved it.
 
 **Two harness/config defects the live run exposed.** A pinned `postgres-exporter`
@@ -335,10 +336,11 @@ operator would actually act on, and instrumented only where action is possible
   database faults from server faults
   ([ADR-031](decisions/ADR-031-mlflow-postgres-monitoring.md)).
 
-On the live run Prometheus reported **11 targets UP** and three Grafana dashboards
-(EKS Platform Health, Pipeline Operations, MLflow Platform Health) served live data,
-captured in baseline-green and failure-red states
-([screenshots](screenshots/)). Eight alert rules are unit-tested with
+On the PR 16 live run Prometheus reported **11 targets UP** and three Grafana
+dashboards (EKS Platform Health, Pipeline Operations, MLflow Platform Health) served
+live data; the exploratory live-EKS campaign captured those dashboards in
+baseline-green and failure-red states ([screenshots](screenshots/)). Eight alert rules
+are unit-tested with
 `promtool test rules` and each is keyed to a specific operator action
 ([alerting.md](alerting.md), [ADR-033](decisions/ADR-033-alerting.md)).
 
@@ -389,9 +391,10 @@ is ephemeral: **provision → prove → destroy the same session**
 drivers (EKS control plane, 2 × t3.large, NAT, EBS) were recorded during the run
 ([PR 16 §17](proof/sprint-08-pr16-release-validation-evidence.md)), and teardown is
 treated as part of the proof, not a formality: `Destroy complete! Resources: 65
-destroyed` is symmetric with the 65 added, and clean state was verified three
-independent ways
-([teardown](proof/sprint-08-live-eks-evidence.md#8-teardown)). A platform you cannot
+destroyed` is symmetric with the 65 added, with no orphaned resources
+([PR 16 teardown](proof/sprint-08-pr16-release-validation-evidence.md)); the
+exploratory campaign additionally verified clean state three independent ways
+([live-EKS §8](proof/sprint-08-live-eks-evidence.md#8-teardown)). A platform you cannot
 prove you destroyed is a platform that is still costing money.
 
 ## 15 · Limitations
