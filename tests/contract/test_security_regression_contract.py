@@ -168,7 +168,7 @@ def test_iac_declares_kms_pod_identity_and_eks_access_model() -> None:
     removed from the configuration wholesale.
     """
     tf_text = "\n".join(
-        f.read_text(encoding="utf-8", errors="ignore") for f in _TF_DIR.glob("*.tf")
+        f.read_text(encoding="utf-8", errors="ignore") for f in _TF_DIR.rglob("*.tf")
     )
     assert re.search(r'resource\s+"aws_kms_key"', tf_text), (
         "no aws_kms_key resource in terraform/ (KMS envelope encryption)"

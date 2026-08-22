@@ -176,12 +176,14 @@ def test_every_alert_maps_to_an_existing_runbook(alert_names: set[str]) -> None:
     """
     text = _ALERTING_MD.read_text(encoding="utf-8")
     # § 4 rows look like: | `AlertName` | … | [Label](runbooks/<file>.md) · … |
+    # Match EVERY backticked alert name on a row (not just the first), so a future
+    # row that consolidates alerts sharing one runbook still maps them all.
     mapped: dict[str, set[str]] = {}
     for line in text.splitlines():
         if not line.lstrip().startswith("|"):
             continue
-        alert_match = re.search(r"`([A-Za-z]+)`", line)
-        if not alert_match or alert_match.group(1) not in alert_names:
+        row_alerts = {a for a in re.findall(r"`([A-Za-z]+)`", line) if a in alert_names}
+        if not row_alerts:
             continue
         targets = {
             t.split("#", 1)[0]
@@ -189,7 +191,8 @@ def test_every_alert_maps_to_an_existing_runbook(alert_names: set[str]) -> None:
             if t.startswith("runbooks/") and t.split("#", 1)[0].endswith(".md")
         }
         if targets:
-            mapped.setdefault(alert_match.group(1), set()).update(targets)
+            for alert in row_alerts:
+                mapped.setdefault(alert, set()).update(targets)
 
     unmapped = alert_names - set(mapped)
     assert not unmapped, (
@@ -243,7 +246,12 @@ def test_runbook_relative_links_resolve(runbook: str) -> None:
             if fragment and fragment not in _anchors(path):
                 dead_anchors.append(target)
             continue
-        resolved = (base / file_part).resolve()
+        # A repo-root-relative link (/docs/…) resolves against the repo root, not
+        # the OS filesystem root that `base / "/docs/…"` would otherwise yield.
+        if file_part.startswith("/"):
+            resolved = (_REPO_ROOT / file_part.lstrip("/")).resolve()
+        else:
+            resolved = (base / file_part).resolve()
         if not resolved.is_file():
             dead_files.append(target)
             continue
