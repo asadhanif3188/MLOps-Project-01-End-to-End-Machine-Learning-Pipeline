@@ -15,7 +15,7 @@ capability cannot be traced to real repository evidence, it is not listed here.
 > evidence comes from **controlled, short-lived validation sessions** on real
 > Amazon EKS — provisioned, proven, and destroyed the same session. It is
 > **not** a claim of 24/7 production operation, formal SLA/SLO, or enterprise SRE
-> maturity. See [§ Known limitations](#known-limitations-what-this-does-not-prove).
+> maturity. See [§ Known limitations](#known-limitations--what-this-does-not-prove).
 
 ---
 
@@ -23,7 +23,7 @@ capability cannot be traced to real repository evidence, it is not listed here.
 
 | Label | Meaning |
 |-------|---------|
-| **Live EKS validated** | Observed on a real, Terraform-provisioned Amazon EKS cluster, then destroyed. |
+| **Live EKS validated** | Observed on a real, Terraform-provisioned Amazon EKS cluster in the operator's own AWS account, then destroyed. |
 | **Runtime validated** | Observed at runtime on Kubernetes (local Docker Desktop / kind) — real execution, not cloud. |
 | **CI/static validated** | Enforced by CI, static analysis, or build-time gates — not a live-cluster observation. |
 | **Controlled capability demonstration** | A deliberately scoped exercise proving a mechanism works, not a production deployment of it. |
@@ -263,9 +263,11 @@ The skim view. Detail and evidence links follow below.
 
 - **Problem addressed.** An alert with no documented response is just noise; recovery
   that lives only in one engineer's head isn't operable.
-- **What was engineered.** Alert rules carry `runbook_url`s, and **every critical
-  runbook was exercised against a live failure** — captured in a release-gate runbook
-  validation matrix — closing the detect → diagnose → remediate → verify loop.
+- **What was engineered.** Alert rules carry `runbook_url`s, and the runbooks for the
+  **three injected failure classes — dataset retrieval, MLflow outage, and OOM — were
+  each exercised against a live failure** (release-gate runbook validation matrix: 3/3
+  PASS, no undocumented knowledge required), closing the detect → diagnose → remediate
+  → verify loop.
 - **Evidence.** [Release gate §5 runbook matrix](sprint-08-release-gate.md#5-runbook-validation-matrix) ·
   [runbooks/](../runbooks/) ·
   [ADR-033 alerting](../decisions/ADR-033-alerting.md)
