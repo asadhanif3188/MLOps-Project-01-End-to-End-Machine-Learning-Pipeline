@@ -54,11 +54,11 @@ alerts** — the same verified failure/recovery loop drawn in the
 
 ### Experiment tracking — MLflow runs and a registered model
 
-![MLflow "mlops-pipeline" experiment, Training runs view: two runs listed with source train.py, one with a registered model "Best Random Forest Classifier v1"](../screenshots/mlflow-runs-baseline.png)
+![MLflow "mlops-pipeline" experiment, Training runs view: two runs listed, one sourced from train.py with a registered model "Best Random Forest Classifier v1"](../screenshots/mlflow-runs-baseline.png)
 
 - **What it proves.** The **in-cluster MLflow** tracked real training runs for the
-  `mlops-pipeline` experiment (source `train.py`) and **registered a model**
-  ("Best Random Forest Classifier v1") — experiment metadata persisted to the
+  `mlops-pipeline` experiment and **registered a model** ("Best Random Forest
+  Classifier v1", from the `train.py` run) — experiment metadata persisted to the
   PostgreSQL backend and artifacts to SSE-KMS S3.
 - **Canonical evidence.** [Sprint 7 runtime §6 — MLflow tracking](sprint-07-runtime-evidence.md) ·
   [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md)
@@ -92,6 +92,9 @@ dashboard:
 - **Canonical evidence.** [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md)
   (outage → `MLflowDown` FIRING → restore → RESOLVED; `pg_up=1` throughout) ·
   [runbook: mlflow-unavailable](../runbooks/mlflow-unavailable.md).
+- **Context.** A before/after pair of the *same* dashboard — the fault is
+  availability-only (server down, database untouched), which is exactly the
+  distinction the separate MLflow and PostgreSQL panels are designed to surface.
 
 ### MLflow outage — the alert fires
 
