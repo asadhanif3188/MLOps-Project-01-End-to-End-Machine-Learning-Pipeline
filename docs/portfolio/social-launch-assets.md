@@ -72,7 +72,7 @@ guardrails at the end of this file.
 ## 2. Follow-up technical series
 
 Ten posts, each self-contained, each following the same spine:
-**Hook → Engineering context → Decision/failure → Trade-off → Result → CTA (where it fits).**
+**Hook → Context (engineering) → Decision/failure → Trade-off → Result → CTA (where it fits).**
 Publish in the order given in the posting sequence below, not necessarily this
 numbering.
 
