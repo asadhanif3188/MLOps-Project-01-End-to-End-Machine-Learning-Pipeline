@@ -47,8 +47,8 @@ is. Detail lives in the sectioned index below.
 |------------|--------------------|----------------|----------------|
 | **Cloud infrastructure** | Terraform-provisioned EKS, VPC, IAM, KMS, ECR, S3 (65 resources) | [PR 16 §Environment](sprint-08-pr16-release-validation-evidence.md) · [Release gate §4.A](sprint-08-release-gate.md) | Live EKS validated |
 | **ML pipeline on EKS** | DVC pipeline run to completion as a `batch/v1` Job (exit 0, 5/5 stages) | [PR 16 evidence](sprint-08-pr16-release-validation-evidence.md) · [Sprint 7 runtime](sprint-07-runtime-evidence.md) | Live EKS validated |
-| **Experiment tracking** | In-cluster MLflow on PostgreSQL + SSE-KMS S3 artifacts; runs persisted | [MLflow integration](sprint-07-mlflow-integration-evidence.md) · [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) | Live EKS validated |
-| **Dataset retrieval** | S3 runtime fetch by init container, checksum-verified before training | [S3 dataset evidence](sprint-07-s3-dataset-runtime-evidence.md) · [Dataset failure tests](sprint-08-dataset-failure-tests-evidence.md) | Live EKS validated |
+| **Experiment tracking** | In-cluster MLflow on PostgreSQL + SSE-KMS S3 artifacts; runs persisted | [Sprint 7 runtime §6](sprint-07-runtime-evidence.md) · [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) | Live EKS validated |
+| **Dataset retrieval** | S3 runtime fetch by init container, checksum-verified before training | [Sprint 7 runtime §5](sprint-07-runtime-evidence.md) · [Dataset failure tests](sprint-08-dataset-failure-tests-evidence.md) | Live EKS validated |
 | **Observability** | Prometheus (11 targets UP), 3 Grafana dashboards, pipeline metrics | [Release gate §4](sprint-08-release-gate.md) · [screenshots](../screenshots/) | Live EKS validated |
 | **Alerting** | Alert rules that fire on real failures and resolve on recovery | [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) · [Dataset failure tests](sprint-08-dataset-failure-tests-evidence.md) | Live EKS validated |
 | **Failure & recovery** | Dataset / MLflow / OOM / crash failures injected, detected, recovered via runbooks | [Release gate §4.B–4.D + §5](sprint-08-release-gate.md) · [Resource failure tests](sprint-08-resource-failure-tests-evidence.md) | Live EKS validated |
@@ -94,9 +94,9 @@ failure/recovery testing, and supply-chain controls — not the classifier itsel
 | Capability | Claim | Evidence Type | Canonical Link |
 |------------|-------|---------------|----------------|
 | Pipeline execution | DVC pipeline ran to completion as a `batch/v1` Job — exit 0, 5/5 stages `success=1` | Live EKS validated | [PR 16 evidence](sprint-08-pr16-release-validation-evidence.md) |
-| Dataset retrieval | Dataset fetched from S3 by an init container, checksum-verified before training | Live EKS validated | [S3 dataset evidence](sprint-07-s3-dataset-runtime-evidence.md) |
+| Dataset retrieval | Dataset fetched from S3 by an init container, checksum-verified before training (`sha256 == pinned`) | Live EKS validated | [Sprint 7 runtime §5](sprint-07-runtime-evidence.md) · [S3 mechanism](sprint-07-s3-dataset-runtime-evidence.md) |
 | DVC correctness | Declared DVC DAG matches actual Python data dependencies | Static/runtime | [DVC dataflow correction](sprint-07-dvc-dataflow-correction-evidence.md) |
-| MLflow tracking | In-cluster MLflow logged runs; persisted to PostgreSQL + SSE-KMS S3 | Live EKS validated | [MLflow integration](sprint-07-mlflow-integration-evidence.md) |
+| MLflow tracking | In-cluster MLflow logged runs; persisted to PostgreSQL + SSE-KMS S3 | Live EKS validated | [Sprint 7 runtime §6](sprint-07-runtime-evidence.md) · [MLflow mechanism](sprint-07-mlflow-integration-evidence.md) |
 | MLflow persistence | Runs survive an MLflow outage (`pg_up=1` throughout; run count monotonic) | Live EKS validated | [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) |
 
 ## 5 · Observability
@@ -134,8 +134,8 @@ via documented [runbooks](../runbooks/) — then the healthy path was re-verifie
 |------------|-------|---------------|----------------|
 | Image scanning | Trivy vulnerability scan enforced in CI; FIXABLE HIGH bumped; residuals documented | Static/CI validated | [Image scan evidence](sprint-08-image-scan-evidence.md) · [ADR-035](../decisions/ADR-035-container-image-scanning.md) |
 | Non-root runtime | Dedicated unprivileged UID/GID; restricted Pod Security Standard | Static | [ADR-010](../decisions/ADR-010-kubernetes-security-hardening.md) |
-| Secrets at rest | KMS envelope encryption for EKS secrets | Live EKS validated | [ADR-025](../decisions/ADR-025-eks-secrets-kms-encryption.md) |
-| Least-privilege IAM | Scoped IAM foundation; no static pipeline credentials | Live EKS validated | [ADR-016](../decisions/ADR-016-aws-iam-foundation.md) · [Release gate](sprint-08-release-gate.md) |
+| Secrets at rest | KMS envelope encryption for EKS secrets (3 customer-managed keys) | Live EKS validated | [Sprint 7 runtime §1](sprint-07-runtime-evidence.md) · [ADR-025](../decisions/ADR-025-eks-secrets-kms-encryption.md) |
+| Least-privilege IAM | Scoped IAM foundation; no static pipeline credentials | Live EKS validated | [Sprint 7 runtime §4](sprint-07-runtime-evidence.md) · [ADR-016](../decisions/ADR-016-aws-iam-foundation.md) |
 
 ## 8 · NetworkPolicy
 
@@ -174,7 +174,9 @@ deliberate honesty boundary, not an omission.
 **Not claimed:** 24/7 production operation · formal SLA/SLO · enterprise SRE
 maturity · multi-region / disaster recovery · model serving at scale · GitOps ·
 Terraform remote state / state locking · service mesh · distributed tracing · a
-fully signed & attested supply chain.
+fully signed & attested supply chain · centralized logging beyond structured
+container logs · a production incident-response organization · compliance
+certification.
 
 Canonical statements of these boundaries:
 
