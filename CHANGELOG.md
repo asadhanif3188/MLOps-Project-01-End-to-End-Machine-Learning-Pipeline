@@ -187,8 +187,6 @@ no undocumented tribal knowledge required. Release-gate verdict: PASS.
   implementation; obsolete claims removed (no monitoring → Prometheus/Grafana live);
   historical evidence preserved (earlier campaigns, prior ADRs).
 
-- **Release checklist** ([docs/release-checklist.md](docs/release-checklist.md)) —
-  updated documentation and verification gates for v1.7.0 release cut.
 
 ### Fixed
 

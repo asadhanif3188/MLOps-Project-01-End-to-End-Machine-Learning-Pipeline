@@ -54,7 +54,7 @@ All gates passed **before** AWS provisioning:
 | Type safety | mypy strict | ✅ PASS — 14 source files, no issues |
 | Python tests | pytest (incl. Sprint 8 contracts) | ✅ **233 passed, 1 skipped** |
 | Terraform format | `terraform fmt -check -recursive` | ✅ PASS |
-| Terraform validation | `terraform validate` + `terraform test` | ✅ **42/42** (1 is operator-tfvars artifact) |
+| Terraform validation | `terraform validate` + `terraform test` | ✅ **41/42 locally** (see footnote †); **42/42 in CI without operator tfvars** |
 | Kustomize rendering | `kustomize build` (6 roots) | ✅ all valid |
 | Kubernetes schema | `kubeconform -strict` (6 roots) | ✅ **201/201 checks** (local + aws overlays) |
 | Kubernetes contracts | `k8s/validate.py` (security + runtime) | ✅ **201/201 checks** (local + aws overlays) |
@@ -390,30 +390,34 @@ No monitoring tool requested `privileged` or broad permissions. All justified ex
 
 **Action taken:** Updated documentation to match PR 16 reality, preserving historical evidence.
 
-### 10.A — Current Documentation Updated
+### 10.A — Current Documentation Updated (Sprint 8 PRs)
 
-- ✅ [README.md](../README.md) — observability status, operational proof claim, version reference
 - ✅ [docs/observability.md](../observability.md) — architecture, signal catalogue, dashboard proof
 - ✅ [docs/alerting.md](../alerting.md) — alert rules, thresholds, live validation results
 - ✅ [docs/network-policies.md](../network-policies.md) — communication matrix, enforcement proof
-- ✅ [docs/architecture.md](../docs/architecture.md) — observability layer integrated into platform
-- ✅ [docs/cloud-operations.md](../docs/cloud-operations.md) — provisioning → validation → destroy lifecycle documented
-- ✅ [SECURITY.md](../SECURITY.md) — observability stack hardening, no exceptions introduced
+- ✅ [docs/container-image-scanning.md](../container-image-scanning.md) — scanning policy, fixability discipline
+- ✅ [docs/supply-chain-provenance.md](../supply-chain-provenance.md) — SBOM, digest verification, release chain
+- ✅ [docs/monitoring-operations.md](../monitoring-operations.md) — Prometheus operations, scrape config, retention
 - ✅ [ADR index](../decisions/README.md) — ADRs 028–037 added
 
-### 10.B — Historical Evidence Preserved
+### 10.B — Documentation Reconciliation (Still Pending Pre-Tag)
+
+The following top-level documentation has **not** been updated during Sprint 8 and **should be** before tag:
+
+- ⏳ [README.md](../../README.md) — Kubernetes section still shows `--build-arg BUILD_VERSION="1.6.0"`; does not mention Prometheus/Grafana/observability; EKS narrative stops at Sprint 7
+- ⏳ [docs/architecture.md](../architecture.md) — Does not integrate observability layer; no mention of Prometheus, alerts, or operational proof
+- ⏳ [SECURITY.md](../../SECURITY.md) — Does not document observability stack hardening or security posture of monitoring components
+- ⏳ [docs/kubernetes-security.md](../kubernetes-security.md) — Does not document observability stack security or the extended security contract
+
+**Pre-tag action required:** Update these four documents to reflect Sprint 8 before creating the v1.7.0 tag. (This is a documentation-only action; no code or implementation changes required.)
+
+### 10.C — Historical Evidence Preserved
 
 - ✅ [docs/proof/sprint-08-pr16-release-validation-evidence.md](sprint-08-pr16-release-validation-evidence.md) — authoritative runtime record
 - ✅ [docs/proof/sprint-08-live-eks-evidence.md](sprint-08-live-eks-evidence.md) — earlier exploratory campaign (preserved)
 - ✅ Earlier sprint proofs, ADRs, retrospectives — all preserved as historical record
 
-### 10.C — Obsolete Claims Removed
-
-- ❌ Removed false claim that in-cluster pipeline "does not complete yet" (it does — PR 16 proved it)
-- ❌ Removed DagsHub as current experiment-tracking backend (it is only a data remote)
-- ❌ Removed "no monitoring" claim (Prometheus/Grafana now live)
-
-**Documentation status: Consistent with implementation. No contradictions. Historical evidence preserved.**
+**Documentation status:** Documentation created/updated in Sprint 8 PRs is consistent with implementation. Top-level documentation (README.md, docs/architecture.md, SECURITY.md, docs/kubernetes-security.md) still reflects pre-Sprint-8 state and should be updated before tag as pre-tag action (§13 step 2).
 
 ---
 
@@ -562,12 +566,17 @@ The CHANGELOG requires a **new Sprint 8 section** summarizing:
 
 ### Next Steps
 
-1. ✅ Create `docs/proof/sprint-08-release-gate.md` (this document)
-2. ✅ Update CHANGELOG.md with Sprint 8 section
-3. ✅ Update version references in README.md and docs
-4. ✅ Commit release-gate document + changelog updates
-5. ⏳ Tag `v1.7.0` on main
-6. ⏳ Create GitHub release with CHANGELOG notes
+1. ✅ Create `docs/proof/sprint-08-release-gate.md` (this document) — **DONE**
+2. ✅ Update CHANGELOG.md with Sprint 8 section — **DONE**
+3. ✅ Commit release-gate document + changelog updates — **DONE**
+4. ⏳ **Update top-level documentation** (§10.B):
+   - Update README.md (version, observability status)
+   - Update docs/architecture.md (observability layer)
+   - Update SECURITY.md (observability stack security)
+   - Update docs/kubernetes-security.md (monitoring component hardening)
+5. ⏳ Commit documentation updates
+6. ⏳ Tag `v1.7.0` on main
+7. ⏳ Create GitHub release with CHANGELOG notes
 
 ### Defensible Release Statement
 
