@@ -207,7 +207,14 @@ its proof, and how strong that proof is — see the **[Evidence Index](docs/proo
 | NetworkPolicy enforced (6 allow / 3 deny) | [Network policy evidence](docs/proof/sprint-08-network-policy-runtime-evidence.md) |
 | Supply chain: git → digest → running pod | [SBOM/provenance evidence](docs/proof/sprint-08-sbom-provenance-evidence.md) · [Release gate §9](docs/proof/sprint-08-release-gate.md) |
 | Infrastructure destroyed & verified clean | [Live-EKS evidence §8](docs/proof/sprint-08-live-eks-evidence.md#8-teardown) |
-| Dashboards / alerts (visual) | [`docs/screenshots/`](docs/screenshots/) |
+| Dashboards / alerts (visual) | [Visual evidence — curated captures](docs/proof/visual-evidence.md) |
+
+The single most legible proof — the pipeline running to completion **on live EKS**,
+per stage, with operational metrics that outlive the finite Job:
+
+![MLOps Pipeline Operations dashboard on live EKS: Last run result "Succeeded", 0 failed, 49s duration, Dataset retrieval OK, and per-stage durations for fetch_dataset, preprocess, split, evaluate, train — all stages success = OK](docs/screenshots/grafana-pipeline-ops-baseline.png)
+
+<sub>More curated, captioned captures — healthy baseline and failure detection/alerts — in **[Visual evidence](docs/proof/visual-evidence.md)**.</sub>
 
 Release verdict: **[Sprint 8 Release Gate — PASS](docs/proof/sprint-08-release-gate.md)** (23/23 proof dimensions).
 

@@ -152,11 +152,9 @@ repository.
 
 | Location | Description |
 |----------|-------------|
-| [Diagrams](diagrams/) | Architecture and flow diagrams (placeholders) |
-| [Screenshots](screenshots/) | UI and execution screenshots (placeholders) |
-
-> Diagrams and screenshots are currently placeholders and will be added in a
-> later sprint.
+| [Diagrams](diagrams/) | Reviewer-ready platform diagrams (architecture, observability, security, failure/recovery, supply-chain, evolution) |
+| [Visual evidence](proof/visual-evidence.md) | Curated, captioned runtime screenshots — healthy baseline + failure detection/alerts |
+| [Screenshots](screenshots/) | Raw screenshot assets (source for the curated visual evidence) |
 
 ---
 

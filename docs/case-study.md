@@ -413,7 +413,7 @@ operator would actually act on, and instrumented only where action is possible
 On the PR 16 live run Prometheus reported **11 targets UP** and three Grafana
 dashboards (EKS Platform Health, Pipeline Operations, MLflow Platform Health) served
 live data; the exploratory live-EKS campaign captured those dashboards in
-baseline-green and failure-red states ([screenshots](screenshots/)). Eight alert rules
+baseline-green and failure-red states ([visual evidence](proof/visual-evidence.md)). Eight alert rules
 are unit-tested with
 `promtool test rules` and each is keyed to a specific operator action
 ([alerting.md](alerting.md), [ADR-033](decisions/ADR-033-alerting.md)).
@@ -449,6 +449,17 @@ session on live Amazon EKS
 - **`terraform destroy` symmetric — 65 destroyed;** verified clean three ways
   (Terraform state 0 resources, `aws eks` empty, KMS keys scheduled for deletion);
   nothing left billing.
+
+Some of that is visible directly. The MLflow-outage loop, seen on the dashboard and
+on the alert page — `/health` flips **Available → DOWN** while PostgreSQL stays `Up`,
+and `MLflowDown` **fires**:
+
+![MLflow Platform Health dashboard during the injected outage: MLflow /health DOWN, 0 replicas, while PostgreSQL still Up](screenshots/grafana-mlflow-health-outage-red.png)
+
+![Prometheus Alerts page: MLflowDown Firing, within the full 8-rule set](screenshots/prometheus-mlflowdown-firing.png)
+
+<sub>Full curated set — healthy baseline, pipeline success, experiment tracking, and both
+failure classes — in **[Visual evidence](proof/visual-evidence.md)**.</sub>
 
 The validation environments were **short-lived and ephemeral by design** — this is
 stated openly, not hidden. The Sprint 8 release gate audited 23 proof dimensions
