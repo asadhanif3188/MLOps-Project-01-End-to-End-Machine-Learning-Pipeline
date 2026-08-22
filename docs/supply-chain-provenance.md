@@ -65,24 +65,24 @@ Terraform with applied state), plus **Trivy** on PATH, and **cosign** only if yo
 ```bash
 # Build → push → capture the immutable digest → emit SBOM + provenance record.
 # The ECR repo URL is read from `terraform output` (account id stays out of git).
-scripts/release-image.sh --tag 1.6.0 --out ./release-evidence
+scripts/release-image.sh --tag 1.7.0 --out ./release-evidence
 
 #   … MLflow server image — layered FROM the pipeline image just released, so pass
 #   that image's ECR ref as BASE_IMAGE (it is in the local daemon from the push above;
 #   its tag differs from the MLflow --tag, so it must be named explicitly):
-BASE_IMAGE="$(terraform -chdir=terraform output -raw ecr_repository_url):1.6.0" \
+BASE_IMAGE="$(terraform -chdir=terraform output -raw ecr_repository_url):1.7.0" \
   scripts/release-image.sh --mlflow --tag 0.1.0 --out ./release-evidence
 ```
 
-It prints the chain and writes `release-evidence/mlops-pipeline-1.6.0.provenance.json`:
+It prints the chain and writes `release-evidence/mlops-pipeline-1.7.0.provenance.json`:
 
 ```json
 {
   "image": "mlops-pipeline",
-  "git": { "commit": "<sha>", "tag": "v1.6.0" },
-  "image_tag": "1.6.0",
+  "git": { "commit": "<sha>", "tag": "v1.7.0" },
+  "image_tag": "1.7.0",
   "image_digest": "sha256:…",
-  "sbom": { "format": "CycloneDX", "tool": "trivy", "file": "mlops-pipeline-1.6.0.cdx.json" }
+  "sbom": { "format": "CycloneDX", "tool": "trivy", "file": "mlops-pipeline-1.7.0.cdx.json" }
 }
 ```
 
@@ -91,9 +91,14 @@ The digest is captured from the pushed image **and** cross-checked against
 Because the ECR repository enforces **immutable tags** ([ADR-021](decisions/ADR-021-terraform-managed-ecr.md)),
 that `tag → digest` mapping can never change.
 
-> **Dry run (no AWS):** `scripts/release-image.sh --tag 1.6.0 --no-push --repo \
+> **Dry run (no AWS):** `scripts/release-image.sh --tag 1.7.0 --no-push --repo \
 > example.dkr.ecr.us-east-1.amazonaws.com/mlops-pipeline` builds locally and emits the
 > SBOM from the local image without pushing — useful to exercise the mechanism.
+>
+> **Historical note:** Sprint 8 PR 16 captured runtime evidence using the pipeline image tagged `1.6.0`.
+> The v1.7.0 release is built from the same final release code (same git commit), but retagged as `1.7.0`
+> for deployment. PR16 evidence `mlops-pipeline-1.6.0.provenance.json` remains the authoritative runtime
+> validation artifact; the `1.7.0` tag creates a clean release lineage forward from v1.7.0.
 
 ---
 
@@ -102,7 +107,7 @@ that `tag → digest` mapping can never change.
 **Preferred — deploy by digest (immutable by construction):**
 
 ```bash
-digest=$(jq -r .image_digest release-evidence/mlops-pipeline-1.6.0.provenance.json)
+digest=$(jq -r .image_digest release-evidence/mlops-pipeline-1.7.0.provenance.json)
 IMAGE_DIGEST="$digest" scripts/render-cloud-manifests.sh --apply
 ```
 
@@ -116,7 +121,7 @@ syntax (ADR-036 § 3).
 the syntax, is the guarantee):
 
 ```bash
-scripts/verify-deployed-digest.sh --record release-evidence/mlops-pipeline-1.6.0.provenance.json
+scripts/verify-deployed-digest.sh --record release-evidence/mlops-pipeline-1.7.0.provenance.json
 #   or explicitly:  scripts/verify-deployed-digest.sh --expect "$digest"
 ```
 

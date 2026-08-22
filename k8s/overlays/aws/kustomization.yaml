@@ -57,7 +57,7 @@ resources:
 images:
   - name: ml-pipeline
     newName: 000000000000.dkr.ecr.us-east-1.amazonaws.com/mlops-pipeline
-    newTag: "1.6.0"
+    newTag: "1.7.0"
   # The MLflow Tracking Server image (docker/mlflow/Dockerfile), pushed to its OWN
   # Terraform-managed ECR repository (terraform/ecr.tf: aws_ecr_repository.mlflow_server).
   # Committed PLACEHOLDER (account id / region), filled in for the operator's OWN

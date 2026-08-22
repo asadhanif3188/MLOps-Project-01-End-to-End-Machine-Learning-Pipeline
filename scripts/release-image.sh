@@ -37,7 +37,7 @@
 #
 # Usage:
 #   scripts/release-image.sh [options]
-#     --tag TAG           image tag / BUILD_VERSION      (default: 1.6.0)
+#     --tag TAG           image tag / BUILD_VERSION      (default: 1.7.0)
 #     --repo URL          ECR repo URL (…/mlops-pipeline); default from terraform
 #     --mlflow            release the MLflow server image instead of the pipeline
 #                         image (docker/mlflow/Dockerfile, repo mlflow_server_…)
@@ -57,7 +57,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${TF_DIR:-${REPO_ROOT}/terraform}"
 
 # --- defaults ------------------------------------------------------------------
-TAG="${IMAGE_TAG:-1.6.0}"
+TAG="${IMAGE_TAG:-1.7.0}"
 REPO=""
 GITREF="HEAD"
 OUTDIR=""

@@ -40,7 +40,7 @@
 #   -h, --help     show this help and exit
 #
 # Environment overrides (rarely needed; defaults match the committed image tags):
-#   IMAGE_TAG          workload image tag         (default: 1.6.0)
+#   IMAGE_TAG          workload image tag         (default: 1.7.0)
 #   MLFLOW_IMAGE_TAG   MLflow server image tag    (default: 0.1.0)
 #   IMAGE_DIGEST       pin the workload image BY DIGEST (sha256:…) instead of by tag
 #   MLFLOW_IMAGE_DIGEST  pin the MLflow image BY DIGEST (sha256:…) instead of by tag
@@ -65,7 +65,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${TF_DIR:-${REPO_ROOT}/terraform}"
 OVERLAY_REL="k8s/overlays/aws"
 
-IMAGE_TAG="${IMAGE_TAG:-1.6.0}"
+IMAGE_TAG="${IMAGE_TAG:-1.7.0}"
 MLFLOW_IMAGE_TAG="${MLFLOW_IMAGE_TAG:-0.1.0}"
 
 OUTFILE=""
@@ -166,7 +166,7 @@ pin_image() {
     subst "${OVERLAY}/kustomization.yaml" "s|newTag: \"${literal}\"|newTag: \"${tag}\"|"
   fi
 }
-pin_image "1.6.0" "${IMAGE_TAG}"        "${IMAGE_DIGEST:-}"
+pin_image "1.7.0" "${IMAGE_TAG}"        "${IMAGE_DIGEST:-}"
 pin_image "0.1.0" "${MLFLOW_IMAGE_TAG}" "${MLFLOW_IMAGE_DIGEST:-}"
 
 # 2. Runtime dataset source (job-cloud.yaml) — the whole DATASET_S3_URI value.
