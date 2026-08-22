@@ -49,7 +49,7 @@ is. Detail lives in the sectioned index below.
 | **ML pipeline on EKS** | DVC pipeline run to completion as a `batch/v1` Job (exit 0, 5/5 stages) | [PR 16 evidence](sprint-08-pr16-release-validation-evidence.md) · [Sprint 7 runtime](sprint-07-runtime-evidence.md) | Live EKS validated |
 | **Experiment tracking** | In-cluster MLflow on PostgreSQL + SSE-KMS S3 artifacts; runs persisted | [Sprint 7 runtime §6](sprint-07-runtime-evidence.md) · [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) | Live EKS validated |
 | **Dataset retrieval** | S3 runtime fetch by init container, checksum-verified before training | [Sprint 7 runtime §5](sprint-07-runtime-evidence.md) · [Dataset failure tests](sprint-08-dataset-failure-tests-evidence.md) | Live EKS validated |
-| **Observability** | Prometheus (11 targets UP), 3 Grafana dashboards, pipeline metrics | [Release gate §4](sprint-08-release-gate.md) · [screenshots](../screenshots/) | Live EKS validated |
+| **Observability** | Prometheus (11 targets UP), 3 Grafana dashboards, pipeline metrics | [Release gate §4](sprint-08-release-gate.md) · [visual evidence](visual-evidence.md) | Live EKS validated |
 | **Alerting** | Alert rules that fire on real failures and resolve on recovery | [MLflow failure tests](sprint-08-mlflow-failure-tests-evidence.md) · [Dataset failure tests](sprint-08-dataset-failure-tests-evidence.md) | Live EKS validated |
 | **Failure & recovery** | Dataset / MLflow / OOM / crash failures injected, detected, recovered via runbooks | [Release gate §4.B–4.D + §5](sprint-08-release-gate.md) · [Resource failure tests](sprint-08-resource-failure-tests-evidence.md) | Live EKS validated |
 | **NetworkPolicy** | Default-deny + explicit-allow, both namespaces (6 allow / 3 deny) | [NetworkPolicy runtime](sprint-08-network-policy-runtime-evidence.md) · [live-EKS §5](sprint-08-live-eks-evidence.md) | Live EKS validated |
@@ -104,9 +104,9 @@ failure/recovery testing, and supply-chain controls — not the classifier itsel
 | Capability | Claim | Evidence Type | Canonical Link |
 |------------|-------|---------------|----------------|
 | Metrics | Prometheus scraping 11 targets UP (platform + pipeline + exporters) | Live EKS validated | [Release gate §4](sprint-08-release-gate.md) |
-| Dashboards | 3 Grafana dashboards (platform health, pipeline ops, MLflow health) | Live EKS validated | [screenshots/](../screenshots/) · [ADR-032](../decisions/ADR-032-grafana-dashboards.md) |
+| Dashboards | 3 Grafana dashboards (platform health, pipeline ops, MLflow health) | Live EKS validated | [visual evidence](visual-evidence.md) · [ADR-032](../decisions/ADR-032-grafana-dashboards.md) |
 | Pipeline metrics | Per-stage success/duration metrics exported to Pushgateway | Live EKS validated | [Release gate §4](sprint-08-release-gate.md) · [ADR-030](../decisions/ADR-030-pipeline-operational-metrics.md) |
-| Visual proof | Baseline-green and failure-red dashboard captures | Live EKS validated | [screenshots/](../screenshots/) |
+| Visual proof | Curated, captioned captures — healthy baseline + failure detection/alerts | Live EKS validated | [visual evidence](visual-evidence.md) |
 
 ## 6 · Failure & Recovery
 

@@ -1,6 +1,10 @@
 # Screenshots
 
-> **Status:** 🚧 Placeholder — actual screenshots will be added in later sprints.
+> **Status:** ✅ Live runtime screenshots present. The Sprint 8 live-EKS captures
+> (Grafana, MLflow, Prometheus) are the top-level `*.png` files here. For the
+> **curated, captioned** set — which images prove what — see
+> [Visual evidence](../proof/visual-evidence.md). The category subfolders below
+> remain empty placeholders.
 
 This directory holds visual documentation of the project. Each subfolder is a
 placeholder for a specific category of screenshot:
