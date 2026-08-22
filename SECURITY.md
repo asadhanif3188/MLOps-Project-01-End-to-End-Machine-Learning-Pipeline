@@ -146,6 +146,32 @@ Contributors and users should follow these practices:
   lifecycle, cost drivers, and teardown procedure are in
   [docs/cloud-operations.md](docs/cloud-operations.md)
   ([ADR-020](docs/decisions/ADR-020-cloud-lifecycle-cost-control.md)).
+- **Observability stack hardening (Sprint 8).** All monitoring and observability
+  components — **Prometheus, Grafana, kube-state-metrics, node-exporter,
+  blackbox-exporter, postgres-exporter, Pushgateway** — are deployed with the same
+  hardened Pod Security context as the application workload: **non-root** (explicit
+  UID/GID), **seccomp RuntimeDefault**, **dropped capabilities** (no Linux
+  capabilities), **allowPrivilegeEscalation: false**, and **measured resource
+  limits**. No monitoring tool was granted broad permissions merely because its
+  upstream image requests them. Justified exceptions — Prometheus and kube-state-metrics
+  reaching the cluster's **env-specific API server IP** — are mitigated by restricting
+  **NetworkPolicy ingress** and documented in the architectural trade-off (ADR-034).
+  The entire observability fleet is validated by the same `k8s/validate.py` security
+  contract that covers the application, so no regression can be silently introduced
+  (201/201 contract assertions pass on both local and EKS overlays). Design of record:
+  [ADR-028–032](docs/decisions/ADR-028-observability-architecture.md),
+  [docs/kubernetes-security.md](docs/kubernetes-security.md).
+- **Least-privilege pod-to-pod networking (NetworkPolicy).** Kubernetes
+  **NetworkPolicy** enforcement is enabled on EKS via the Amazon VPC CNI
+  (`enableNetworkPolicy=true`, ADR-034) and enforces a **deny-by-default + explicit
+  allow** model across the `mlops` (application) and `monitoring` (observability)
+  namespaces. Required application paths — pipeline to MLflow, pipeline to Pushgateway,
+  MLflow to PostgreSQL, DNS, Pod Identity egress, and S3 egress — are explicitly
+  allowed; prohibited east-west paths are blocked (e.g., unlabelled pods cannot reach
+  MLflow or PostgreSQL). **Nine functional tests** (six allowed, three denied paths)
+  prove the enforcement on live EKS. Design of record:
+  [ADR-034](docs/decisions/ADR-034-network-policies.md),
+  [docs/network-policies.md](docs/network-policies.md).
 
 ---
 

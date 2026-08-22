@@ -216,6 +216,45 @@ values in [§3](#3-pod--container-security-context) and [§2](#2-workload-identi
 
 ---
 
+## 7. Observability stack security (Sprint 8)
+
+The platform includes a full observability layer: **Prometheus, Grafana,
+kube-state-metrics, node-exporter, blackbox-exporter, postgres-exporter, and
+Pushgateway**. Each component is subject to **the same hardened Pod Security
+context** as the pipeline:
+
+| Control | Observability components |
+|---------|--------------------------|
+| `runAsNonRoot: true` | ✅ all hardened; explicit UID/GID for each |
+| `seccompProfile: RuntimeDefault` | ✅ all components |
+| `allowPrivilegeEscalation: false` | ✅ all container-level specs |
+| `capabilities: drop [ALL]` | ✅ no Linux capabilities needed |
+| Resource requests + limits | ✅ measured and pinned per component |
+| Least-privilege ServiceAccount | ✅ no RBAC beyond what each component needs (or none for passive collectors) |
+
+**Justified exceptions (documented, not hidden):**
+- **Prometheus and kube-state-metrics** reach the cluster's Kubernetes API server
+  at an env-specific IP (outside the pod network). This cannot be expressed as a
+  precise NetworkPolicy rule. **Mitigation:** the `monitoring` namespace restricts
+  *ingress* to Prometheus/KSM from authorized scrape clients; egress is allowed only
+  for API-server connectivity. The trade-off is documented in
+  [ADR-034](decisions/ADR-034-network-policies.md).
+
+**Verification:**
+- Static contract: `k8s/validate.py` **201/201 assertions pass** on both local and
+  AWS overlays, including **100+ security context checks** on all application and
+  observability workloads — a single failing check fails the entire validation, so
+  no component can regress unknowingly.
+- Live validation: All observability components were deployed and verified on real
+  EKS (Sprint 8, PR 16). The hardened context was confirmed, no privileged requests
+  were made, and all security controls were observed enforced by the kubelet.
+
+No monitoring tool was granted broad permissions (`cluster-admin`, `*` actions, or
+cloud IAM wildcards) merely because its upstream image or Helm chart requests them.
+Security is enforced uniformly across application and observability stacks.
+
+---
+
 ## Related documentation
 
 - [ADR-010 — Security Hardening](decisions/ADR-010-kubernetes-security-hardening.md)
