@@ -70,7 +70,7 @@ they are mounted and injected at run time.
 ```bash
 docker build \
   --build-arg VCS_REF="$(git rev-parse --short HEAD)" \
-  --build-arg BUILD_VERSION="1.6.0" \
+  --build-arg BUILD_VERSION="1.7.0" \
   -t ml-pipeline:local .
 ```
 
@@ -189,6 +189,10 @@ in [`k8s/README.md`](k8s/README.md).
 > [ADR-011](docs/decisions/ADR-011-kubernetes-resource-lifecycle.md), and
 > [ADR-012](docs/decisions/ADR-012-kubernetes-manifest-validation.md); run details:
 > [`k8s/README.md`](k8s/README.md).
+
+### Observability & Operations (Sprint 8)
+
+The platform now includes **comprehensive observability** on real EKS: **Prometheus** collects metrics across four layers (Kubernetes platform, ephemeral pipeline Job, MLflow tracking server, PostgreSQL metadata), **Grafana** dashboards display platform health and pipeline operations in real time, and **eight alert rules** detect critical failures (pipeline job failure, OOM, MLflow unavailability, PostgreSQL issues, crash loops). The operational model is proven: **three critical-path scenarios** (dataset retrieval failure, MLflow outage, OOM/resource failure) were validated on live EKS with controlled failure injection — each failure was detected, alerts fired, repository runbooks guided diagnosis and recovery, and the platform returned to a verified healthy state. All operational runbooks were exercised without requiring undocumented tribal knowledge. Network policies enforce least-privilege pod-to-pod communication (9 functional tests: 6 paths allowed, 3 paths denied). Container images are scanned for vulnerabilities (no fixable HIGH/CRITICAL), and supply-chain provenance is traceable end-to-end: git commit → ECR immutable digest → running workload with SBOM. See [Observability Architecture](docs/observability.md), [Alerting](docs/alerting.md), [Operational Runbooks](docs/runbooks/README.md), [Sprint 8 Release Gate](docs/proof/sprint-08-release-gate.md), and [PR 16 Live-EKS Validation Evidence](docs/proof/sprint-08-pr16-release-validation-evidence.md).
 
 ### How the DVC Stages Are Defined
 

@@ -7,8 +7,195 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet. The Sprint 7 work below is the content of the `v1.6.0`
-release currently being cut (see the [release gate](docs/proof/sprint-07-release-gate.md))._
+_No unreleased changes yet. Sprint 8 work below is the content of the `v1.7.0`
+release (see the [release gate](docs/proof/sprint-08-release-gate.md))._
+
+## [1.7.0] - 2026-08-22
+
+Sprint 8 — Observability, Reliability & Production Operations: implement comprehensive
+observability of the Sprint 7 platform (Prometheus + Grafana across Kubernetes, pipeline,
+MLflow, PostgreSQL layers), execute controlled-failure scenarios on real EKS to prove
+monitoring detection + alerting + runbook-driven recovery, validate all critical paths
+(dataset failure/recovery, MLflow outage/recovery, OOM/resource failure/recovery) with
+live alerts and recovery verification, harden pipeline reliability (bounded retry,
+checksum integrity, resource coupling), validate least-privilege NetworkPolicy enforcement,
+prove container supply-chain traceability (git → ECR digest → running workload), and
+document the complete operational model with proven runbooks. All 3 critical-path
+scenarios exercised on live EKS with controlled failure injection, platform-driven alert
+firing, runbook-guided diagnosis and recovery, and return to verified healthy state —
+no undocumented tribal knowledge required. Release-gate verdict: PASS.
+
+### Added
+
+- **Observability architecture & design** (Sprint 8, PR 1) — the four-layer signal
+  model (Kubernetes platform, ephemeral pipeline Job, MLflow tracking server, PostgreSQL
+  metadata store), the operational questions each answers, the Prometheus sources
+  (KSM, node-exporter, cAdvisor, blackbox, postgres-exporter), and the deliberate
+  discipline of measuring only what an operator would act on
+  ([ADR-028](docs/decisions/ADR-028-observability-architecture.md),
+  [docs/observability.md](docs/observability.md)). **No implementation yet —
+  architecture and signal catalogue only.**
+
+- **Prometheus monitoring foundation** (Sprint 8, PR 2) — Prometheus StatefulSet +
+  seven scrape-jobs configuration (prometheus, kube-state-metrics, node-exporter,
+  kubernetes-cadvisor, kubelet, pushgateway, postgres-exporter), ServiceMonitors for
+  long-running components, data retention, secure TLS scrape configuration, and
+  runtime-persistence probes for queryability after Job completion. Verified on PR 16:
+  **11 scrape targets all UP**, metrics retained, queryable across all failure
+  scenarios ([ADR-029](docs/decisions/ADR-029-monitoring-foundation.md)).
+
+- **Pipeline operational metrics** (Sprint 8, PR 3) — per-stage success and duration
+  metrics (`mlops_pipeline_stage_success`, `mlops_pipeline_stage_duration_seconds`)
+  pushed to the Prometheus Pushgateway by the pipeline itself after each stage;
+  queryable and alerted on `success=0`, supporting the dashboard's "which stage
+  failed?" discrimination and the runbook's failure analysis. Verified on PR 16:
+  metrics captured live, per-stage discrimination working, alert discrimination correct
+  ([ADR-030](docs/decisions/ADR-030-pipeline-operational-metrics.md)).
+
+- **MLflow & PostgreSQL monitoring** (Sprint 8, PR 4) — postgres-exporter for
+  database-level signals (pg_up, connection count, memory, PVC fill ratio) and
+  blackbox-exporter for MLflow HTTP availability probing via `/health`; alerting
+  thresholds tied to measured limits (2Gi MLflow, 512Mi PostgreSQL, 1Gi PVC). Verified
+  on PR 16: both components monitored; `pg_up=1` ruled OUT database during MLflow
+  outage scenario, directing runbook correctly to the Deployment layer
+  ([ADR-031](docs/decisions/ADR-031-mlflow-postgres-monitoring.md)).
+
+- **Grafana dashboards** (Sprint 8, PR 5) — three deployed dashboards (EKS Platform
+  Health, MLOps Pipeline Operations, MLflow Platform Health) with data paths proven
+  via Grafana HTTP API proxy to Prometheus; dashboard panels rendered and displaying
+  live scraped metrics from all success and failure scenarios; verified headless on
+  PR 16 via API without screenshots ([ADR-032](docs/decisions/ADR-032-grafana-dashboards.md)).
+
+- **Alert rules & design** (Sprint 8, PR 6) — eight mandatory alerts unit-tested
+  (`promtool test rules`) and live-validated on PR 16:
+  `PipelineJobFailed`, `PipelineJobOOMKilled`, `MLflowDown`, `MLflowMemoryHigh`,
+  `PostgresDown`, `PostgresMemoryHigh`, `PostgresPVCAlmostFull`, `KubePodCrashLooping`.
+  Each alert keyed to an operator action; thresholds traced to measured limits; batch
+  semantics respected (no alert on "pod not Running", alert on Job's terminal Failed
+  condition). All critical-path alerts (dataset, MLflow, OOM) fired and resolved on
+  PR 16; no alert required correction ([ADR-033](docs/decisions/ADR-033-alerting.md),
+  [docs/alerting.md](docs/alerting.md)).
+
+- **NetworkPolicy enforcement** (Sprint 8, PR 7) — Kubernetes NetworkPolicies with
+  deny-by-default + explicit allow for mlops and monitoring namespaces; tested with a
+  functional harness proving 6/6 allowed and 3/3 denied paths; enforcing on EKS VPC CNI
+  with `enableNetworkPolicy=true`; required application paths (DNS, Pod Identity egress,
+  S3, monitoring) proven functional. Verified on PR 16: enforcement canary blocked
+  unlabelled access; all required paths passed; all prohibited paths blocked
+  ([ADR-034](docs/decisions/ADR-034-network-policies.md), [docs/network-policies.md](docs/network-policies.md)).
+
+- **Container image vulnerability scanning** (Sprint 8, PR 8) — Trivy vulnerability
+  scan in CI (`docker` job) on every PR, scanning both `mlops-pipeline` and
+  `mlflow-server` images for OS and Python package vulnerabilities; fixable
+  HIGH/CRITICAL findings gate the build; non-fixable findings reported but not gated
+  (tracked, auto-promote to gate when upstream fix ships); both images verified clean
+  on PR 16 with no fixable HIGH/CRITICAL ([ADR-035](docs/decisions/ADR-035-container-image-scanning.md),
+  [docs/container-image-scanning.md](docs/container-image-scanning.md)).
+
+- **SBOM & image provenance** (Sprint 8, PR 9) — CycloneDX SBOMs generated per-image
+  (321 components pipeline, 322 MLflow) from the **actual built image** (never
+  re-resolved); git commit → image tag → ECR digest → running pod verified end-to-end:
+  `f39cc87` → `1.6.0` → `sha256:2f355dc2…` → live container `imageID` matched on all 3
+  pipeline containers and MLflow pod. Operator script `release-image.sh` captures the
+  chain for any release ([ADR-036](docs/decisions/ADR-036-sbom-and-image-provenance.md),
+  [docs/supply-chain-provenance.md](docs/supply-chain-provenance.md)).
+
+- **Platform contracts & validation** (Sprint 8, PR 15) — new contract tests in
+  `k8s/tests/contract/test_observability.py` + security contracts enforcing the
+  observability stack architecture (Prometheus ConfigMaps, ServiceMonitors, scrape
+  configs, alert rules structure, dashboards provisioning); 201/201 checks pass on both
+  local and AWS overlays; ensures no future regression (same discipline as Sprint 5 PR 6,
+  ADR-012).
+
+- **Release-candidate validation on live EKS** (Sprint 8, PR 16) — full
+  `provision → validate → destroy` session on real Amazon EKS (v1.35, 2 nodes, 2 AZs)
+  with the merged PRs 1–15 release candidate, exercising the complete operational loop:
+  healthy baseline → controlled dataset failure → detection → alert → runbook-driven
+  diagnosis → remediation → recovery → alert resolution; MLflow outage scenario
+  (deployment scaled to 0) → same loop; OOM scenario (memory limit reduced to 128Mi) →
+  same loop. All three **critical-path runbooks** (dataset-retrieval-failure.md,
+  mlflow-unavailable.md, oomkilled.md) guided diagnosis and recovery **without
+  undocumented knowledge**, proving the claim *"repository runbooks successfully guided
+  diagnosis and recovery for every controlled failure scenario."* Runbook validation
+  matrix: **3/3 PASS**. Platform returned to fully healthy state with 0 lingering alerts.
+  Cleanup verified symmetric (terraform destroy 65 resources). Evidence:
+  [sprint-08-pr16-release-validation-evidence.md](docs/proof/sprint-08-pr16-release-validation-evidence.md).
+
+### Added (Reliability Hardening)
+
+- **Reliability hardening: bounded retry and checksum integrity** (Sprint 8, PR 13 —
+  feature delivered, Sprint 8 gate validation) — pipeline now exhibits proven safe
+  boundaries on transient faults and verified safety on deterministic ones:
+  - `wait-for-mlflow` init container configured with bounded retry: **max 60 attempts**
+    with exponential backoff; live validation on PR 16 showed **[1/60]…[16/60] attempts**
+    during sustained MLflow outage, then **"MLflow ready"** on restore → pipeline exit 0
+    — proving retry is bounded and recovers.
+  - Dataset fetch validates **SHA-256 checksum** against pinned `DATASET_SHA256` ConfigMap;
+    fails fast on mismatch; prevents silent corruption or wrong-dataset pipeline runs.
+  - Job **`backoffLimit: 2`** (deterministic failures terminal after 3 attempts) +
+    **`activeDeadlineSeconds: 1800`** (30 min wall-clock safety ceiling); live validation
+    showed dataset-failure run: 3 fresh-pod attempts (transient retried) → terminal
+    `BackoffLimitExceeded` on 4th.
+  - Resource **limits as memory-safety control**: CPU limit `1` doubles as memory-safety
+    brake because `GridSearchCV(n_jobs=-1)` fans out proportionally to available CPU.
+    Configured `cpu: 1 / memory: 512Mi` (limits); PR 16 OOM scenario at 128Mi confirmed
+    kernel-enforced OOMKilled; normal run never approached limit.
+  - No speculative hardening without evidence. All changes validated against PR 16 live
+    failure scenarios ([ADR-037](docs/decisions/ADR-037-pipeline-reliability-hardening.md)).
+
+- **Operational runbooks** (Sprint 8, PR 14 — design, Sprint 8 gate validation) —
+  eight runbooks documented for operator decision trees: 5 operational scenarios
+  (dataset-retrieval-failure, dataset-integrity-failure, mlflow-unavailable,
+  oomkilled, crash-restart) + 3 platform utilities (pipeline-failure summary,
+  postgresql-failure, platform-health diagnostics). All three critical-path runbooks
+  exercised on PR 16: dataset-retrieval-failure, mlflow-unavailable, oomkilled — each
+  **guided diagnosis and recovery without undocumented knowledge**. Runbook validation
+  matrix: **3/3 PASS** ([docs/runbooks/README.md](docs/runbooks/README.md) + individual
+  runbooks).
+
+### Security
+
+- **Observability stack hardening** — all observability components (Prometheus, Grafana,
+  kube-state-metrics, node-exporter, blackbox-exporter, postgres-exporter, Pushgateway)
+  deployed with the same hardened Pod Security context as the pipeline and supporting
+  workloads: non-root, explicit UID/GID, seccomp RuntimeDefault, dropped capabilities,
+  no privilege escalation, measured resource limits. No broad permissions requested for
+  monitoring; all justified exceptions documented (Prometheus/KSM need env-specific API
+  server IP; mitigated by restricting NetworkPolicy ingress). Security regression
+  review: **Sprint 5–7 hardening preserved and extended** ([SECURITY.md](SECURITY.md),
+  [docs/kubernetes-security.md](docs/kubernetes-security.md)).
+
+### Documentation
+
+- **Sprint 8 proof-impact assessment** ([docs/proof/sprint-08-release-gate.md](docs/proof/sprint-08-release-gate.md)) —
+  the authoritative release-gate audit: reconciliation of all 23 proof dimensions
+  (observability architecture, monitoring, alerting, reliability, operations, network
+  security, supply chain), verdict PASS, recommendations for defensible claims vs
+  prohibited claims, known limitations documented, and the complete release decision
+  record. Replaces this as the canonical Sprint 8 summary.
+
+- **PR 16 runtime evidence consolidation** ([docs/proof/sprint-08-pr16-release-validation-evidence.md](docs/proof/sprint-08-pr16-release-validation-evidence.md)) —
+  the live-EKS session record: release candidate, environment setup, static validation
+  results, four healthy/failure scenarios with evidence tables, runbook validation matrix,
+  image provenance verification, final healthy state, cleanup verification, and the
+  **PASS verdict**.
+
+- **Architecture & observability documentation updated** — [docs/observability.md](docs/observability.md),
+  [docs/alerting.md](docs/alerting.md), [docs/network-policies.md](docs/network-policies.md),
+  [docs/architecture.md](docs/architecture.md), [docs/container-image-scanning.md](docs/container-image-scanning.md),
+  [docs/supply-chain-provenance.md](docs/supply-chain-provenance.md) reconciled with PR 16
+  implementation; obsolete claims removed (no monitoring → Prometheus/Grafana live);
+  historical evidence preserved (earlier campaigns, prior ADRs).
+
+
+### Fixed
+
+- None in this sprint (observability, alerting, runbooks, and reliability hardening are
+  all **new capability**, not fixes to prior bugs). Reliability hardening (PR 13) closes
+  gaps in retry/checksum/timeout design that were correctly documented as deferred in
+  Sprint 5–7, not bugs in those releases.
+
+---
 
 ## [1.6.0] - 2026-08-19
 
