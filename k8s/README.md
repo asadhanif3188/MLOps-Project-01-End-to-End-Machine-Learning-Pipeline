@@ -231,7 +231,7 @@ provision → render → apply → destroy runbook.
 
 | Tool | Purpose | Notes |
 |---|---|---|
-| **Docker** | Build the `ml-pipeline:local` image | Already required by the project ([root README § Running with Docker](../README.md#running-with-docker)). |
+| **Docker** | Build the `ml-pipeline:local` image | Already required by the project ([root README § Reproduce / validate](../README.md#12--reproduce--validate)). |
 | **A local Kubernetes cluster** | Run the workload | **Docker Desktop Kubernetes**, **kind**, or **minikube** — any single-node local cluster. |
 | **`kubectl`** | Apply/inspect/log/delete | Point it at the local context: `kubectl config current-context` should be `docker-desktop`, `kind-*`, or `minikube`. |
 | **`kustomize`** (optional) | Render the manifests standalone | `kubectl` has it built in (`kubectl kustomize …` / `kubectl apply -k …`), so a separate binary is optional. |

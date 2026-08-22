@@ -1539,13 +1539,13 @@ foundation pipeline.
 - Recommended repository description updated to
   "Production-Oriented MLOps Pipeline using DVC, MLflow and Python".
 
-[Unreleased]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.7.0...HEAD
-[1.7.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.6.0...v1.7.0
-[1.6.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.1...v1.4.0
-[1.3.1]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/asadhanif3188/MLOps-Project-01-End-to-End-Machine-Learning-Pipeline/releases/tag/v1.0.0
+[Unreleased]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/asadhanif3188/mlops-platform-on-eks/releases/tag/v1.0.0

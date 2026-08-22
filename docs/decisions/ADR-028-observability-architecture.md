@@ -365,7 +365,7 @@ long-term data.
 ## Later-PR acceptance criteria (Sprint 8 PRs 2–6)
 
 Ratified here, detailed in
-[`docs/observability.md` § Sprint 8 delivery plan](../observability.md#9-sprint-8-delivery-plan-prs-26):
+[`docs/observability.md` § Sprint 8 delivery plan](../observability.md#9-sprint-8-delivery-plan-prs-27):
 
 - **PR 2 — Metrics core.** Prometheus + kube-state-metrics + node-exporter in a
   hardened `monitoring` namespace; cAdvisor scrape; least-privilege scrape RBAC.

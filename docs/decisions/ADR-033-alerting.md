@@ -29,9 +29,9 @@
 
 After PRs 2–5 the platform emits a complete four-layer metric set and renders it on
 three dashboards, but the dashboards are *pull* — they need a human looking. The
-[observability gap](observability.md#1-why-observability-why-now) is only fully closed
+[observability gap](../observability.md#1-why-observability-why-now) is only fully closed
 when a defined failure **pushes** a signal at an operator without one watching. The
-[§ 6 operational objectives](observability.md#6-operational-objectives-slo-style-not-production-slos)
+[§ 6 operational objectives](../observability.md#6-operational-objectives-slo-style-not-production-slos)
 name exactly what to watch for; this PR encodes them as alert rules.
 
 The brief sets firm constraints: **only high-signal alerts** that map to a real
@@ -81,7 +81,7 @@ A finished batch Job is *not* Running, and that is normal, so no rule keys on it
 - **`PipelineJobOOMKilled`** keys on the retained finished pod's last terminated reason.
 
 Both read persistent kube-state-metrics API-object series, so they stay evaluable after
-the pod exits (the [queryability contract](observability.md#the-queryability-contract-a-design-requirement-for-the-runtime-prs);
+the pod exits (the [queryability contract](../observability.md#the-queryability-contract-a-design-requirement-for-the-runtime-prs);
 `ttlSecondsAfterFinished=3600`).
 
 ### 3. Documented, low-noise thresholds
@@ -144,7 +144,7 @@ in CI. No Alertmanager: firing alerts are exposed on Prometheus's `/alerts` +
 **Negative / limitations**
 - **Nothing is deployed and no alert has fired live** — the promtool test proves the
   rule *logic*; that a real OOM / MLflow-down / PVC-fill actually fires it on a cluster
-  is the [runtime-evidence PR](observability.md#runtime-evidence-what-later-sprint-8-prs-must-prove).
+  is the [runtime-evidence PR](../observability.md#runtime-evidence-what-later-sprint-8-prs-must-prove).
 - **No routing.** Without Alertmanager, an operator must look at Prometheus `/alerts`;
   paging a channel is deferred.
 - **Absent ≠ Down.** A missing target (no series) does not fire an availability alert; a
