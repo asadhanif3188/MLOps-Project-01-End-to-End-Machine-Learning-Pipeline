@@ -296,6 +296,7 @@ tracked openly in the [Roadmap](docs/roadmap.md) and each sprint's release gate.
 
 ## 15 · Deeper reading
 
+- **[Case Study](docs/case-study.md)** — the full engineering narrative: problem, architecture, decisions, failures, and proof (self-contained, interview/client-ready)
 - **[Evidence Index](docs/proof/README.md)** — every claim mapped to its canonical proof and proof strength
 - **[Engineering Capability Matrix](docs/proof/capability-matrix.md)** — what this repository proves the engineer can do, for hiring/client review
 - **[Architecture](docs/architecture.md)** — system design, components, data flow
