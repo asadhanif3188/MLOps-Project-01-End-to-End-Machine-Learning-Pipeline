@@ -63,8 +63,10 @@ Failed to download s3://<bucket>/<key> …        # object UNAVAILABLE  → this
 Then narrow *why* the download failed:
 
 ```bash
-# What object is the Job pointing at? (URI is in the workload config)
-kubectl -n mlops get cm mlops-pipeline-config -o jsonpath='{.data.DATASET_S3_URI}{"\n"}'
+# What object is the Job pointing at? (DATASET_S3_URI is an env var on the
+# fetch-dataset init container, set per-overlay — NOT in the base ConfigMap)
+kubectl -n mlops get job mlops-pipeline -o jsonpath=\
+"{.spec.template.spec.initContainers[?(@.name=='fetch-dataset')].env[?(@.name=='DATASET_S3_URI')].value}{'\n'}"
 
 # On EKS — does the object actually exist, and does the role have access?
 # (Reads use the operator's own credentials; the pod uses EKS Pod Identity.)
@@ -97,7 +99,9 @@ Address the specific cause, then re-drive a clean run:
 - **Credentials blocked by NetworkPolicy** — ensure `allow-pod-identity-egress` is
   applied (`kubectl -n mlops get networkpolicy allow-pod-identity-egress`); this is the
   committed fix from the live campaign.
-- **Wrong URI** — correct `DATASET_S3_URI` in `k8s/base/configmap.yaml`, re-apply.
+- **Wrong URI** — correct `DATASET_S3_URI` in the overlay's `fetch-dataset` env patch
+  (`k8s/overlays/aws/job-cloud.yaml` or `k8s/overlays/local/job-runtime.yaml` — it is
+  **not** in `k8s/base/configmap.yaml`), then re-apply.
 
 Then:
 

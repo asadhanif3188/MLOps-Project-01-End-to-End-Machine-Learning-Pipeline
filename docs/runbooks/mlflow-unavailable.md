@@ -126,7 +126,8 @@ curl -s --data-urlencode 'query=pg_up' \
 kubectl -n mlops port-forward svc/mlflow 5000:5000 &   # MLflow UI: prior runs + registered model still present
 
 # 4. A fresh, unmodified pipeline run Completes end-to-end (proves the path works again).
-kubectl -n mlops delete job mlops-pipeline && kubectl apply -k k8s/overlays/<aws|local>
+kubectl -n mlops delete job mlops-pipeline           # ⚠️ discards the failed Job object
+kubectl apply -k k8s/overlays/<aws|local>            # on EKS: scripts/render-cloud-manifests.sh --apply
 kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=600s
 ```
 

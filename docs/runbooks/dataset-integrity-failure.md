@@ -48,9 +48,12 @@ was reachable — the problem is the *bytes*, not the *access*.
 # 1. Confirm the two log lines (retrieved, then integrity failed) and read both digests.
 kubectl -n mlops logs "$pod" -c fetch-dataset
 
-# 2. What SHA-256 is pinned, and what URI is it verifying?
-kubectl -n mlops get cm mlops-pipeline-config \
-  -o jsonpath='SHA={.data.DATASET_SHA256}{"\n"}URI={.data.DATASET_S3_URI}{"\n"}'
+# 2. What SHA-256 is pinned? (DATASET_SHA256 IS in the base ConfigMap)
+kubectl -n mlops get cm mlops-pipeline-config -o jsonpath='{.data.DATASET_SHA256}{"\n"}'
+# And what URI is it verifying? (DATASET_S3_URI is an env var on the fetch-dataset
+# init container, set per-overlay — NOT in the ConfigMap)
+kubectl -n mlops get job mlops-pipeline -o jsonpath=\
+"{.spec.template.spec.initContainers[?(@.name=='fetch-dataset')].env[?(@.name=='DATASET_S3_URI')].value}{'\n'}"
 ```
 
 ## Diagnosis

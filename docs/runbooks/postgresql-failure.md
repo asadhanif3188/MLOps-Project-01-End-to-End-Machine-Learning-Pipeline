@@ -149,7 +149,8 @@ curl -s --data-urlencode 'query=ALERTS{alertstate="firing",layer="postgres"}' \
 # 5. MLflow recovered on top of the DB, and a fresh pipeline run Completes.
 curl -s --data-urlencode 'query=probe_success{job="blackbox-mlflow-health"}' \
   http://localhost:9090/api/v1/query | jq '.data.result[].value[1]'      # expect 1
-kubectl -n mlops delete job mlops-pipeline && kubectl apply -k k8s/overlays/<aws|local>
+kubectl -n mlops delete job mlops-pipeline           # ⚠️ discards the failed Job object
+kubectl apply -k k8s/overlays/<aws|local>            # on EKS: scripts/render-cloud-manifests.sh --apply
 kubectl -n mlops wait --for=condition=complete job/mlops-pipeline --timeout=600s
 ```
 
